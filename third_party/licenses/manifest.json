@@ -1,0 +1,83 @@
+[
+  {
+    "name": "M5Cardputer 1.1.1",
+    "file": "m5cardputer.txt",
+    "source": "M5Cardputer 1.1.1 source SPDX-License-Identifier: MIT"
+  },
+  {
+    "name": "M5Unified 0.2.26",
+    "file": "local-0.txt",
+    "source": ".pio/libdeps/cardputer-adv/M5Unified/LICENSE"
+  },
+  {
+    "name": "M5GFX 0.2.33",
+    "file": "local-1.txt",
+    "source": ".pio/libdeps/cardputer-adv/M5GFX/LICENSE"
+  },
+  {
+    "name": "IRremote 4.7.1",
+    "file": "local-2.txt",
+    "source": ".pio/libdeps/cardputer-adv/IRremote@4.7.1/LICENSE"
+  },
+  {
+    "name": "IPA Gothic - lgfxJapanGothic_8 (M5GFX 0.2.33)",
+    "file": "local-3.txt",
+    "source": ".pio/libdeps/cardputer-adv/M5GFX/src/lgfx/Fonts/IPA/IPA_Font_License_Agreement_v1.0.txt",
+    "display_file": "ipa-english.txt"
+  },
+  {
+    "name": "libb64 (Arduino-ESP32 2.0.17)",
+    "file": "local-4.txt",
+    "source": "/tmp/geoputer-pio-core/packages/framework-arduinoespressif32/cores/esp32/libb64/LICENSE"
+  },
+  {
+    "name": "Arduino-ESP32 2.0.17",
+    "file": "upstream-0.txt",
+    "source": "https://raw.githubusercontent.com/espressif/arduino-esp32/2.0.17/LICENSE.md"
+  },
+  {
+    "name": "ESP-IDF 4.4.7",
+    "file": "upstream-1.txt",
+    "source": "https://raw.githubusercontent.com/espressif/esp-idf/v4.4.7/LICENSE"
+  },
+  {
+    "name": "FreeRTOS (ESP-IDF 4.4.7)",
+    "file": "upstream-2.txt",
+    "source": "https://raw.githubusercontent.com/espressif/esp-idf/v4.4.7/components/freertos/LICENSE.md"
+  },
+  {
+    "name": "LovyanGFX code embedded in M5GFX",
+    "file": "upstream-3.txt",
+    "source": "https://raw.githubusercontent.com/lovyan03/LovyanGFX/master/license.txt"
+  },
+  {
+    "name": "Font8x8C64 - Hugo van Galen, modified by lovyan03",
+    "file": "upstream-4.txt",
+    "source": "https://raw.githubusercontent.com/hugovangalen/C64_Font8x8/master/README.md"
+  },
+  {
+    "name": "FatFs R0.13c (ESP-IDF 4.4.7)",
+    "file": "upstream-6.txt",
+    "source": "https://raw.githubusercontent.com/espressif/esp-idf/v4.4.7/components/fatfs/src/ff.c"
+  },
+  {
+    "name": "TJpgDec R0.01c (M5GFX)",
+    "file": "tjpgd.txt",
+    "source": "M5GFX 0.2.33 src/lgfx/utility/lgfx_tjpgd.c"
+  },
+  {
+    "name": "Adafruit TCA8418 (M5Cardputer 1.1.1)",
+    "file": "adafruit-tca8418.txt",
+    "source": "https://raw.githubusercontent.com/adafruit/Adafruit_TCA8418/master/license.txt"
+  },
+  {
+    "name": "Galuchat C++ Reader 0.5.2",
+    "file": "galuchat.txt",
+    "source": "third_party/galuchat/LICENSE (Galuchat GIS SDK cpp/src/galuchat)"
+  },
+  {
+    "name": "Shinonome 16-dot Gothic (053b21e0)",
+    "file": "shinonome.txt",
+    "source": "third_party/shinonome/LICENSE; AUTHORS; native 16-dot font source"
+  }
+]

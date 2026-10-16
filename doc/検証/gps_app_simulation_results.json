@@ -1,0 +1,1536 @@
+{
+  "scope": "Discrete-event queue model; assumed timings/capacities, not hardware measurements",
+  "cases": [
+    {
+      "case": "normal_init_active_fix",
+      "results": [
+        {
+          "id": 1,
+          "kind": "InitializeGps",
+          "outcome": "Returned",
+          "reply": {
+            "source": "GPS",
+            "id": 1,
+            "kind": "InitializeGps",
+            "success": true,
+            "state": "PAUSE",
+            "initialized": true,
+            "observed_at": 20
+          }
+        },
+        {
+          "id": 2,
+          "kind": "SetGnssState",
+          "outcome": "Returned",
+          "reply": {
+            "source": "GPS",
+            "id": 2,
+            "kind": "SetGnssState",
+            "success": true,
+            "state": "ACTIVE",
+            "initialized": true,
+            "observed_at": 40
+          }
+        }
+      ],
+      "notifications_handled": 1,
+      "stale_replies": 0,
+      "reply_drops": 0,
+      "expired_returns": 0,
+      "sample_drops": 0,
+      "peak_app_queue": 1,
+      "peak_return_queue": 1
+    },
+    {
+      "case": "normal_notifications_during_sync",
+      "results": [
+        {
+          "id": 1,
+          "kind": "GetGpsStatus",
+          "outcome": "Returned",
+          "reply": {
+            "source": "GPS",
+            "id": 1,
+            "kind": "GetGpsStatus",
+            "success": true,
+            "state": "ACTIVE",
+            "initialized": true,
+            "observed_at": 80
+          }
+        }
+      ],
+      "notifications_handled": 3,
+      "stale_replies": 0,
+      "reply_drops": 0,
+      "expired_returns": 0,
+      "sample_drops": 0,
+      "peak_app_queue": 3,
+      "peak_return_queue": 1
+    },
+    {
+      "case": "lost_reply_status_recovers_actual_state",
+      "results": [
+        {
+          "id": 1,
+          "kind": "SetGnssState",
+          "outcome": "ReturnTimeout",
+          "reply": null
+        },
+        {
+          "id": 2,
+          "kind": "GetGpsStatus",
+          "outcome": "Returned",
+          "reply": {
+            "source": "GPS",
+            "id": 2,
+            "kind": "GetGpsStatus",
+            "success": true,
+            "state": "ACTIVE",
+            "initialized": true,
+            "observed_at": 50
+          }
+        }
+      ],
+      "notifications_handled": 0,
+      "stale_replies": 0,
+      "reply_drops": 1,
+      "expired_returns": 0,
+      "sample_drops": 0,
+      "peak_app_queue": 0,
+      "peak_return_queue": 1
+    },
+    {
+      "case": "failed_change_status_queries_do_not_apply_target",
+      "results": [
+        {
+          "id": 1,
+          "kind": "SetGnssState",
+          "outcome": "ReturnTimeout",
+          "reply": null
+        },
+        {
+          "id": 2,
+          "kind": "GetGpsStatus",
+          "outcome": "Returned",
+          "reply": {
+            "source": "GPS",
+            "id": 2,
+            "kind": "GetGpsStatus",
+            "success": true,
+            "state": "PAUSE",
+            "initialized": true,
+            "observed_at": 50
+          }
+        },
+        {
+          "id": 3,
+          "kind": "GetGpsStatus",
+          "outcome": "Returned",
+          "reply": {
+            "source": "GPS",
+            "id": 3,
+            "kind": "GetGpsStatus",
+            "success": true,
+            "state": "PAUSE",
+            "initialized": true,
+            "observed_at": 90
+          }
+        },
+        {
+          "id": 4,
+          "kind": "GetGpsStatus",
+          "outcome": "Returned",
+          "reply": {
+            "source": "GPS",
+            "id": 4,
+            "kind": "GetGpsStatus",
+            "success": true,
+            "state": "PAUSE",
+            "initialized": true,
+            "observed_at": 130
+          }
+        },
+        {
+          "id": 5,
+          "kind": "GetGpsStatus",
+          "outcome": "Returned",
+          "reply": {
+            "source": "GPS",
+            "id": 5,
+            "kind": "GetGpsStatus",
+            "success": true,
+            "state": "PAUSE",
+            "initialized": true,
+            "observed_at": 170
+          }
+        },
+        {
+          "id": 6,
+          "kind": "GetGpsStatus",
+          "outcome": "Returned",
+          "reply": {
+            "source": "GPS",
+            "id": 6,
+            "kind": "GetGpsStatus",
+            "success": true,
+            "state": "PAUSE",
+            "initialized": true,
+            "observed_at": 210
+          }
+        },
+        {
+          "id": 7,
+          "kind": "GetGpsStatus",
+          "outcome": "Returned",
+          "reply": {
+            "source": "GPS",
+            "id": 7,
+            "kind": "GetGpsStatus",
+            "success": true,
+            "state": "PAUSE",
+            "initialized": true,
+            "observed_at": 250
+          }
+        },
+        {
+          "id": 8,
+          "kind": "GetGpsStatus",
+          "outcome": "Returned",
+          "reply": {
+            "source": "GPS",
+            "id": 8,
+            "kind": "GetGpsStatus",
+            "success": true,
+            "state": "PAUSE",
+            "initialized": true,
+            "observed_at": 290
+          }
+        },
+        {
+          "id": 9,
+          "kind": "GetGpsStatus",
+          "outcome": "Returned",
+          "reply": {
+            "source": "GPS",
+            "id": 9,
+            "kind": "GetGpsStatus",
+            "success": true,
+            "state": "PAUSE",
+            "initialized": true,
+            "observed_at": 330
+          }
+        },
+        {
+          "id": 10,
+          "kind": "GetGpsStatus",
+          "outcome": "Returned",
+          "reply": {
+            "source": "GPS",
+            "id": 10,
+            "kind": "GetGpsStatus",
+            "success": true,
+            "state": "PAUSE",
+            "initialized": true,
+            "observed_at": 370
+          }
+        },
+        {
+          "id": 11,
+          "kind": "GetGpsStatus",
+          "outcome": "Returned",
+          "reply": {
+            "source": "GPS",
+            "id": 11,
+            "kind": "GetGpsStatus",
+            "success": true,
+            "state": "PAUSE",
+            "initialized": true,
+            "observed_at": 410
+          }
+        }
+      ],
+      "notifications_handled": 0,
+      "stale_replies": 0,
+      "reply_drops": 1,
+      "expired_returns": 0,
+      "sample_drops": 0,
+      "peak_app_queue": 0,
+      "peak_return_queue": 1
+    },
+    {
+      "case": "late_reply_fills_single_return_slot",
+      "results": [
+        {
+          "id": 1,
+          "kind": "InitializeGps",
+          "outcome": "ReturnTimeout",
+          "reply": null
+        },
+        {
+          "id": 2,
+          "kind": "GetGpsStatus",
+          "outcome": "ReturnTimeout",
+          "reply": null
+        },
+        {
+          "id": 3,
+          "kind": "GetGpsStatus",
+          "outcome": "Returned",
+          "reply": {
+            "source": "GPS",
+            "id": 3,
+            "kind": "GetGpsStatus",
+            "success": true,
+            "state": "PAUSE",
+            "initialized": true,
+            "observed_at": 250
+          }
+        }
+      ],
+      "notifications_handled": 0,
+      "stale_replies": 1,
+      "reply_drops": 1,
+      "expired_returns": 0,
+      "sample_drops": 0,
+      "peak_app_queue": 0,
+      "peak_return_queue": 1
+    },
+    {
+      "case": "comparison_sender_rejects_expired_return",
+      "results": [
+        {
+          "id": 1,
+          "kind": "InitializeGps",
+          "outcome": "ReturnTimeout",
+          "reply": null
+        },
+        {
+          "id": 2,
+          "kind": "GetGpsStatus",
+          "outcome": "Returned",
+          "reply": {
+            "source": "GPS",
+            "id": 2,
+            "kind": "GetGpsStatus",
+            "success": true,
+            "state": "PAUSE",
+            "initialized": true,
+            "observed_at": 120
+          }
+        },
+        {
+          "id": 3,
+          "kind": "GetGpsStatus",
+          "outcome": "Returned",
+          "reply": {
+            "source": "GPS",
+            "id": 3,
+            "kind": "GetGpsStatus",
+            "success": true,
+            "state": "PAUSE",
+            "initialized": true,
+            "observed_at": 250
+          }
+        }
+      ],
+      "notifications_handled": 0,
+      "stale_replies": 0,
+      "reply_drops": 0,
+      "expired_returns": 1,
+      "sample_drops": 0,
+      "peak_app_queue": 0,
+      "peak_return_queue": 1
+    },
+    {
+      "case": "long_sync_overflows_notification_storage",
+      "results": [
+        {
+          "id": 1,
+          "kind": "GetGpsStatus",
+          "outcome": "Returned",
+          "reply": {
+            "source": "GPS",
+            "id": 1,
+            "kind": "GetGpsStatus",
+            "success": true,
+            "state": "ACTIVE",
+            "initialized": true,
+            "observed_at": 9000
+          }
+        }
+      ],
+      "notifications_handled": 6,
+      "stale_replies": 0,
+      "reply_drops": 0,
+      "expired_returns": 0,
+      "sample_drops": 3,
+      "peak_app_queue": 4,
+      "peak_return_queue": 1
+    },
+    {
+      "case": "request_queue_full_no_execution",
+      "results": [
+        {
+          "id": 1,
+          "kind": "InitializeGps",
+          "outcome": "QueueTimeout",
+          "reply": null
+        }
+      ],
+      "notifications_handled": 0,
+      "stale_replies": 0,
+      "reply_drops": 0,
+      "expired_returns": 0,
+      "sample_drops": 0,
+      "peak_app_queue": 0,
+      "peak_return_queue": 0
+    },
+    {
+      "case": "wrong_reply_cannot_complete_current_request",
+      "results": [
+        {
+          "id": 1,
+          "kind": "GetGpsStatus",
+          "outcome": "Returned",
+          "reply": {
+            "source": "GPS",
+            "id": 1,
+            "kind": "GetGpsStatus",
+            "success": true,
+            "state": "PAUSE",
+            "initialized": false,
+            "observed_at": 30
+          }
+        }
+      ],
+      "notifications_handled": 0,
+      "stale_replies": 1,
+      "reply_drops": 0,
+      "expired_returns": 0,
+      "sample_drops": 0,
+      "peak_app_queue": 0,
+      "peak_return_queue": 1
+    }
+  ],
+  "schedule_sweep": {
+    "schedules": 156,
+    "schedules_with_reply_collision": 48,
+    "eventual_status_recovery": 156
+  },
+  "traces": {
+    "normal_init_active_fix": [
+      {
+        "ms": 0,
+        "event": "sync_start",
+        "id": 1,
+        "kind": "InitializeGps"
+      },
+      {
+        "ms": 0,
+        "event": "request_enqueued",
+        "id": 1
+      },
+      {
+        "ms": 0,
+        "event": "gps_begin",
+        "id": 1,
+        "kind": "InitializeGps"
+      },
+      {
+        "ms": 20,
+        "event": "gps_finish",
+        "source": "GPS",
+        "id": 1,
+        "kind": "InitializeGps",
+        "success": true,
+        "state": "PAUSE",
+        "initialized": true,
+        "observed_at": 20
+      },
+      {
+        "ms": 20,
+        "event": "reply_enqueued",
+        "id": 1
+      },
+      {
+        "ms": 20,
+        "event": "sync_end",
+        "id": 1,
+        "outcome": "Returned"
+      },
+      {
+        "ms": 30,
+        "event": "sync_start",
+        "id": 2,
+        "kind": "SetGnssState"
+      },
+      {
+        "ms": 30,
+        "event": "request_enqueued",
+        "id": 2
+      },
+      {
+        "ms": 30,
+        "event": "gps_begin",
+        "id": 2,
+        "kind": "SetGnssState"
+      },
+      {
+        "ms": 40,
+        "event": "gps_finish",
+        "source": "GPS",
+        "id": 2,
+        "kind": "SetGnssState",
+        "success": true,
+        "state": "ACTIVE",
+        "initialized": true,
+        "observed_at": 40
+      },
+      {
+        "ms": 40,
+        "event": "reply_enqueued",
+        "id": 2
+      },
+      {
+        "ms": 40,
+        "event": "sync_end",
+        "id": 2,
+        "outcome": "Returned"
+      },
+      {
+        "ms": 50,
+        "event": "notification_enqueued",
+        "kind": "GpsSampleReady",
+        "seq": 1
+      },
+      {
+        "ms": 50,
+        "event": "notification_handled",
+        "kind": "GpsSampleReady",
+        "seq": 1
+      }
+    ],
+    "normal_notifications_during_sync": [
+      {
+        "ms": 0,
+        "event": "sync_start",
+        "id": 1,
+        "kind": "GetGpsStatus"
+      },
+      {
+        "ms": 0,
+        "event": "request_enqueued",
+        "id": 1
+      },
+      {
+        "ms": 0,
+        "event": "gps_begin",
+        "id": 1,
+        "kind": "GetGpsStatus"
+      },
+      {
+        "ms": 10,
+        "event": "notification_enqueued",
+        "kind": "GpsSampleReady",
+        "seq": 1
+      },
+      {
+        "ms": 20,
+        "event": "notification_enqueued",
+        "kind": "UiActionRequested",
+        "seq": 2
+      },
+      {
+        "ms": 30,
+        "event": "notification_enqueued",
+        "kind": "StorageStateChanged",
+        "seq": 3
+      },
+      {
+        "ms": 80,
+        "event": "gps_finish",
+        "source": "GPS",
+        "id": 1,
+        "kind": "GetGpsStatus",
+        "success": true,
+        "state": "ACTIVE",
+        "initialized": true,
+        "observed_at": 80
+      },
+      {
+        "ms": 80,
+        "event": "reply_enqueued",
+        "id": 1
+      },
+      {
+        "ms": 80,
+        "event": "sync_end",
+        "id": 1,
+        "outcome": "Returned"
+      },
+      {
+        "ms": 80,
+        "event": "notification_handled",
+        "kind": "GpsSampleReady",
+        "seq": 1
+      },
+      {
+        "ms": 80,
+        "event": "notification_handled",
+        "kind": "UiActionRequested",
+        "seq": 2
+      },
+      {
+        "ms": 80,
+        "event": "notification_handled",
+        "kind": "StorageStateChanged",
+        "seq": 3
+      }
+    ],
+    "lost_reply_status_recovers_actual_state": [
+      {
+        "ms": 0,
+        "event": "sync_start",
+        "id": 1,
+        "kind": "SetGnssState"
+      },
+      {
+        "ms": 0,
+        "event": "request_enqueued",
+        "id": 1
+      },
+      {
+        "ms": 0,
+        "event": "gps_begin",
+        "id": 1,
+        "kind": "SetGnssState"
+      },
+      {
+        "ms": 10,
+        "event": "gps_finish",
+        "source": "GPS",
+        "id": 1,
+        "kind": "SetGnssState",
+        "success": true,
+        "state": "ACTIVE",
+        "initialized": true,
+        "observed_at": 10
+      },
+      {
+        "ms": 10,
+        "event": "reply_lost",
+        "id": 1
+      },
+      {
+        "ms": 30,
+        "event": "sync_end",
+        "id": 1,
+        "outcome": "ReturnTimeout"
+      },
+      {
+        "ms": 50,
+        "event": "sync_start",
+        "id": 2,
+        "kind": "GetGpsStatus"
+      },
+      {
+        "ms": 50,
+        "event": "request_enqueued",
+        "id": 2
+      },
+      {
+        "ms": 50,
+        "event": "gps_begin",
+        "id": 2,
+        "kind": "GetGpsStatus"
+      },
+      {
+        "ms": 50,
+        "event": "gps_finish",
+        "source": "GPS",
+        "id": 2,
+        "kind": "GetGpsStatus",
+        "success": true,
+        "state": "ACTIVE",
+        "initialized": true,
+        "observed_at": 50
+      },
+      {
+        "ms": 50,
+        "event": "reply_enqueued",
+        "id": 2
+      },
+      {
+        "ms": 50,
+        "event": "sync_end",
+        "id": 2,
+        "outcome": "Returned"
+      }
+    ],
+    "failed_change_status_queries_do_not_apply_target": [
+      {
+        "ms": 0,
+        "event": "sync_start",
+        "id": 1,
+        "kind": "SetGnssState"
+      },
+      {
+        "ms": 0,
+        "event": "request_enqueued",
+        "id": 1
+      },
+      {
+        "ms": 0,
+        "event": "gps_begin",
+        "id": 1,
+        "kind": "SetGnssState"
+      },
+      {
+        "ms": 10,
+        "event": "gps_finish",
+        "source": "GPS",
+        "id": 1,
+        "kind": "SetGnssState",
+        "success": false,
+        "state": "PAUSE",
+        "initialized": true,
+        "observed_at": 10
+      },
+      {
+        "ms": 10,
+        "event": "reply_lost",
+        "id": 1
+      },
+      {
+        "ms": 30,
+        "event": "sync_end",
+        "id": 1,
+        "outcome": "ReturnTimeout"
+      },
+      {
+        "ms": 50,
+        "event": "sync_start",
+        "id": 2,
+        "kind": "GetGpsStatus"
+      },
+      {
+        "ms": 50,
+        "event": "request_enqueued",
+        "id": 2
+      },
+      {
+        "ms": 50,
+        "event": "gps_begin",
+        "id": 2,
+        "kind": "GetGpsStatus"
+      },
+      {
+        "ms": 50,
+        "event": "gps_finish",
+        "source": "GPS",
+        "id": 2,
+        "kind": "GetGpsStatus",
+        "success": true,
+        "state": "PAUSE",
+        "initialized": true,
+        "observed_at": 50
+      },
+      {
+        "ms": 50,
+        "event": "reply_enqueued",
+        "id": 2
+      },
+      {
+        "ms": 50,
+        "event": "sync_end",
+        "id": 2,
+        "outcome": "Returned"
+      },
+      {
+        "ms": 90,
+        "event": "sync_start",
+        "id": 3,
+        "kind": "GetGpsStatus"
+      },
+      {
+        "ms": 90,
+        "event": "request_enqueued",
+        "id": 3
+      },
+      {
+        "ms": 90,
+        "event": "gps_begin",
+        "id": 3,
+        "kind": "GetGpsStatus"
+      },
+      {
+        "ms": 90,
+        "event": "gps_finish",
+        "source": "GPS",
+        "id": 3,
+        "kind": "GetGpsStatus",
+        "success": true,
+        "state": "PAUSE",
+        "initialized": true,
+        "observed_at": 90
+      },
+      {
+        "ms": 90,
+        "event": "reply_enqueued",
+        "id": 3
+      },
+      {
+        "ms": 90,
+        "event": "sync_end",
+        "id": 3,
+        "outcome": "Returned"
+      },
+      {
+        "ms": 130,
+        "event": "sync_start",
+        "id": 4,
+        "kind": "GetGpsStatus"
+      },
+      {
+        "ms": 130,
+        "event": "request_enqueued",
+        "id": 4
+      },
+      {
+        "ms": 130,
+        "event": "gps_begin",
+        "id": 4,
+        "kind": "GetGpsStatus"
+      },
+      {
+        "ms": 130,
+        "event": "gps_finish",
+        "source": "GPS",
+        "id": 4,
+        "kind": "GetGpsStatus",
+        "success": true,
+        "state": "PAUSE",
+        "initialized": true,
+        "observed_at": 130
+      },
+      {
+        "ms": 130,
+        "event": "reply_enqueued",
+        "id": 4
+      },
+      {
+        "ms": 130,
+        "event": "sync_end",
+        "id": 4,
+        "outcome": "Returned"
+      },
+      {
+        "ms": 170,
+        "event": "sync_start",
+        "id": 5,
+        "kind": "GetGpsStatus"
+      },
+      {
+        "ms": 170,
+        "event": "request_enqueued",
+        "id": 5
+      },
+      {
+        "ms": 170,
+        "event": "gps_begin",
+        "id": 5,
+        "kind": "GetGpsStatus"
+      },
+      {
+        "ms": 170,
+        "event": "gps_finish",
+        "source": "GPS",
+        "id": 5,
+        "kind": "GetGpsStatus",
+        "success": true,
+        "state": "PAUSE",
+        "initialized": true,
+        "observed_at": 170
+      },
+      {
+        "ms": 170,
+        "event": "reply_enqueued",
+        "id": 5
+      },
+      {
+        "ms": 170,
+        "event": "sync_end",
+        "id": 5,
+        "outcome": "Returned"
+      },
+      {
+        "ms": 210,
+        "event": "sync_start",
+        "id": 6,
+        "kind": "GetGpsStatus"
+      },
+      {
+        "ms": 210,
+        "event": "request_enqueued",
+        "id": 6
+      },
+      {
+        "ms": 210,
+        "event": "gps_begin",
+        "id": 6,
+        "kind": "GetGpsStatus"
+      },
+      {
+        "ms": 210,
+        "event": "gps_finish",
+        "source": "GPS",
+        "id": 6,
+        "kind": "GetGpsStatus",
+        "success": true,
+        "state": "PAUSE",
+        "initialized": true,
+        "observed_at": 210
+      },
+      {
+        "ms": 210,
+        "event": "reply_enqueued",
+        "id": 6
+      },
+      {
+        "ms": 210,
+        "event": "sync_end",
+        "id": 6,
+        "outcome": "Returned"
+      },
+      {
+        "ms": 250,
+        "event": "sync_start",
+        "id": 7,
+        "kind": "GetGpsStatus"
+      },
+      {
+        "ms": 250,
+        "event": "request_enqueued",
+        "id": 7
+      },
+      {
+        "ms": 250,
+        "event": "gps_begin",
+        "id": 7,
+        "kind": "GetGpsStatus"
+      },
+      {
+        "ms": 250,
+        "event": "gps_finish",
+        "source": "GPS",
+        "id": 7,
+        "kind": "GetGpsStatus",
+        "success": true,
+        "state": "PAUSE",
+        "initialized": true,
+        "observed_at": 250
+      },
+      {
+        "ms": 250,
+        "event": "reply_enqueued",
+        "id": 7
+      },
+      {
+        "ms": 250,
+        "event": "sync_end",
+        "id": 7,
+        "outcome": "Returned"
+      },
+      {
+        "ms": 290,
+        "event": "sync_start",
+        "id": 8,
+        "kind": "GetGpsStatus"
+      },
+      {
+        "ms": 290,
+        "event": "request_enqueued",
+        "id": 8
+      },
+      {
+        "ms": 290,
+        "event": "gps_begin",
+        "id": 8,
+        "kind": "GetGpsStatus"
+      },
+      {
+        "ms": 290,
+        "event": "gps_finish",
+        "source": "GPS",
+        "id": 8,
+        "kind": "GetGpsStatus",
+        "success": true,
+        "state": "PAUSE",
+        "initialized": true,
+        "observed_at": 290
+      },
+      {
+        "ms": 290,
+        "event": "reply_enqueued",
+        "id": 8
+      },
+      {
+        "ms": 290,
+        "event": "sync_end",
+        "id": 8,
+        "outcome": "Returned"
+      },
+      {
+        "ms": 330,
+        "event": "sync_start",
+        "id": 9,
+        "kind": "GetGpsStatus"
+      },
+      {
+        "ms": 330,
+        "event": "request_enqueued",
+        "id": 9
+      },
+      {
+        "ms": 330,
+        "event": "gps_begin",
+        "id": 9,
+        "kind": "GetGpsStatus"
+      },
+      {
+        "ms": 330,
+        "event": "gps_finish",
+        "source": "GPS",
+        "id": 9,
+        "kind": "GetGpsStatus",
+        "success": true,
+        "state": "PAUSE",
+        "initialized": true,
+        "observed_at": 330
+      },
+      {
+        "ms": 330,
+        "event": "reply_enqueued",
+        "id": 9
+      },
+      {
+        "ms": 330,
+        "event": "sync_end",
+        "id": 9,
+        "outcome": "Returned"
+      },
+      {
+        "ms": 370,
+        "event": "sync_start",
+        "id": 10,
+        "kind": "GetGpsStatus"
+      },
+      {
+        "ms": 370,
+        "event": "request_enqueued",
+        "id": 10
+      },
+      {
+        "ms": 370,
+        "event": "gps_begin",
+        "id": 10,
+        "kind": "GetGpsStatus"
+      },
+      {
+        "ms": 370,
+        "event": "gps_finish",
+        "source": "GPS",
+        "id": 10,
+        "kind": "GetGpsStatus",
+        "success": true,
+        "state": "PAUSE",
+        "initialized": true,
+        "observed_at": 370
+      },
+      {
+        "ms": 370,
+        "event": "reply_enqueued",
+        "id": 10
+      },
+      {
+        "ms": 370,
+        "event": "sync_end",
+        "id": 10,
+        "outcome": "Returned"
+      },
+      {
+        "ms": 410,
+        "event": "sync_start",
+        "id": 11,
+        "kind": "GetGpsStatus"
+      },
+      {
+        "ms": 410,
+        "event": "request_enqueued",
+        "id": 11
+      },
+      {
+        "ms": 410,
+        "event": "gps_begin",
+        "id": 11,
+        "kind": "GetGpsStatus"
+      },
+      {
+        "ms": 410,
+        "event": "gps_finish",
+        "source": "GPS",
+        "id": 11,
+        "kind": "GetGpsStatus",
+        "success": true,
+        "state": "PAUSE",
+        "initialized": true,
+        "observed_at": 410
+      },
+      {
+        "ms": 410,
+        "event": "reply_enqueued",
+        "id": 11
+      },
+      {
+        "ms": 410,
+        "event": "sync_end",
+        "id": 11,
+        "outcome": "Returned"
+      }
+    ],
+    "late_reply_fills_single_return_slot": [
+      {
+        "ms": 0,
+        "event": "sync_start",
+        "id": 1,
+        "kind": "InitializeGps"
+      },
+      {
+        "ms": 0,
+        "event": "request_enqueued",
+        "id": 1
+      },
+      {
+        "ms": 0,
+        "event": "gps_begin",
+        "id": 1,
+        "kind": "InitializeGps"
+      },
+      {
+        "ms": 100,
+        "event": "sync_end",
+        "id": 1,
+        "outcome": "ReturnTimeout"
+      },
+      {
+        "ms": 101,
+        "event": "sync_start",
+        "id": 2,
+        "kind": "GetGpsStatus"
+      },
+      {
+        "ms": 101,
+        "event": "request_enqueued",
+        "id": 2
+      },
+      {
+        "ms": 120,
+        "event": "gps_finish",
+        "source": "GPS",
+        "id": 1,
+        "kind": "InitializeGps",
+        "success": true,
+        "state": "PAUSE",
+        "initialized": true,
+        "observed_at": 120
+      },
+      {
+        "ms": 120,
+        "event": "reply_enqueued",
+        "id": 1
+      },
+      {
+        "ms": 120,
+        "event": "gps_begin",
+        "id": 2,
+        "kind": "GetGpsStatus"
+      },
+      {
+        "ms": 120,
+        "event": "gps_finish",
+        "source": "GPS",
+        "id": 2,
+        "kind": "GetGpsStatus",
+        "success": true,
+        "state": "PAUSE",
+        "initialized": true,
+        "observed_at": 120
+      },
+      {
+        "ms": 120,
+        "event": "return_queue_full",
+        "id": 2
+      },
+      {
+        "ms": 120,
+        "event": "stale_discarded",
+        "id": 1
+      },
+      {
+        "ms": 201,
+        "event": "sync_end",
+        "id": 2,
+        "outcome": "ReturnTimeout"
+      },
+      {
+        "ms": 250,
+        "event": "sync_start",
+        "id": 3,
+        "kind": "GetGpsStatus"
+      },
+      {
+        "ms": 250,
+        "event": "request_enqueued",
+        "id": 3
+      },
+      {
+        "ms": 250,
+        "event": "gps_begin",
+        "id": 3,
+        "kind": "GetGpsStatus"
+      },
+      {
+        "ms": 250,
+        "event": "gps_finish",
+        "source": "GPS",
+        "id": 3,
+        "kind": "GetGpsStatus",
+        "success": true,
+        "state": "PAUSE",
+        "initialized": true,
+        "observed_at": 250
+      },
+      {
+        "ms": 250,
+        "event": "reply_enqueued",
+        "id": 3
+      },
+      {
+        "ms": 250,
+        "event": "sync_end",
+        "id": 3,
+        "outcome": "Returned"
+      }
+    ],
+    "comparison_sender_rejects_expired_return": [
+      {
+        "ms": 0,
+        "event": "sync_start",
+        "id": 1,
+        "kind": "InitializeGps"
+      },
+      {
+        "ms": 0,
+        "event": "request_enqueued",
+        "id": 1
+      },
+      {
+        "ms": 0,
+        "event": "gps_begin",
+        "id": 1,
+        "kind": "InitializeGps"
+      },
+      {
+        "ms": 100,
+        "event": "sync_end",
+        "id": 1,
+        "outcome": "ReturnTimeout"
+      },
+      {
+        "ms": 101,
+        "event": "sync_start",
+        "id": 2,
+        "kind": "GetGpsStatus"
+      },
+      {
+        "ms": 101,
+        "event": "request_enqueued",
+        "id": 2
+      },
+      {
+        "ms": 120,
+        "event": "gps_finish",
+        "source": "GPS",
+        "id": 1,
+        "kind": "InitializeGps",
+        "success": true,
+        "state": "PAUSE",
+        "initialized": true,
+        "observed_at": 120
+      },
+      {
+        "ms": 120,
+        "event": "expired_return_suppressed",
+        "id": 1
+      },
+      {
+        "ms": 120,
+        "event": "gps_begin",
+        "id": 2,
+        "kind": "GetGpsStatus"
+      },
+      {
+        "ms": 120,
+        "event": "gps_finish",
+        "source": "GPS",
+        "id": 2,
+        "kind": "GetGpsStatus",
+        "success": true,
+        "state": "PAUSE",
+        "initialized": true,
+        "observed_at": 120
+      },
+      {
+        "ms": 120,
+        "event": "reply_enqueued",
+        "id": 2
+      },
+      {
+        "ms": 120,
+        "event": "sync_end",
+        "id": 2,
+        "outcome": "Returned"
+      },
+      {
+        "ms": 250,
+        "event": "sync_start",
+        "id": 3,
+        "kind": "GetGpsStatus"
+      },
+      {
+        "ms": 250,
+        "event": "request_enqueued",
+        "id": 3
+      },
+      {
+        "ms": 250,
+        "event": "gps_begin",
+        "id": 3,
+        "kind": "GetGpsStatus"
+      },
+      {
+        "ms": 250,
+        "event": "gps_finish",
+        "source": "GPS",
+        "id": 3,
+        "kind": "GetGpsStatus",
+        "success": true,
+        "state": "PAUSE",
+        "initialized": true,
+        "observed_at": 250
+      },
+      {
+        "ms": 250,
+        "event": "reply_enqueued",
+        "id": 3
+      },
+      {
+        "ms": 250,
+        "event": "sync_end",
+        "id": 3,
+        "outcome": "Returned"
+      }
+    ],
+    "long_sync_overflows_notification_storage": [
+      {
+        "ms": 0,
+        "event": "sync_start",
+        "id": 1,
+        "kind": "GetGpsStatus"
+      },
+      {
+        "ms": 0,
+        "event": "request_enqueued",
+        "id": 1
+      },
+      {
+        "ms": 0,
+        "event": "gps_begin",
+        "id": 1,
+        "kind": "GetGpsStatus"
+      },
+      {
+        "ms": 1000,
+        "event": "notification_enqueued",
+        "kind": "GpsSampleReady",
+        "seq": 1
+      },
+      {
+        "ms": 2000,
+        "event": "notification_enqueued",
+        "kind": "GpsSampleReady",
+        "seq": 2
+      },
+      {
+        "ms": 3000,
+        "event": "notification_enqueued",
+        "kind": "GpsSampleReady",
+        "seq": 3
+      },
+      {
+        "ms": 4000,
+        "event": "notification_enqueued",
+        "kind": "GpsSampleReady",
+        "seq": 4
+      },
+      {
+        "ms": 5000,
+        "event": "sample_held",
+        "seq": 5
+      },
+      {
+        "ms": 6000,
+        "event": "sample_held",
+        "seq": 6
+      },
+      {
+        "ms": 7000,
+        "event": "sample_dropped",
+        "seq": 7
+      },
+      {
+        "ms": 8000,
+        "event": "sample_dropped",
+        "seq": 8
+      },
+      {
+        "ms": 9000,
+        "event": "sample_dropped",
+        "seq": 9
+      },
+      {
+        "ms": 9000,
+        "event": "gps_finish",
+        "source": "GPS",
+        "id": 1,
+        "kind": "GetGpsStatus",
+        "success": true,
+        "state": "ACTIVE",
+        "initialized": true,
+        "observed_at": 9000
+      },
+      {
+        "ms": 9000,
+        "event": "reply_enqueued",
+        "id": 1
+      },
+      {
+        "ms": 9000,
+        "event": "sync_end",
+        "id": 1,
+        "outcome": "Returned"
+      },
+      {
+        "ms": 9000,
+        "event": "notification_handled",
+        "kind": "GpsSampleReady",
+        "seq": 1
+      },
+      {
+        "ms": 9000,
+        "event": "notification_handled",
+        "kind": "GpsSampleReady",
+        "seq": 2
+      },
+      {
+        "ms": 9000,
+        "event": "notification_handled",
+        "kind": "GpsSampleReady",
+        "seq": 3
+      },
+      {
+        "ms": 9000,
+        "event": "notification_handled",
+        "kind": "GpsSampleReady",
+        "seq": 4
+      },
+      {
+        "ms": 9000,
+        "event": "notification_handled",
+        "kind": "GpsSampleReady",
+        "seq": 5
+      },
+      {
+        "ms": 9000,
+        "event": "notification_handled",
+        "kind": "GpsSampleReady",
+        "seq": 6
+      }
+    ],
+    "request_queue_full_no_execution": [
+      {
+        "ms": 0,
+        "event": "sync_start",
+        "id": 1,
+        "kind": "InitializeGps"
+      },
+      {
+        "ms": 20,
+        "event": "sync_end",
+        "id": 1,
+        "outcome": "QueueTimeout"
+      }
+    ],
+    "wrong_reply_cannot_complete_current_request": [
+      {
+        "ms": 0,
+        "event": "sync_start",
+        "id": 1,
+        "kind": "GetGpsStatus"
+      },
+      {
+        "ms": 0,
+        "event": "request_enqueued",
+        "id": 1
+      },
+      {
+        "ms": 0,
+        "event": "gps_begin",
+        "id": 1,
+        "kind": "GetGpsStatus"
+      },
+      {
+        "ms": 10,
+        "event": "reply_enqueued",
+        "id": 999
+      },
+      {
+        "ms": 10,
+        "event": "stale_discarded",
+        "id": 999
+      },
+      {
+        "ms": 30,
+        "event": "gps_finish",
+        "source": "GPS",
+        "id": 1,
+        "kind": "GetGpsStatus",
+        "success": true,
+        "state": "PAUSE",
+        "initialized": false,
+        "observed_at": 30
+      },
+      {
+        "ms": 30,
+        "event": "reply_enqueued",
+        "id": 1
+      },
+      {
+        "ms": 30,
+        "event": "sync_end",
+        "id": 1,
+        "outcome": "Returned"
+      }
+    ]
+  }
+}

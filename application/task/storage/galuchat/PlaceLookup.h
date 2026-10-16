@@ -1,0 +1,39 @@
+#pragma once
+
+#include <memory>
+#include <string>
+#include <galuchat/gis_wordbook_reader.hpp>
+#include "CachedMapReader.h"
+#include "WordBookCache.h"
+#include "ReadTiming.h"
+#include "../PlaceTypes.h"
+
+namespace geoputer {
+
+// Owned and called exclusively by StorageTask. No file handles cross task queues.
+class PlaceLookup {
+public:
+    explicit PlaceLookup(std::string directory = "/sd/dataset/01") : directory_(std::move(directory)) {}
+    PlaceLookup(const PlaceLookup&) = delete;
+    PlaceLookup& operator=(const PlaceLookup&) = delete;
+    void setObserver(StorageObserver* observer) { observer_ = observer; }
+    PlaceResult search(const PlaceRequest& request);
+    PlaceResult prepare();  // Validate file pair/headers/encoding without requiring GPS.
+    void close();
+    MapCacheStats cacheStats() const { return map_ ? map_->stats() : MapCacheStats{}; }
+    WordBookCacheStats wordBookCacheStats() const { return wordbook_cache_.stats(); }
+    PlaceAccessMode accessMode(const PlaceRequest& request) const;
+    const PlaceReadTiming& readTiming() const { return timing_; }
+private:
+    PlaceState open();
+    std::string directory_;
+    PlaceReadTiming timing_{}; // Must outlive the Readers that refer to its I/O counters.
+    std::unique_ptr<CachedMapReader> map_;
+    std::unique_ptr<galuchat::GaluchatGisWordBookReader> wordbook_;
+    WordBookCache wordbook_cache_;
+    bool cp932_ = true;
+    StorageObserver* observer_ = nullptr;
+    DatasetInfo dataset_{};
+};
+
+}  // namespace geoputer

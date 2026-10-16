@@ -1,0 +1,65 @@
+#pragma once
+
+#include <cstdint>
+#include "../../Settings.h"
+#include "PlaceTypes.h"
+#include "StorageActivity.h"
+#include "log/LogTypes.h"
+#include "log/LogReadTypes.h"
+
+namespace geoputer {
+
+enum class SettingsState : uint8_t { Unavailable, Defaults, Loaded, Invalid, Saving, Saved, Failed };
+enum class CardState : uint8_t { Unknown, NoCard, Mounted, Unmounted, Unsupported, Failed };
+enum class StorageOperation : uint8_t { None, SaveSettings, Remount, Unmount, Format };
+enum class StorageReadKind : uint8_t { None, Settings, Place, Dataset, Log, LogBrowse };
+
+struct StorageSnapshot {
+    uint32_t revision;
+    SettingsState settings_state;
+    Settings settings;
+    CardState card_state;
+    uint8_t fat_type;
+    uint64_t card_bytes;
+    uint64_t total_bytes;
+    uint64_t free_bytes;
+    bool busy;
+    StorageOperation operation;
+    bool operation_ok;
+    int32_t error;
+    int32_t nvs_error;
+    int32_t sd_error;
+    RgCacheSnapshot rg;
+    SdAccessSnapshot sd;
+    LogSnapshot log;
+    LogError log_result;
+};
+
+struct StorageCommand {
+    StorageOperation operation;
+    Settings settings;
+    uint32_t operation_id;
+    bool confirmed;
+};
+
+struct StorageCompletion {
+    uint32_t request_id;
+    uint32_t operation_id;
+    StorageSnapshot snapshot;
+    StorageReadKind read_kind;
+    union { PlaceResult place; LogReadReply logs; };
+};
+
+inline const char* cardStateName(CardState state) {
+    switch (state) {
+        case CardState::Unknown: return "WAITING";
+        case CardState::NoCard: return "NO CARD";
+        case CardState::Mounted: return "MOUNTED";
+        case CardState::Unmounted: return "SAFE TO REMOVE";
+        case CardState::Unsupported: return "FAT32 REQUIRED";
+        case CardState::Failed: return "SD ERROR";
+    }
+    return "SD ERROR";
+}
+
+}  // namespace geoputer

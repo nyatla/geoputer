@@ -1,0 +1,225 @@
+# Geoputer Application
+
+Application・UI・GPS座標受信・Storageを実装する。ApplicationはArduinoの`setup()` / `loop()`が実行されるメインタスクで動作し、UI・GPS・StorageをFreeRTOSの別タスクとして起動する。GPSがUARTとNMEA解析、StorageがNVS設定とSDを所有し、Appが各タスクの結果・通知を集約してUIへ表示データを渡す。
+
+```text
+application/
+  main.cpp                 メインタスクの入口
+  Application.h/.cpp       全体状態、通知受信、UI・GPS・Storageの同期操作
+  Config.h                 チャンク上限・GISキャッシュ容量・読出しバッファ・検索周期
+  LogBrowser.cpp           一覧・詳細・測位点の要求、結果照合、10件キャッシュ
+  Settings.h/.cpp          設定の初期値・値域検証・NVSレコード符号化
+  BootStatus.h             起動チェックの状態・表示略称・完了判定
+  TaskMessages.h           固定長メッセージと同期結果
+  task/ui/
+    UiTask.h/.cpp          UI受信ループ、キー入力、通知・結果返送
+    UiModel.h/.cpp         選択状態、未処理確定操作、画面指定の保持
+    UiRenderer.h/.cpp      メイン画面とSettingsの描画
+    PixelFont.h/.cpp       8×8・16×16ドットの固定セル描画
+    Shinonome.h/.cpp       東雲16ドット字形のFlash参照
+    UiTypes.h              画面・操作・表示データの値型
+    KeyBindings.h          FnなしのMENU・方向操作と物理キーの対応
+    LivePlaceLayout.h      画面の領域・GPS数値と未取得表示
+    PlacePresentation.h    Appでの2行住所整形と検索中の表示保持
+    LicenseText.h/.cpp      Flash内のライセンス本文（生成済み）
+    SettingsLayout.h        設定画面のグリッドと表示範囲
+    SettingsText.h/.cpp     設定画面の日英表示・単位・確認文・処理通知
+  task/gps/
+    GpsTask.h/.cpp         UART受信、同期操作、サンプル・状態通知
+    GpsReceiver.h/.cpp     同時刻の統合、Fixの有効性、受信断判定
+    NmeaParser.h/.cpp      GGA/RMCの座標・日時・速度・方位・衛星・HDOP解析
+    GpsTime.h              UTC暦とJSTファイル名時刻の変換
+    GpsTypes.h             座標と受信状態の固定長の値型
+  task/storage/
+    StorageTask.h/.cpp     NVS・SDの受信ループ、同期受付、非同期実処理
+    SettingsStore.h/.cpp   PreferencesによるNVS設定保存・復元
+    StorageTypes.h        設定保存・カード・操作状態の値型
+    PlaceTypes.h          検索座標・地名結果・読出し状態の値型
+    PlaceSearchFlow.h     App側の検索間隔と未完了要求の管理
+    StorageActivity.h      RG状態・SD実I/Oの観測
+    log/
+      LogWriter.h/.cpp     排他付き64件リング、保存範囲の保持、失敗時の同一位置再試行
+      LogReader.h/.cpp     6件の一覧、概要、最大10件の読出しと検証
+      LogReadTypes.h       閲覧要求・固定長結果・表示状態
+      LogFormat.h          512バイトヘッダーと32バイトレコード・CRC32
+      LogFile.h            ESP32のFatFs / ホストstdioのランダムアクセス
+    galuchat/
+      PlaceLookup.h/.cpp  SDKのファイルReader、データ検出、地名検索
+      CachedMapReader.h/.cpp 128×128・32bitの矩形キャッシュと点検索
+      WordBookCache.h     区域コードをキーにした16件のUTF-8地名LRU
+      TextEncoding.h/.cpp CP932からUTF-8への変換と3行への整形
+  utils/
+    ShortLock.h            ESP32の短いクリティカル区間 / ホストmutex
+    Task.h                 受信キュー1つを所有するサブタスク基底クラス
+    Queue.h                固定容量のFreeRTOSキュー、投機的送信
+    SyncClient.h           同期要求1件と容量1の戻り値キューの管理
+```
+
+現在は4タスク・5キューとする。ApplicationQueueは8件、AppReturnQueueは1件、UIQueue・GPSQueue・StorageQueueは各1件。UIは8192バイト・優先度1、GPSは4096バイト・優先度2、Storageは12288バイト・優先度1をスタック容量と優先度の初期値とし、実機で計測して調整する。未取得の同期要求は全体で1件だけとし、結果取得のタイムアウト後も同じ要求を待つ。Appは通知からUIの操作内容を取得し、画面指定と処理済みIDを返す。UIは描画前に同期結果を返し、結果キューが満杯なら完成済みの結果を保持して再投入する。GPSも同じ戻り値キューを使い、返送の再試行中もUART受信を続ける。
+
+## ビルド
+
+リポジトリのルートでPlatformIO Coreを使う。
+
+PlatformIOが未導入の場合は、プロジェクト内の仮想環境へ導入する。
+
+```bash
+python3 -m venv .venv
+.venv/bin/pip install platformio==6.2.0
+.venv/bin/pio run -e cardputer-adv
+```
+
+PlatformIOがPATHにある場合は次のコマンドでビルドする。
+
+```bash
+pio run -e cardputer-adv
+```
+
+生成物は`.pio/build/cardputer-adv/firmware.bin`。書き込みには同じ環境で`pio run -e cardputer-adv -t upload`を使用する。書き込み先の接続・識別を確認してから実行する。
+
+## 現在の操作とGPS接続
+
+- 起動後はBoot画面で6項目の確認結果を表示する。完了後は通常2秒、警告・失敗があれば5秒でLive Placeへ進み、Enterでも進める。GPS受信はBootの表示中から開始する。
+- 2でMENUを開く。Fnは不要で、従来のFn＋2でも同じ操作となる。GPS LOGGER / SETTINGSを上下キーで選び、Enterで開く。Esc / DelでLive Placeへ戻る。Settingsは従来どおり上下・Enterで下位画面へ進み、Esc / Delで戻る。
+- GPS LOGGERのSTARTで新しい有効Fixから記録する。メイン画面のF1（Fn＋1）は一時停止確認、GPS LOGGERのRESUMEは再開、STOPは終了確認。いずれも記録だけを制御し、GPSデバイスの電源は変更しない。
+- 動作設定ではEnterで編集、左右キーで候補変更、Enterで確定、EscまたはDelで取消。DelはFnなしで使用できる。Cardputerの実キーはMENUが2、上が`;`、下が`.`、左が`,`、右が`/`で、すべてFnなしで使用できる。従来のFn併用でも同じ操作となる。EscはFn＋バッククォート、決定はEnter、一時停止はFn＋1とする。左右はSettingsの値編集中だけ有効とする。
+- 無操作で設定時間後に画面を消灯する。最初のキーはLive Placeへの復帰だけに使い、同時に画面操作を実行しない。GPS受信は消灯中も継続する。
+- 測位前は`NO FIX`、有効NMEAが3秒以上届かない場合は`NO GPS`とし、座標を`--`にする。受信が続いていても有効座標が3秒以上更新されなければ`NO FIX`に戻す。
+- GPS受信はSettings表示中も継続する。Live Placeの表示中は有効FixからSD上のデータセット01を検索し、地名を16×16ドットで表示する。起動時のログはSTOPPED。記録中は画面消灯・Settings表示を経ても新しいFixの採用と保存を継続する。
+
+接続は[Mesh Kitの標準接続](https://docs.m5stack.com/en/arduino/projects/cap/cap_lora868)を使用し、UART1のRX=G15、TX=G13、115200 bps・8N1とする。受信バッファは2048バイトとし、5ms周期で最大1024バイトを取り出す。GPIOと通信速度は現在の実装では固定であり、設定画面から変更しない。LoRaは初期化しない。
+
+Live Placeのヘッダーには現在時刻を8×8のASCIIでHH:MM:SS表示する。GPSから最初の有効FixとUTC時刻を得た時点でUIの表示時計を合わせ、日本時間（UTC+9）へ変換する。以降はUIタスクの単調増加時刻で進め、GPS受信断・Fix喪失・Settings表示・消灯を経ても継続する。未取得時は--:--:--とし、再起動後は改めてGPS時刻を待つ。この段階は初回の時刻合わせだけを行い、GPSの各受信で時計を再設定しない。ログ用の測位UTCとは独立した表示時計とする。
+
+GPSの同期操作は`StartGpsReception`と`GetGpsStatus`とする。前者の成功はUART受信の準備完了を表し、有効Fixを待たない。GNSSの休止・復帰コマンドや電源状態の確認は行わず、最終設計の`InitializeGps` / `SetGnssState`の完了を代用しない。起動直後から受信し、START前は記録に採用しない。GNSS PAUSE制御の導入は別工程とする。
+
+GGAとRMCをチェックサム付きで解析し、GP・GNなどのトーカーに依存せず度分表記を符号付き十進度へ変換する。同一UTC時刻の情報は80msの統合待機または次時刻の到着で1サンプルに確定し、どちらかが無効なら有効位置として扱わない。破損行・範囲外座標は採用しない。受信断やFix喪失では有効フラグと表示座標を消去する。
+
+通知は`GpsSampleReady` / `GpsStatusChanged`としてApplicationQueueへ投機的送信する。満杯時は最新のスナップショットを保持して再試行し、途中の表示更新が統合された件数を数える。現在は画面表示用であり、全サンプル保存の保証は行わない。AppはGPSの共通revisionで古い通知と同期結果を除外し、同期待ち中の通知では表示データの更新予約だけを行う。同期結果の取得後に`UpdateUiContent`を送り、UI自身が描画する。
+
+USBシリアル（115200 bps）には状態変化と有効座標を出力する。5秒ごとの`RX` / `NMEA` / `rejected`は、UART到着・有効行の受信・破損行の切り分けに使用する。`coalesced`は通知待ち中に統合された更新数とする。`NO FIX`が続く場合はGPSアンテナから空が見える場所で測位を確認する。
+
+16×16の地名・GPS測位待ちは、英数字と日本語を東雲16ドットに統一する。MENU・GPS Logger・ログ詳細の操作項目とSettingsの主表示は、日本語モードを日本語表記の東雲16×16、英語モードをM5GFXのAsciiFont8x16とする。言語名は日本語を16×16、Englishを8×16で表示する。東雲16ドット部分のASCII英数字には全角字形を使い、該当する全角記号がない場合だけ同じ東雲の8×16字形をセル中央へ置く。8×8字形の2倍拡大は行わない。未収録文字は東雲の白四角で表示する。8×8のASCIIはM5GFXの`Font8x8C64`、補助表示の日本語は`lgfxJapanGothic_8`を使用する。描画は1ビット字形から整数座標へ行い、アンチエイリアスを使用しない。東雲の固定ソース・ライセンス・変換手順は[third_party/shinonome](../third_party/shinonome/README.md)に保持し、`python3 tools/prepare_shinonome.py`でFlash上の読取専用字形表を生成する。
+
+MENUはGPS LOGGER / SETTINGS / LOGSを表示する。LOGSからファイル名一覧、詳細、測位点を閲覧できる。Place Viewは未実装のため表示しない。[Boot画面](../doc/画面・操作/boot/README.md)はAppが集約した初期化結果を表示する。通信契約は[タスク構成設計](../doc/06_タスク構成設計.md)に従う。
+
+BootのチェックはDISPLAY、TASKS/QUEUES、NVS SETTINGS、SD CARD、GPS UART、GALUCHAT DATAの6項目。NVS設定の未保存はDEFAULTとして正常扱いとし、SD未認識と混同しない。GaluchatはGPS Fixを待たずにCheckDataset通知で番号01のファイル・ヘッダー・辞書形式・文字コードを確認する。未確認・確認中・成功・警告・失敗を色と記号で区別する。Boot表示中は無操作消灯を行わず、完了前のEnter・2・Esc・Del等でチェックを中断しない。UART OKは受信準備の成功であり、測位成功やGNSS PAUSEを意味しない。
+
+## Galuchatのファイル読出し
+
+FAT32のSDカードに、同じデータセットのWGSMapSet/3（`.glc`）とGisWordBook/0（`.giswordbook`）を各1ファイル配置する。番号01を固定使用し、ファイル名は拡張子から検出する。配布物のファイル名を変更する必要はない。候補が複数ある場合は任意選択せず`MULTIPLE DATA FILES`と表示する。
+
+```text
+SDカード直下/
+└ dataset/
+  └ 01/
+    ├ 任意名.glc
+    └ 任意名.sjis.giswordbook
+```
+
+WordBookのメタデータに従い、Shift_JIS（CP932）をUTF-8へ変換する。UTF-8のWordBookも使用できる。UTF-16はこの段階では非対応とし、未対応の文字コードや不正な文字列は`ENCODING ERROR`とする。CP932変換表は`tools/prepare_cp932.py`から生成し、Flash内の読取専用配列として保持する。
+
+Storageがマウント済みの`/sd`をSDK互換の`ObservedFileReaderFactory`から読む。実際のopen・seek・バッファ補充・closeだけをSDアクセスとして観測し、バッファ内の1バイト参照は対象外にする。各読出しセッションのバッファは4KiB、WordBookのトークンキャッシュは無効とし、データ全体のRAM展開は行わない。SDKのReaderは[third_party/galuchat](../third_party/galuchat/README.md)に無改変で取り込み、C++17と例外処理を有効にする。
+
+WordBookの地名検索はアプリ側のWordBookCacheで包む。32bit区域コードとUTF-8変換・整形済みの地名3階層（各64バイト）を16件まで固定長で保持する。利用順だけを16バイトのインデックス配列で管理するLRUとし、時刻・内部Tickは使わない。ヒット時は辞書読出しと文字変換を省き、ミス時に成功した結果だけを登録する。今回の座標・時刻・要求世代は毎回の要求から結果へ設定する。
+
+地名キャッシュは矩形の再構築・GPS喪失・画面切替では保持し、PlaceLookupのclose、SD媒体操作、Reader再オープンで消去する。矩形と地名がともにヒットした検索ではSDを読まない。RGは従来どおり矩形の状態、SDはログ等も含めた実I/Oを表示する。実装と検証は[WordBook地名キャッシュ検証](../doc/検証/WordBook地名キャッシュ検証.md)を参照する。
+
+区域コードの取得は`CachedMapReader`で包み、最初の点検索時に128×128の`uint32_t`画像1枚（64KiB）を確保する。経度・緯度はSDKと同じ解像度と丸め方で整数座標へ変換する。範囲内は画像の値を返し、初回または範囲外では取得点をセル(64,64)とする矩形を`readWgsRect()`で読み直す。原点は`(ix-64, iy-64)`、幅・高さは128、範囲の上端は含まない。区域なしのコード0も有効なキャッシュ値とする。
+
+読出し先のアダプターは32bitの範囲を検証し、複数地図が重なる場合は先に取得した非ゼロ値を保持する。これによりSDKの点検索の優先順を維持する。SDKの矩形読出しは通常後の非ゼロ値で上書きするため、標準のRasterViewをそのまま使わず、このアダプターへ直接書き込む。64bitの中間画像は作らない。
+
+再構成開始時にキャッシュを無効化し、矩形全体の読出し成功後に原点と有効状態を確定する。途中の読込・確保・コード値域エラーは検索失敗として返し、部分的な画像を参照しない。同じReaderの範囲内では画面復帰後も再利用する。SD再マウント・取り外し・フォーマットおよびReaderの閉鎖時は画像を解放し、別のデータセットへ持ち越さない。BootのCheckDatasetでは画像を確保しない。
+
+Appは`SearchPlace`通知に要求ID・画面世代・Fixのコピーを付ける。Storageは結果を`ReadCompleted` / `ReadFailed`で返す。結果は`StorageReadKind::Place`で設定読出しと区別し、通知キュー満杯時も保持する。新しい検索は未完了要求がない場合だけ行い、通常は新しいGPSサンプルに対して最短5秒間隔とする。Settings表示中と画面消灯中は新しい検索を開始しない。
+
+RGは矩形キャッシュの実状態を示し、未準備は暗灰、構築中は黄、有効な矩形を保持していれば検索間隔中やGPS喪失・画面切替後も緑を維持する。SDはログ・地図・WordBook・媒体操作の実I/Oで青く点灯し、RAM受付・キャッシュ参照・文字変換・NVS保存では点灯しない。状態の正本はStorageで、`RgCacheStateChanged` / `SdAccessChanged`をAppが最新revisionで統合しUIへ渡す。キュー満杯時は最新状態を保持し、表示通知を待ってI/Oを遅らせない。SDだけ最低150ms表示し、同じアクセスIDの再送で再点灯しない。
+
+[メイン画面](../doc/画面・操作/live-place/README.md)は採用仕様1.3のレイアウトを実装し、上段に記録状態・JST時刻・RG・SD・電池、本文に東雲16ドットの住所2行、左に大きな速度・進行方位、右にLAT / LON / ALT / SAT、下段に記録時間・64件バッファ、問題発生時は赤地白文字の原因を表示する。電池残量はUIがM5Unifiedから5秒ごとに取得し、取得不能は--%、充電状態が不明なら充電中と表示しない。
+
+地名と表示座標は同じ検索Fixを使う。再検索中は前の表示を保持し、結果確定時に一緒に差し替える。Fix喪失時は旧地名・座標を消し、WAIT GPS FIXを16ドット表示する。キャッシュとSDの実状態はGPS喪失で消去しない。画面世代が古い結果、Fix喪失前の検索結果は適用しない。Storageの地名は3階層、Appで整形した表示用住所は最大2行・各14文字、超過時はUTF-8境界を保って...で省略する。
+
+SD未認識、ファイル不足、候補重複、区域なし、文字コード異常、データ読込異常を区別して表示する。SDカードは起動前に挿入する。起動後に挿入・交換した場合はSettingsのストレージ操作で再マウントする。SDデータの異常でGPS受信やNVS設定保存を止めない。
+
+速度・方位の主数値は東雲16ドット、ラベル・速度単位・右側の詳細値はASCII 8ドットとする。SPD / HDGは左上ラベル、左右・上下の均等分割、SPD / HDG間の横線は左端から中央縦線までとする。速度は低速時に整数m/h、1〜100km/h未満は小数1桁km/h、100km/h以上は整数km/hへ切り替える。数字16ドット・小数点の送り幅8ドットで3桁までを収め、単位の位置を固定する。方位はGPSの進行方位を整数度へ丸め、360°は0°とする。ALTはGGAの海抜高度を小数1桁のメートルで表示する。項目ごとの未取得やFix喪失は--にし、HDOPはメイン表示だけから外してGPS取得・ログ記録には残す。
+
+## GPSログの保存
+
+Appは新しい有効Fixを設定間隔で採用し、StorageTask::tryAppendLogを通常の関数として呼ぶ。この関数はAppタスク上で排他付き64件リングへコピーし、受付結果とLogSnapshotを返す。要求・戻り値キューやSD処理の完了を待たず、他の同期要求の結果待ち中にGPS通知を処理する場合も追加できる。成功はRAM受付であり、永続化完了ではない。OpenLogSession / FlushLog / CloseLogSessionは引き続き同期メッセージとする。Storageは満杯・設定時間経過・一時停止・停止で実保存を行う。FatFsのf_sync成功後に保存件数を進め、LogWrittenを通知する。保存失敗はStorageError（Log種別）で通知し、受け付けた全レコードを保持して5秒間隔で同じ位置へ書き直す。
+
+記録間隔は1・5・10秒（初期値1秒）、SD保存間隔は1・5・10・30・60秒（初期値10秒）から設定する。保存期限はバッファが空から非空になった時点を基準に判定する。長いGIS処理の分割は未実装であり、その実行中や先行する結果返送待ちの間もRAMに空きがあれば追加できるが、実保存とキュー経由の制御受付は遅れ得る。
+
+レコード本体は`records[64][32]`、連番は`sample_seqs[64]`に分離し、合計2,304バイトを維持する。Storageは保存対象を固定してからロックを解放し、リングの最大2連続区間を直接writeしてf_syncする。成功時にその対象だけを解放し、保存中に追加された点は残す。失敗時は同じ対象・同じファイル位置を保持して再試行する。保存中の分も64件へ含め、二重バッファやSD保存用の全件スタックコピーは作らない。符号化には32バイトのローカル領域、ヘッダー生成には従来どおり512バイトを使用する。ESP32の排他区間は状態・添字・コピーに限定し、変換・CRC計算・SD・キュー待ちを含めない。
+
+満杯の間の新規受付は失敗とする。Appは未受付の採用点を1件保持して再要求し、その間に保持できなかった新しい採用対象点だけを欠落件数へ加算する。一時停止・停止の確定操作は新規採用を止め、保持中の点が受付済みになってから、その境界のflush / closeを要求する。SD障害が継続して境界が受付不能なら操作はWAITのまま待ち、未保存点を破棄しない。
+
+未受付点の再要求は1秒間隔とする。セッション終了もLogWritten / StorageErrorとStorageSnapshotで通知し、open=false・closing=falseで終了を確認する。終了専用の通知は設けない。ログ保存通知は元の同期要求IDを引き継がず、AppはStorageのrevisionで古い媒体状態を除外し、LogSnapshot自身のrevisionで直接受付後の件数・保存状態が古い通知へ戻らないようにする。終了処理中や未保存データの保持中は、新規セッションを受け付けない。ファイルの作成・seek・書込み・sync・closeの失敗は共通のLogError::Ioとして通知する。
+
+SD直下のlogsへ、最初の採用点のJSTからYYYYMMDD_HHMMSS_n.gps.datを作る。日時不明はundated_<session16桁>_n.gps.datとする。排他的な新規作成で既存ファイルを上書きせず、同じ秒は連番を進める。512バイトヘッダー・32バイト測位レコードをリトルエンディアンとCRC32で符号化する。ファイル形式の正本は[測位記録ファイル仕様](../doc/07_測位記録ファイル仕様.md)。有効点のないセッションは空ファイルを作らない。一時停止・再開では同一セッションを継続し、停止後の次回開始は別ファイルにする。
+
+ログの保存・未保存・欠落・最終保存の状態はGPS LOGGERで確認する。ログが開いているか未保存データがある間は、再マウント・取り外し・フォーマットを拒否する。NVS設定の保存は使用できる。ログ一覧・概要・最大10件単位の非同期読出しと閲覧画面は実装済み。距離・最高速度の全件集計、GNSSの休止・復帰制御、長いGIS処理の分割は後続実装とする。GPS通知は最新値へ統合する方式であり、全GNSSサンプルを無条件に保存する保証は行わない。
+
+## 設定・ストレージ・ライセンス
+
+Settingsは動作設定、ストレージ操作、初期化、ライセンス情報の4メニューとする。項目・値・確認文・カード情報は日本語を東雲16×16、英語をAsciiFont8x16とし、タイトルとライセンス本文はASCIIの8×8ドットとする。GPS状態・キーガイド・短い通知も8×8ドットとする。動作設定は項目名をx=20で左寄せ、値を実描画幅に応じて右端x=236へ右寄せする。4行表示で全7項目へスクロールし、カード容量等はカード情報パネルを開いて表示する。動作設定の先頭に表示言語（日本語 / English、初期値日本語）を置き、表示言語・GPSログ間隔・SD保存間隔・消灯時間・輝度を編集してNVSへ保存できる。表示言語はEnter確定後、Appが適用した時点で同じ画面・選択位置のまま反映する。輝度・消灯時間も即時反映する。ログ間隔はAppのFix採用間隔、SD保存間隔はStorageの未保存データの期限へ反映する。データセットとGPS接続モードは現在の01 / Mesh Kit固定を示す読取専用項目とする。
+
+NVSの名前空間は`geoputer`、キーは`config`。16バイトのレコードへ識別子、形式バージョン2、7項目、検査値を保存し、長さ・形式・値域・検査値を検証してから使用する。設定が未保存なら初期値を使用し、不正・読込障害は設定エラーとして表示する。旧バージョン1の6項目は元の値を保持して読み込み、言語を日本語とする。次の保存でバージョン2へ移行する。保存形式の詳細は[Settings画面仕様](../doc/画面・操作/settings/README.md#7-nvsの形式と旧設定の引継ぎ)に従う。SD未挿入でも設定を読み書きできる。SaveSettingsは設定のコピーを保持した時点で同期結果を返し、実保存成功はSettingsWritten、失敗はStorageErrorで通知する。LoadSettingsは通知で要求し、ReadCompleted / ReadFailedで復元結果を返す。完了通知はキュー満杯時も保持して再投入し、実処理を二重実行しない。
+
+SDはLCDと別のSPI（FSPI、SCK=G40、MISO=G39、MOSI=G14、CS=G12）を4MHzで使用し、未使用LoRaのNSS=G5をHIGHに保つ。ストレージ操作画面にはカード状態、カード容量、FAT種別、総容量・空き容量、再マウント、安全な取り外し、FAT32フォーマットを用意する。FAT32以外は利用対象外として表示する。SD操作はOperateStorageの同期受付後にStorageが実行し、StorageOperationCompleted / StorageErrorで結果を通知する。
+
+フォーマットは端末上の確認画面で取消からOKへ選び直して確定した場合だけ実行し、カード全体をFAT32の単一ボリュームとして作成する。マウント失敗時の自動フォーマットは行わない。設定初期化も別の確認画面を経てGeoputerの初期値をNVSへ保存する操作とし、SDデータや他ライブラリのNVS領域を消去しない。
+
+ライセンス情報はSDとNVSを使わず、Flash内の本文を上下キーでスクロールして閲覧する。上下キーを押し続けると連続スクロールする。配布元と本文は[ライセンス一覧](../third_party/licenses/manifest.json)に保持し、`python3 tools/prepare_licenses.py`で29文字幅・9行表示の8ドットASCII本文を再生成する。IPAの許諾文は公式の英語本文を使い、東雲は原文を保存したうえで英訳を掲載する。
+
+## 検証
+
+設定の日本語・英語、旧NVS形式の引継ぎ、ライセンス画面の画素一致は[Settings多言語化検証](../doc/検証/Settings多言語化検証.md)を参照する。`python3 tools/render_settings_layout.py`で両言語の画像と文字幅を検証する。
+
+Fnなしの2・方向操作と、MENUの操作ガイド更新は[キーバインド変更検証](../doc/検証/キーバインド変更検証.md)を参照する。
+
+新レイアウトの描画・数値・住所整形は[メインレイアウト1.3検証](../doc/検証/メインレイアウト1.3検証.md)を参照する。
+
+共有リングの実装・並行処理試験は[ログ共有リング検証](../doc/検証/ログ共有リング検証.md)、既存の保存試験は[メイン画面・ログ保存検証](../doc/検証/メイン画面・ログ保存検証.md)を参照する。ホスト検証は部分書込み失敗後の同一位置再試行・CRC・64件上限・同時刻ファイル名・未準備日時・UI操作・SD点灯時間とRG保持を含む。`python3 tools/render_live_place_layout.py`は実装のUiRenderer / UiModel / PixelFontを直接使用して画像を再生成する。実機のSD保存テストは[storage_log](../tests/hardware/storage_log/README.md)を参照する。これは固定入力による保存単体試験であり、通常ファームウェアの実GPSとキー操作による開始→一時停止→再開→停止の通し確認は未完了である。
+
+ライセンス画面は全本文の往復、内容更新中の閲覧位置保持、開閉、消灯・復帰を共通シナリオで検証する。実LCDの描画計測は[実機テスト](../tests/hardware/license_render/README.md)、結果は[ライセンス画面動作検証](../doc/検証/ライセンス画面動作検証.md)を参照する。
+
+表示時計のテストはGPS時刻の初回取込み、UTCから日本時間への変換、未取得表示、測位喪失後の進行、画面切替・消灯を経た保持、日付境界、単調増加時刻の周回、秒変化時だけの再描画を検証する。
+
+ホスト側の通信・UI状態・GPS解析・NVS設定テストは、リポジトリのルートで`python3 tests/run_native.py`を実行する。チェックサム、座標変換、無効Fix、同時刻の統合、古いサンプルの除外、受信断、UTC日付境界、タイマー周回とUI操作の保持、設定の保存・復元・破損検出・保存失敗、編集取消、2階層の戻り操作、フォーマット・初期化の確認、消灯・復帰を確認する。書き込み後は、USBシリアルのNMEA受信状況、LCDの実座標と2 / Escの往復を実機で確認する。
+
+USBログの取得には、pyserialを導入したPythonで`python tests/capture_serial.py COM6 --seconds 30`を使用する。COM6は実機の接続先へ置き換える。esptool 4.9を同じPython環境へ導入すれば`--reset`で起動ログを取得でき、`--output ファイル名`で受信ログを保存できる。USB切断時は取得を終了し、それまでのログを保存する。
+
+Galuchatの実ファイル検証は、同じ組の日本向けWGSMapSetとShift_JISのWordBookを指定して`python3 tests/run_place_files.py <mapset.glc> <names.sjis.giswordbook>`を実行する。習志野市庁舎・皇居付近の繰り返し検索、未収録座標、ファイル不足・重複・破損・修復後の再読込みを検証する。キャッシュは元の点検索との324点の比較、矩形境界、コード0、負座標、地図重なり、32bit値域、読込み途中の失敗と復旧、ヒット時に地図読出しセッションを作らないことを検証する。
+
+検証手順と結果は[Galuchat矩形キャッシュ検証](../doc/検証/Galuchat矩形キャッシュ検証.md)、[表示時計・アクセス表示検証](../doc/検証/表示時計・アクセス表示検証.md)、[東雲フォント・Settings文字サイズ検証](../doc/検証/東雲フォント・Settings文字サイズ検証.md)を参照する。
+
+USBログの`[CACHE]`はHIT / MISS / INVALID、画像容量、累計ヒット・ミス・再構成件数と検索全体の所要時間（マイクロ秒）を出す。所要時間には地名キャッシュの検索、ミス時のWordBook読出し・表示用変換も含む。`[WORDBOOK]`は地名キャッシュのHIT / MISS、登録数/16と累計ヒット・ミスを出し、地名結果が成功しなかった場合はNONEとする。辞書統計はReader閉鎖時にリセットする。`[GIS]`のheap / min_heap / largestは現在空きヒープ、起動以降の最小空きヒープ、現在の最大連続空き領域をバイト単位で示す。
+
+`[READ-TIME]`は検索全体・Reader準備・地図検索・SDKの128×128矩形読出し本体・辞書検索・文字変換を別々に計測する。`[READ-IO]`は地図と辞書のファイルAPI時間、読出し量、read / seek / open / close回数を示す。`[MAP-IO-TIME]` / `[BOOK-IO-TIME]`はfreadとfseek、fopen / fclose / statの時間を個別に示す。各検索でリセットし、ヒット時に前回の読出し時間を表示しない。内数の関係と実機結果は[Galuchat読出し時間計測](../doc/検証/Galuchat読出し時間計測.md)を参照する。
+
+## 依存ライブラリ
+
+- [M5Cardputer](https://github.com/m5stack/M5Cardputer)：Cardputer ADVのキーボードと初期化
+- [M5GFX](https://github.com/m5stack/M5GFX)：LCDとビットマップフォント
+- [M5Unified](https://github.com/m5stack/M5Unified)：M5Stack本体の初期化
+- [Galuchat C++ Reader](../third_party/galuchat/README.md)：WGSMapSet・GisWordBookのファイル検索
+
+M5Cardputer 1.1.1、M5Unified 0.2.26、M5GFX 0.2.33と依存するIRremote 4.7.1をPlatformIOの`lib_deps`で取得する。ESP32プラットフォームは6.12.0に固定する。M5系ライブラリのソースやフォントファイルをアプリケーションへ複製しない。Galuchat Readerはthird_party配下の固定したヘッダを使用する。
+
+## ログ閲覧
+
+Live Placeで`2`、MENUで下へ2回（`.`）、EnterでLOGSを開く。ファイルをEnterで開くと詳細を表示し、「測位点を見る」で1点ずつ閲覧できる。上 / `;`が前、下 / `.`が次、Esc / Delが戻る。消灯中の最初のキーは復帰だけに使う。
+
+一覧は6件ずつ、詳細はファイル名・端点のJST日時・スロット数・バイト数を表示する。測位点は保存済みのGPS値を表示し、逆ジオコーディングは行わない。Appが10件の生レコード320バイトを保持し、UIへ現在の1点を渡す。Storageの同期結果は受付成否だけを返し、読出し結果はトークン・画面世代付きの固定長通知として値コピーする。結果バッファプールと解放通知は使用しない。
+
+記録中の閲覧でもRAM受付を続け、SD読書きはStorageTaskが直列化する。先行分の保存後に取得した保存済み上限を固定し、新しい記録は詳細の「再読込」で反映する。読出しは元ファイルを変更せず、破損点の番号も詰めない。操作と検証範囲は[Logs](../doc/画面・操作/logs/README.md)、[詳細・測位点](../doc/画面・操作/log-detail/README.md)、[ログビューア検証](../doc/検証/ログビューア検証.md)を参照する。
+
+フォントと動作設定の配置変更・検証は[UIフォント・設定配置検証](../doc/検証/UIフォント・設定配置検証.md)を参照する。
+
+## Galuchatのリソース設定とチャンク索引
+
+ビルド時のGIS設定は`application/Config.h`へ集約する。`MaxDatasetChunks`は1500（上限を含む）、`MapCacheSide`は128、`FileReadBufferBytes`は4096、`WordBookCacheEntries`は16、`PlaceSearchIntervalMs`は5000とする。利用者が画面から変更する設定の候補・初期値は引き続き`Settings.h` / `Settings.cpp`で管理する。
+
+地図初期化時にRAMへチャンクの座標・寸法・ファイル位置を保持し、矩形検索時は交差するチャンクだけを開く。起動時・Reader再オープン時にチャンク数を確認し、1501以上は索引確保・Origin列と地図本文の走査へ進まず利用不可とする。逐次探索へ戻さない。上限超過とメモリ確保失敗はGPS更新によって再試行せず、Readerの明示的な閉鎖・SD再マウント後に再確認する。GPS受信とログ記録は継続する。
+
+起動チェックでは`TOO LARGE` / `NO MEMORY`を表示する。Live Placeへ移った後に日英の警告を表示し、上限超過では実数と上限を示す。Esc / Del / Enterで閉じるまで自動消灯せず、閉じた後もエラー帯で利用不可を示す。データセット切替のUIは従来どおり未実装で、現在は番号01の検証へ適用する。`[DATASET]`ログにチャンク数・設定上限・状態を記録する。

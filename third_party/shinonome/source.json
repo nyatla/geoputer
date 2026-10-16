@@ -1,0 +1,34 @@
+{
+  "repository": "https://github.com/code4fukui/shinonome-font",
+  "commit": "053b21e0a11ef5799c1ea3cefc374763add80617",
+  "files": [
+    {
+      "path": "LICENSE",
+      "sha256": "a38a9a330458c11317ec5028df7cd4c7b44210446300e20020f942390d5d5dd2"
+    },
+    {
+      "path": "AUTHORS",
+      "sha256": "4319ec2ed0db417718b8680dff310285d69c16374afa9a4480917164edb422ae"
+    },
+    {
+      "path": "DESIGN.16",
+      "sha256": "a06d440c1e3bba6664a397c9eb589e55303c844671b8a4156d5fa004c2a628c0"
+    },
+    {
+      "path": "README",
+      "sha256": "8a7f21a80668b6843188f6a413185f8511ad07f828dfb9b834bcaa22b92ef740"
+    },
+    {
+      "path": "16/kanjic/font_src.bit",
+      "sha256": "38ed485b3565b9c71147a459a9d0f8057714948ca6eaa2e6a3d74c95868d6467"
+    },
+    {
+      "path": "16/latin1/font_src.bit",
+      "sha256": "dbc6362567edb4e2de7041ad03864f848b1cfbe7c966aba89bb34d0068bd896d"
+    },
+    {
+      "path": "16/hankaku/font_src_diff.bit",
+      "sha256": "0f8603843a64cf9775a32d70e14f5fd05b0047cd4ae278966f9a41ec770ef376"
+    }
+  ]
+}

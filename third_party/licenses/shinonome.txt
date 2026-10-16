@@ -1,0 +1,16 @@
+Shinonome font family - 16-dot Gothic
+Original design: Yasuyuki Furukawa, 2000.
+Modified and maintained by /efont/ - The Electronic Font Open Laboratory, 2001.
+Source: https://github.com/code4fukui/shinonome-font
+Revision: 053b21e0a11ef5799c1ea3cefc374763add80617
+
+Public Domain declaration
+English translation of the original Japanese LICENSE:
+
+All font data, documents and scripts contained in this archive are provided in the Public Domain.
+
+However, because copyright could not legally be abandoned in Japan at the time of publication, the authors listed in AUTHORS declare that they will not exercise their rights, thereby making the materials effectively Public Domain.
+
+You may freely modify, convert to other formats, embed, and redistribute these materials. They are provided entirely without warranty.
+
+The original Japanese notice and the complete AUTHORS file are retained in third_party/shinonome.

@@ -1,0 +1,43 @@
+--- a/cpp/src/galuchat/wgsmap3_reader.hpp
++++ b/cpp/src/galuchat/wgsmap3_reader.hpp
+@@ -1624,8 +1624,10 @@
+         int south = origins_[0].south;
+         int east = west;
+         int north = south;
+-        for (const Origin& origin : origins_) {
++        for (Origin& origin : origins_) {
++            origin.offset = chunk_offset_ + chunks->pos();
+             GaluchatImageDataChunk01Reader chunk(*chunks);
++            origin.width = chunk.width; origin.height = chunk.height;
+             west = origin.west < west ? origin.west : west;
+             south = origin.south < south ? origin.south : south;
+             int chunk_east = detail::addInt(origin.west, chunk.width, "WGSMapSet east");
+@@ -1698,15 +1700,12 @@
+         validateRasterTarget(target, dest);
+         detail::fillRect(dest, 0, 0, dest.width, dest.height, 0);
+ 
+-        std::unique_ptr<ByteReader> reader = factory_->create(chunk_offset_);
+         for (const Origin& origin : origins_) {
++            Rect map_area{origin.west, origin.south, origin.width, origin.height};
++            Rect crossed{};
++            if (!detail::crossRect(map_area, target, crossed)) continue;
++            std::unique_ptr<ByteReader> reader = factory_->create(origin.offset);
+             GaluchatImageDataChunk01Reader chunk(*reader);
+-            Rect map_area{origin.west, origin.south, chunk.width, chunk.height};
+-            Rect crossed{};
+-            if (!detail::crossRect(map_area, target, crossed)) {
+-                chunk.skipToEnd();
+-                continue;
+-            }
+             ZeroFilteredRasterView<Raster> filtered(
+                 dest,
+                 crossed.x - target.x,
+@@ -1766,6 +1765,8 @@
+     struct Origin {
+         int west;
+         int south;
++        int width = 0, height = 0;
++        size_t offset = 0;
+     };
+ 
+     template <class Raster>

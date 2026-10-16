@@ -1,0 +1,403 @@
+#include "StorageTask.h"
+#include <SD.h>
+#include <sd_diskio.h>
+#include <ff.h>
+#include <esp_heap_caps.h>
+#include "../../utils/SyncClient.h"
+
+namespace geoputer {
+
+LogError StorageTask::tryAppendLog(const LogCommand& command, LogSnapshot& snapshot) {
+    const auto error = log_writer_.append(command, taskTimeMs());
+    snapshot = log_writer_.snapshot();
+    return error;
+}
+
+void StorageTask::closeCard() {
+    SdAccessScope access(this);
+    place_lookup_.close();
+    if (drive_ == 0xFF) return;
+    sdcard_unmount(drive_);
+    sdcard_uninit(drive_);
+    drive_ = 0xFF;
+    mounted_ = false;
+}
+
+void StorageTask::mountCard() {
+    SdAccessScope access(this);
+    closeCard();
+    state_.card_state = CardState::NoCard;
+    state_.card_bytes = state_.total_bytes = state_.free_bytes = 0;
+    state_.fat_type = 0;
+    drive_ = sdcard_init(12, &spi_, 4000000);
+    if (drive_ == 0xFF) { state_.sd_error = state_.error = -10; return; }
+    log_writer_.setDrive(drive_);
+    log_reader_.setDrive(drive_);
+    mounted_ = sdcard_mount(drive_, "/sd", 5, false);  // Never format on mount failure.
+    const auto type = sdcard_type(drive_);
+    if (type == CARD_SD || type == CARD_SDHC || type == CARD_MMC) {
+        state_.card_bytes = static_cast<uint64_t>(sdcard_num_sectors(drive_)) * 512;
+        state_.card_state = CardState::Unsupported;
+    }
+    if (!mounted_) { state_.sd_error = state_.error = -11; return; }
+    char volume[] = {static_cast<char>('0' + drive_), ':', '\0'};
+    FATFS* fs = nullptr;
+    DWORD free_clusters = 0;
+    const auto result = f_getfree(volume, &free_clusters, &fs);
+    if (result != FR_OK || !fs) {
+        state_.card_state = CardState::Failed;
+        state_.sd_error = state_.error = static_cast<int32_t>(result);
+        return;
+    }
+    state_.fat_type = fs->fs_type == FS_FAT32 ? 32 : fs->fs_type == FS_FAT16 ? 16 : 12;
+    state_.total_bytes = static_cast<uint64_t>(fs->n_fatent - 2) * fs->csize * 512;
+    state_.free_bytes = static_cast<uint64_t>(free_clusters) * fs->csize * 512;
+    state_.card_state = fs->fs_type == FS_FAT32 ? CardState::Mounted : CardState::Unsupported;
+    state_.sd_error = state_.error = 0;
+}
+
+bool StorageTask::formatCard() {
+    SdAccessScope access(this);
+    // Only reached via a confirmed command. No automatic formatting or NVS erasure.
+    closeCard();
+    drive_ = sdcard_init(12, &spi_, 4000000);
+    if (drive_ == 0xFF) { state_.sd_error = state_.error = -10; return false; }
+    char volume[] = {static_cast<char>('0' + drive_), ':', '\0'};
+    uint8_t work[4096];
+    const auto result = f_mkfs(volume, FM_FAT32 | FM_SFD, 0, work, sizeof(work));
+    closeCard();
+    if (result != FR_OK) {
+        state_.card_state = CardState::Failed;
+        state_.total_bytes = state_.free_bytes = 0;
+        state_.fat_type = 0;
+        state_.sd_error = state_.error = static_cast<int32_t>(result);
+        return false;
+    }
+    mountCard();
+    return state_.card_state == CardState::Mounted;
+}
+
+bool StorageTask::loadSettings() {
+    state_.settings_state = settings_store_.load(state_.settings);
+    if (state_.settings_state != SettingsState::Loaded && state_.settings_state != SettingsState::Defaults) {
+        state_.nvs_error = state_.error = -20;
+        return false;
+    }
+    state_.nvs_error = 0;
+    return true;
+}
+
+bool StorageTask::saveSettings(const Settings& value) {
+    // One versioned, checked record; never clear the namespace or the NVS partition.
+    if (!settings_store_.save(value)) {
+        state_.settings_state = SettingsState::Failed;
+        state_.nvs_error = state_.error = -21;
+        return false;
+    }
+    state_.settings = value;
+    state_.settings_state = SettingsState::Saved;
+    state_.nvs_error = 0;
+    return true;
+}
+
+void StorageTask::handle(const TaskMessage& request) {
+    if (request.source != TaskId::Application || request.request_id == 0) return;
+    if(request.kind==MessageKind::CancelLogRead) {
+        if(has_read_ && request.payload.log_read.token==log_reader_.result().request.token) log_reader_.cancel();
+        return;
+    }
+    if (request.kind == MessageKind::LoadSettings || request.kind == MessageKind::SearchPlace ||
+        request.kind == MessageKind::CheckDataset) {
+        if (!has_job_ && !has_completion_) {
+            has_job_ = true;
+            load_job_ = request.kind == MessageKind::LoadSettings;
+            search_job_ = request.kind == MessageKind::SearchPlace;
+            dataset_job_ = request.kind == MessageKind::CheckDataset;
+            place_request_ = search_job_ ? request.payload.place_request : PlaceRequest{};
+            job_ = {}; job_request_id_ = request.request_id;
+            state_.busy = true;
+        }
+        return;
+    }
+    pending_return_ = {};
+    pending_return_.kind = MessageKind::SyncReturn;
+    pending_return_.source = TaskId::Storage;
+    pending_return_.request_id = request.request_id;
+    pending_return_.sequence = ++sequence_;
+    pending_return_.sent_at_ms = taskTimeMs();
+    pending_return_.payload.result = {};
+    auto& result = pending_return_.payload.result;
+    result.request_kind = request.kind;
+    result.status = OperationStatus::InvalidRequest;
+    if (request.kind == MessageKind::InitializeStorage) {
+        if (!initialized_) {
+            pinMode(5, OUTPUT); digitalWrite(5, HIGH);  // Keep unused LoRa SPI deselected.
+            pinMode(12, OUTPUT); digitalWrite(12, HIGH);
+            spi_.begin(40, 39, 14, 12);
+            nvs_ready_ = settings_store_.begin();
+            state_.settings = defaultSettings();
+            state_.settings_state = nvs_ready_ ? SettingsState::Defaults : SettingsState::Unavailable;
+            state_.nvs_error = nvs_ready_ ? 0 : -20;
+            mountCard();
+            state_.revision = 1;
+            initialized_ = true;
+            Serial.printf("[STORAGE] NVS=%s SD=%s\n", nvs_ready_ ? "ready" : "error", cardStateName(state_.card_state));
+        }
+        result.status = OperationStatus::Ok;  // Individual backend outcomes are in the snapshot.
+    } else if (request.kind == MessageKind::GetStorageStatus) {
+        result.status = initialized_ ? OperationStatus::Ok : OperationStatus::Unavailable;
+    } else if(request.kind==MessageKind::ListLogs || request.kind==MessageKind::ReadLogSummary || request.kind==MessageKind::ReadLogRecords) {
+        if(initialized_ && !has_read_ && !has_job_ && !has_completion_) {
+            auto read=request.payload.log_read;
+            read.kind=request.kind==MessageKind::ListLogs?LogReadKind::List:request.kind==MessageKind::ReadLogSummary?LogReadKind::Summary:LogReadKind::Records;
+            if(log_reader_.begin(read)) {
+                has_read_=true; read_prepared_=false; read_request_id_=request.request_id;
+                const auto log=log_writer_.snapshot(); read_barrier_session_=log.session_id; read_barrier_=log.accepted;
+                state_.busy=true; ++state_.revision; result.status=OperationStatus::Ok;
+            }
+        } else result.status=OperationStatus::Unavailable;
+    } else if (initialized_ && (request.kind == MessageKind::OpenLogSession ||
+               request.kind == MessageKind::FlushLog ||
+               request.kind == MessageKind::CloseLogSession)) {
+        const auto& command = request.payload.log;
+        LogError error = LogError::Invalid;
+        if (state_.card_state != CardState::Mounted) error = LogError::Io;
+        else if (request.kind == MessageKind::OpenLogSession) {
+            error = log_writer_.open(command.session_id, command.created_utc_ms);
+        } else error = log_writer_.requestFlush(command.session_id, command.sample_seq,
+                                                request.kind == MessageKind::CloseLogSession);
+        state_.log = log_writer_.snapshot();
+        state_.log_result = error;
+        ++state_.revision;
+        result.status = error == LogError::None ? OperationStatus::Ok : OperationStatus::Unavailable;
+    } else if (initialized_ && !has_job_ && !has_completion_ &&
+               (request.kind == MessageKind::SaveSettings || request.kind == MessageKind::OperateStorage)) {
+        const auto command = request.payload.storage_command;
+        const bool saving = request.kind == MessageKind::SaveSettings &&
+                            command.operation == StorageOperation::SaveSettings && validSettings(command.settings);
+        const bool sd_operation = request.kind == MessageKind::OperateStorage &&
+                                  (command.operation == StorageOperation::Remount || command.operation == StorageOperation::Unmount ||
+                                   (command.operation == StorageOperation::Format && command.confirmed));
+        if ((saving && nvs_ready_) || (sd_operation && !has_read_ && !log_writer_.hasRetainedSession())) {
+            job_ = command; job_request_id_ = request.request_id;
+            has_job_ = true; load_job_ = false; search_job_ = false; dataset_job_ = false;
+            state_.busy = true; state_.operation = command.operation;
+            if (saving) state_.settings_state = SettingsState::Saving;
+            ++state_.revision;
+            result.status = OperationStatus::Ok;
+        } else if (saving) result.status = OperationStatus::Unavailable;
+    }
+    state_.log = log_writer_.snapshot();
+    result.storage = state_;
+    has_return_ = true;
+}
+
+void StorageTask::sendReturn() {
+    if (has_return_ && sendSpeculative(results_, pending_return_) == SpeculativeResult::Queued) has_return_ = false;
+}
+
+void StorageTask::completeJob() {
+    bool ok = false;
+    state_.error = 0;
+    PlaceResult place{};
+    const uint32_t started_us = micros();
+    const auto cache_before = place_lookup_.cacheStats();
+    const auto wordbook_before = place_lookup_.wordBookCacheStats();
+    if (search_job_ || dataset_job_) {
+        if (mounted_ && state_.card_state == CardState::Mounted)
+            place = dataset_job_ ? place_lookup_.prepare() : place_lookup_.search(place_request_);
+        else { place.request = place_request_; place.state = PlaceState::NoCard; }
+        ok = place.state == PlaceState::Ready || place.state == PlaceState::NotFound;
+    } else if (load_job_) ok = loadSettings();
+    else switch (job_.operation) {
+        case StorageOperation::SaveSettings: ok = saveSettings(job_.settings); break;
+        case StorageOperation::Remount: mountCard(); ok = state_.card_state == CardState::Mounted; break;
+        case StorageOperation::Unmount:
+            closeCard(); state_.card_state = CardState::Unmounted;
+            state_.card_bytes = state_.total_bytes = state_.free_bytes = 0; state_.fat_type = 0;
+            state_.sd_error = 0;
+            ok = true; break;
+        case StorageOperation::Format: ok = formatCard(); break;
+        default: break;
+    }
+    state_.busy = has_read_;
+    state_.operation = job_.operation;
+    state_.operation_ok = ok;
+    ++state_.revision;
+    completion_ = {};
+    completion_.kind = !ok ? (load_job_ || search_job_ || dataset_job_ ? MessageKind::ReadFailed : MessageKind::StorageError) :
+                       load_job_ || search_job_ || dataset_job_ ? MessageKind::ReadCompleted :
+                       job_.operation == StorageOperation::SaveSettings ? MessageKind::SettingsWritten :
+                       MessageKind::StorageOperationCompleted;
+    completion_.source = TaskId::Storage;
+    completion_.sequence = ++sequence_;
+    completion_.sent_at_ms = taskTimeMs();
+    completion_.request_id = job_request_id_;
+    auto& result = completion_.payload.storage_completion;
+    result = {};
+    result.request_id = job_request_id_;
+    result.operation_id = job_.operation_id;
+    state_.log = log_writer_.snapshot();
+    result.snapshot = state_;
+    result.read_kind = dataset_job_ ? StorageReadKind::Dataset : search_job_ ? StorageReadKind::Place :
+                       load_job_ ? StorageReadKind::Settings : StorageReadKind::None;
+    result.place = place;
+    has_completion_ = true;
+    has_job_ = false;
+    if (search_job_ || dataset_job_) {
+        const auto cache = place_lookup_.cacheStats();
+        const auto wordbook = place_lookup_.wordBookCacheStats();
+        Serial.printf("[DATASET] chunks=%llu max=%lu state=%s\n",
+                      static_cast<unsigned long long>(place.dataset.chunks), static_cast<unsigned long>(place.dataset.limit),
+                      placeStateName(place.state));
+        Serial.printf("[GIS] %s code=%lld detail=%s stack_free=%u heap=%u min_heap=%u largest=%u\n",
+                                  placeStateName(place.state), static_cast<long long>(place.region_code), place.detail,
+                                  static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)), ESP.getFreeHeap(),
+                                  ESP.getMinFreeHeap(), static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT)));
+        if (search_job_) Serial.printf("[CACHE] %s bytes=%u hit=%lu miss=%lu fill=%lu valid=%u rect=%d,%d,%d,%d elapsed_us=%lu\n",
+                                      cache.valid ? (cache.hits > cache_before.hits ? "HIT" : "MISS") : "INVALID",
+                                      static_cast<unsigned>(cache.bytes), static_cast<unsigned long>(cache.hits),
+                                      static_cast<unsigned long>(cache.misses), static_cast<unsigned long>(cache.fills),
+                                      cache.valid, cache.bounds.x, cache.bounds.y, CachedMapReader::Side, CachedMapReader::Side,
+                                      static_cast<unsigned long>(micros() - started_us));
+        if (search_job_) Serial.printf("[WORDBOOK] %s entries=%u/%u hit=%lu miss=%lu\n",
+                                      place.state != PlaceState::Ready ? "NONE" :
+                                      wordbook.hits != wordbook_before.hits ? "HIT" : "MISS",
+                                      static_cast<unsigned>(wordbook.entries), static_cast<unsigned>(WordBookCache::Capacity),
+                                      static_cast<unsigned long>(wordbook.hits),
+                                      static_cast<unsigned long>(wordbook.misses));
+        if (search_job_ && mounted_ && state_.card_state == CardState::Mounted) {
+            const auto& time = place_lookup_.readTiming();
+            Serial.printf("[READ-TIME] total_us=%llu open_us=%llu map_us=%llu rect_us=%llu wordbook_us=%llu text_us=%llu\n",
+                          static_cast<unsigned long long>(time.total_us), static_cast<unsigned long long>(time.open_us),
+                          static_cast<unsigned long long>(time.map_us), static_cast<unsigned long long>(time.rect_us),
+                          static_cast<unsigned long long>(time.wordbook_us), static_cast<unsigned long long>(time.text_us));
+            Serial.printf("[READ-IO] map_us=%llu map_bytes=%llu map_reads=%lu map_seeks=%lu map_opens=%lu map_closes=%lu book_us=%llu book_bytes=%llu book_reads=%lu book_seeks=%lu book_opens=%lu book_closes=%lu\n",
+                          static_cast<unsigned long long>(time.map_io.elapsed_us), static_cast<unsigned long long>(time.map_io.bytes),
+                          static_cast<unsigned long>(time.map_io.reads), static_cast<unsigned long>(time.map_io.seeks),
+                          static_cast<unsigned long>(time.map_io.opens), static_cast<unsigned long>(time.map_io.closes),
+                          static_cast<unsigned long long>(time.wordbook_io.elapsed_us), static_cast<unsigned long long>(time.wordbook_io.bytes),
+                          static_cast<unsigned long>(time.wordbook_io.reads), static_cast<unsigned long>(time.wordbook_io.seeks),
+                          static_cast<unsigned long>(time.wordbook_io.opens), static_cast<unsigned long>(time.wordbook_io.closes));
+            auto print_io_time = [](const char* name, const FileIoTiming& io) {
+                Serial.printf("[%s-IO-TIME] read_us=%llu seek_us=%llu open_us=%llu close_us=%llu stat_us=%llu\n", name,
+                              static_cast<unsigned long long>(io.read_us), static_cast<unsigned long long>(io.seek_us),
+                              static_cast<unsigned long long>(io.open_us), static_cast<unsigned long long>(io.close_us),
+                              static_cast<unsigned long long>(io.stat_us));
+            };
+            print_io_time("MAP", time.map_io);
+            print_io_time("BOOK", time.wordbook_io);
+        }
+    } else Serial.printf("[STORAGE] op=%u ok=%u NVS=%u SD=%s error=%ld stack_free=%u\n",
+                  static_cast<unsigned>(state_.operation), ok, static_cast<unsigned>(state_.settings_state),
+                  cardStateName(state_.card_state), static_cast<long>(state_.error),
+                  static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)));
+}
+
+void StorageTask::notify() {
+    if (has_completion_ && sendSpeculative(notifications_, completion_) == SpeculativeResult::Queued) has_completion_ = false;
+}
+
+void StorageTask::sdBegin() {
+    if (sd_depth_++) return;
+    ++state_.sd.access_id;
+    if (!++state_.sd.revision) ++state_.sd.revision;
+    state_.sd.active = true; sd_dirty_ = true;
+    notifyActivity();
+}
+void StorageTask::sdEnd() {
+    if (!sd_depth_ || --sd_depth_) return;
+    if (!++state_.sd.revision) ++state_.sd.revision;
+    state_.sd.active = false; sd_dirty_ = true;
+    notifyActivity();
+}
+void StorageTask::cacheState(RgCacheState cache, bool new_dataset) {
+    if (!new_dataset && cache == state_.rg.state) return;
+    if (new_dataset) ++state_.rg.dataset_generation;
+    state_.rg.state = cache;
+    if (!++state_.rg.revision) ++state_.rg.revision;
+    rg_dirty_ = true;
+    notifyActivity();
+}
+void StorageTask::notifyActivity() {
+    TaskMessage event{};
+    event.source = TaskId::Storage; event.sent_at_ms = taskTimeMs();
+    if (rg_dirty_) {
+        event.kind = MessageKind::RgCacheStateChanged;
+        event.payload.rg = state_.rg;
+        if (sendSpeculative(notifications_, event) == SpeculativeResult::Queued) rg_dirty_ = false;
+    }
+    if (sd_dirty_) {
+        event.kind = MessageKind::SdAccessChanged;
+        event.payload.sd = state_.sd;
+        if (sendSpeculative(notifications_, event) == SpeculativeResult::Queued) sd_dirty_ = false;
+    }
+}
+void StorageTask::flushLog(bool force) {
+    const auto log = log_writer_.snapshot();
+    const auto now = taskTimeMs();  // Sample time after the producer-published timestamp.
+    const bool due = log.buffered && now - log.buffer_since_ms >= FlushIntervals[state_.settings.flush_interval] * 1000u;
+    if ((!force && !log_writer_.needsFlush() && !due) || static_cast<int32_t>(now - next_log_retry_) < 0) return;
+    const bool ok = log_writer_.flush(now);
+    state_.log = log_writer_.snapshot();
+    state_.log_result = ok ? LogError::None : state_.log.error;
+    next_log_retry_ = ok ? now : now + 5000;
+    ++state_.revision;
+    completion_ = {};
+    completion_.kind = ok ? MessageKind::LogWritten : MessageKind::StorageError;
+    completion_.source = TaskId::Storage;
+    completion_.sent_at_ms = now;
+    completion_.payload.storage_completion.snapshot = state_;
+    completion_.payload.storage_completion.read_kind = StorageReadKind::Log;
+    has_completion_ = true;
+    Serial.printf("[LOG] saved=%lu buffered=%u closing=%u error=%u\n",
+                  static_cast<unsigned long>(state_.log.saved), state_.log.buffered,
+                  state_.log.closing, static_cast<unsigned>(state_.log.error));
+}
+
+void StorageTask::stepLogRead() {
+    if(!read_prepared_ && !log_reader_.done()) {
+        const auto log=log_writer_.snapshot();
+        if(state_.card_state!=CardState::Mounted) log_reader_.fail(LogReadError::NoCard);
+        else if(log.session_id==read_barrier_session_ && log.saved<read_barrier_) {
+            if(log.error!=LogError::None && static_cast<int32_t>(taskTimeMs()-next_log_retry_)<0)
+                log_reader_.fail(LogReadError::SaveFailed);
+            else { flushLog(true); return; }
+        } else read_prepared_=true;
+    }
+    if(!log_reader_.done()) log_reader_.step(&log_writer_);
+    if(!log_reader_.done()) return;
+    has_read_=false; state_.busy=false; ++state_.revision;
+    state_.log=log_writer_.snapshot();
+    completion_={}; completion_.source=TaskId::Storage; completion_.request_id=read_request_id_;
+    completion_.sequence=++sequence_; completion_.sent_at_ms=taskTimeMs();
+    const auto& read=log_reader_.result();
+    completion_.kind=read.error==LogReadError::None?MessageKind::ReadCompleted:MessageKind::ReadFailed;
+    auto& result=completion_.payload.storage_completion;
+    result.request_id=read_request_id_; result.snapshot=state_; result.read_kind=StorageReadKind::LogBrowse;
+    result.logs=read; has_completion_=true;
+    Serial.printf("[BROWSE] kind=%u token=%lu error=%u count=%u records=%lu start=%lu stack_free=%u\n",
+                  static_cast<unsigned>(read.request.kind),static_cast<unsigned long>(read.request.token),static_cast<unsigned>(read.error),
+                  read.count,static_cast<unsigned long>(read.summary.records),static_cast<unsigned long>(read.request.start),
+                  static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)));
+}
+
+void StorageTask::run() {
+    for (;;) {
+        sendReturn();
+        notify();
+        TaskMessage request{};
+        // Keep the one accepted operation/result until delivered. An incoming
+        // read notification must never be consumed and silently discarded.
+        if (!has_return_ && !has_job_ && !has_completion_ && inbox().receive(request)) { handle(request); sendReturn(); }
+        // Display notifications never gate physical work. Only accepted job/results are retained.
+        if (!has_return_ && has_job_) completeJob();
+        if (!has_return_ && !has_job_ && !has_completion_) flushLog();
+        if (!has_return_ && !has_job_ && !has_completion_ && has_read_) stepLogRead();
+        notifyActivity();
+        notify();
+        vTaskDelay(pdMS_TO_TICKS(5));
+    }
+}
+
+}  // namespace geoputer

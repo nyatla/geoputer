@@ -1,0 +1,4 @@
+.pio/
+.venv/
+.venv-win-flash/
+__pycache__/
