@@ -6,13 +6,14 @@
 #include "StorageActivity.h"
 #include "log/LogTypes.h"
 #include "log/LogReadTypes.h"
+#include "dataset/DatasetTypes.h"
 
 namespace geoputer {
 
 enum class SettingsState : uint8_t { Unavailable, Defaults, Loaded, Invalid, Saving, Saved, Failed };
 enum class CardState : uint8_t { Unknown, NoCard, Mounted, Unmounted, Unsupported, Failed };
 enum class StorageOperation : uint8_t { None, SaveSettings, Remount, Unmount, Format };
-enum class StorageReadKind : uint8_t { None, Settings, Place, Dataset, Log, LogBrowse };
+enum class StorageReadKind : uint8_t { None, Settings, Place, Dataset, Log, LogBrowse, DatasetBrowser };
 
 struct StorageSnapshot {
     uint32_t revision;
@@ -47,7 +48,7 @@ struct StorageCompletion {
     uint32_t operation_id;
     StorageSnapshot snapshot;
     StorageReadKind read_kind;
-    union { PlaceResult place; LogReadReply logs; };
+    union { PlaceResult place; LogReadReply logs; DatasetView dataset_view; };
 };
 
 inline const char* cardStateName(CardState state) {

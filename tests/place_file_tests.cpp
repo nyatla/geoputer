@@ -16,12 +16,15 @@ struct Activity : StorageObserver {
     void cacheState(RgCacheState state, bool) override { cache=state; ++transitions; }
 };
 void testMapCache();
+void testDatasetFiles(const std::string& root,const std::string& map,const std::string& book);
 void testMapCacheFile(const std::string& path);
 std::vector<uint8_t> oversizedMapFixture(unsigned count);
 
 int main(int argc, char** argv) {
     try {
-        if (argc != 4) throw std::runtime_error("usage: test <temporary directory> <mapset> <SJIS wordbook>");
+        if (argc != 4 && argc != 5) throw std::runtime_error(
+            "usage: test <temporary directory> <mapset> <UTF-8 wordbook> [unsupported wordbook]");
+        testDatasetFiles(argv[1],argv[2],argv[3]);
         testMapCache();
         testMapCacheFile(argv[2]);
         const fs::path root(argv[1]);
@@ -101,7 +104,7 @@ int main(int argc, char** argv) {
             check(lookup.accessMode(request) == PlaceAccessMode::Cache, "same point announces cache access after a read");
             if (result.state != PlaceState::Ready) throw std::runtime_error(result.detail);
             check(std::strcmp(result.lines[0], "千葉県") == 0 && std::strcmp(result.lines[1], "習志野市") == 0,
-                  "real SJIS dataset resolves Narashino City Hall");
+                  "real UTF-8 dataset resolves Narashino City Hall");
             check(result.request.fix.longitude == request.fix.longitude && result.request.sample_seq == 31,
                   "result retains the coordinate snapshot");
             auto tokyo = request;
@@ -150,32 +153,60 @@ int main(int argc, char** argv) {
             std::ifstream input(data / "names.giswordbook", std::ios::binary);
             std::string bytes((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
             input.close();
-            const auto encoding = bytes.find("cp932");
-            check(encoding != std::string::npos, "test source declares CP932");
-            bytes.replace(encoding, 5, "utf-8");
+            const auto token = bytes.find("千");
+            check(token != std::string::npos, "test source contains the UTF-8 prefecture token");
+            bytes[token] = static_cast<char>(0xFF); // Same size, invalid UTF-8 in the token table.
             std::ofstream output(data / "names.giswordbook", std::ios::binary | std::ios::trunc);
             output.write(bytes.data(), bytes.size());
         }
         check(lookup.search(request).state == PlaceState::EncodingError && !lookup.wordBookCacheStats().entries,
               "invalid text is never inserted into the wordbook cache");
         check(lookup.search(request).state == PlaceState::EncodingError && lookup.wordBookCacheStats().misses == 2,
-              "text conversion failures are retried rather than cached");
+              "invalid UTF-8 failures are retried rather than cached");
         lookup.close();
         fs::copy_file(argv[3], data / "names.giswordbook", fs::copy_options::overwrite_existing);
         check(lookup.search(request).state == PlaceState::Ready && lookup.wordBookCacheStats().misses == 1,
               "reopening a repaired dataset resolves names again without a stale cache entry");
         lookup.close();
-        {
+        for (const std::string metadata : {
+                "{\"text_encoding\":\"utf8\",\"token_encoding\":\"UTF-8\"}",
+                "{\"text_encoding\":\"utf8\",\"token_encoding\":\"utf8\"}",
+                "{\"text_encoding\":\"UTF-8\"}",
+                "{\"text_encoding\":\"utf8\",\"token_encoding\":\"\"}",
+                "{\"text_encoding\":\"utf8\",\"token_encoding\":\"cp932\"}",
+                "{\"token_encoding\":\"sjis\"}", "{\"token_encoding\":\"shift_jis\"}",
+                "{\"token_encoding\":\"shift-jis\"}", "{\"token_encoding\":\"utf16\"}", "{}"}) {
+            lookup.close();
+            fs::copy_file(argv[3], data / "names.giswordbook", fs::copy_options::overwrite_existing);
             std::ifstream input(data / "names.giswordbook", std::ios::binary);
             std::string bytes((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
             input.close();
-            const auto encoding = bytes.find("cp932");
-            check(encoding != std::string::npos, "test source declares CP932");
-            bytes.replace(encoding, 5, "utf16");  // Same byte length keeps the chunk framing intact.
+            const auto start = bytes.find('{'), end = bytes.find('}', start);
+            check(start != std::string::npos && end != std::string::npos && metadata.size() <= end-start+1,
+                  "test metadata fits the original header framing");
+            bytes.replace(start, end-start+1, metadata + std::string(end-start+1-metadata.size(), ' '));
             std::ofstream output(data / "names.giswordbook", std::ios::binary | std::ios::trunc);
             output.write(bytes.data(), bytes.size());
+            output.close();
+            const bool supported = metadata.find("cp932") == std::string::npos &&
+                metadata.find("sjis") == std::string::npos && metadata.find("shift") == std::string::npos &&
+                metadata.find("utf16") == std::string::npos && metadata != "{}";
+            check(lookup.prepare().state == (supported ? PlaceState::Ready : PlaceState::EncodingError),
+                  "only UTF-8 metadata is accepted; token encoding overrides text encoding");
+            if (supported) check(lookup.search(request).state == PlaceState::Ready,
+                                 "UTF-8 aliases and text_encoding fallback resolve unchanged names");
+            else check(!lookup.wordBookCacheStats().entries && lookup.cacheStats().bytes == 0 && activity.depth == 0,
+                       "unsupported encoding allocates no image, caches no names and balances SD scopes");
         }
-        check(lookup.prepare().state == PlaceState::EncodingError, "startup reports unsupported dictionary encoding");
-        std::cout << "PASS: real file-based SDK lookup, SJIS place names, repeated seeks, missing/duplicate/corrupt data and recovery\n";
+        if (argc == 5) {
+            lookup.close();
+            fs::copy_file(argv[4], data / "names.giswordbook", fs::copy_options::overwrite_existing);
+            check(lookup.prepare().state == PlaceState::EncodingError &&
+                  lookup.search(request).state == PlaceState::EncodingError &&
+                  !lookup.wordBookCacheStats().entries && lookup.cacheStats().bytes == 0 && activity.depth == 0,
+                  "real legacy Wordbook is rejected before raster allocation and name lookup");
+            std::cout << "PASS: supplied legacy Wordbook is rejected without character conversion\n";
+        }
+        std::cout << "PASS: real file-based SDK lookup, UTF-8 names/encoding rejection, repeated seeks, missing/duplicate/corrupt data and recovery\n";
     } catch (const std::exception& e) { std::cerr << "FAIL: " << e.what() << '\n'; return 1; }
 }

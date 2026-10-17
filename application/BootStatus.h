@@ -21,6 +21,7 @@ struct BootStatus {
     static constexpr uint32_t IssueHoldMs = 5000;
     BootCheck checks[Count]{};
     bool complete = false;
+    bool fatal_dataset = false;
 
     void set(BootItem item, BootCheckState state, const char* detail) {
         auto& check = checks[static_cast<unsigned>(item)];
@@ -56,6 +57,7 @@ struct BootStatus {
         }
     }
     void dataset(PlaceState state) {
+        fatal_dataset = state == PlaceState::DatasetMissing || state == PlaceState::NoCard;
         switch (state) {
             case PlaceState::Ready: set(BootItem::Dataset, BootCheckState::Passed, "OPEN OK"); break;
             case PlaceState::NoCard: set(BootItem::Dataset, BootCheckState::Warning, "NO SD"); break;

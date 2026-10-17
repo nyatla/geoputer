@@ -17,13 +17,15 @@ inline uint32_t taskTimeMs() {
 // Only the Application task uses this object. There is exactly one pending request.
 class SyncClient {
 public:
-    explicit SyncClient(Queue<TaskMessage, 1>& results) : results_(results) {}
+    explicit SyncClient(Queue<ReturnMessage, 1>& results) : results_(results) {}
 
-    template <size_t Capacity>
-    SyncSendResult sendSync(TaskId peer, Queue<TaskMessage, Capacity>& destination,
-                            TaskMessage request, TickType_t timeout) {
+    template <typename Request, size_t Capacity>
+    SyncSendResult sendSync(TaskId peer, Queue<Request, Capacity>& destination,
+                            Request& request, TickType_t timeout) {
         if (waiting_) return SyncSendResult::SyncPendingError;
         if (!results_.available() || !destination.available()) return SyncSendResult::DestinationUnavailable;
+        // Stamp the caller-owned envelope in place. FreeRTOS copies the value
+        // on send; passing a full UI payload by value wastes task stack space.
         request.source = TaskId::Application;
         request.request_id = nextId();
         request.sequence = ++sequence_;
@@ -38,7 +40,7 @@ public:
 
     SyncReceiveResult receiveSyncResult(SyncReturn& result, TickType_t timeout) {
         if (!waiting_) return SyncReceiveResult::NoPendingSyncError;
-        TaskMessage message{};
+        ReturnMessage message{};
         if (!results_.receive(message, timeout)) return SyncReceiveResult::ResultTimeout;
         if (message.kind != MessageKind::SyncReturn || message.source != peer_ ||
             message.request_id != request_id_ || message.payload.result.request_kind != kind_) {
@@ -57,7 +59,7 @@ private:
         return next_id_;
     }
 
-    Queue<TaskMessage, 1>& results_;
+    Queue<ReturnMessage, 1>& results_;
     bool waiting_ = false;
     TaskId peer_ = TaskId::UI;
     MessageKind kind_ = MessageKind::GetUiContent;

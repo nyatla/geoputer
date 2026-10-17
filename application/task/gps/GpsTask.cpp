@@ -3,7 +3,7 @@
 
 namespace geoputer {
 
-void GpsTask::handle(const TaskMessage& request) {
+void GpsTask::handle(const GpsRequest& request) {
     if (request.source != TaskId::Application || request.request_id == 0) return;
     pending_return_ = {};
     pending_return_.kind = MessageKind::SyncReturn;
@@ -38,7 +38,7 @@ void GpsTask::sendReturn() {
 
 void GpsTask::notify() {
     if (!receiver_.changed()) return;
-    TaskMessage event{};
+    AppNotification event{};
     event.kind = receiver_.sampleChanged() ? MessageKind::GpsSampleReady : MessageKind::GpsStatusChanged;
     event.source = TaskId::GPS;
     event.sequence = ++sequence_;
@@ -62,7 +62,7 @@ void GpsTask::run() {
     uint32_t diagnostic_at = taskTimeMs();
     for (;;) {
         sendReturn();
-        TaskMessage request{};
+        GpsRequest request{};
         if (!has_return_ && inbox().receive(request)) {
             handle(request);
             sendReturn();

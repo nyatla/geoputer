@@ -5,13 +5,14 @@ import re
 import subprocess
 import tempfile
 from PIL import Image
-from ui_preview_support import ROOT, M5GFX, ADAPTER
+from ui_preview_support import ROOT, M5GFX, ADAPTER, reference_frame
 
 SCENE = r'''
 #include <cstdio>
 #include <cstring>
 #include <stdexcept>
 #include "task/ui/UiRenderer.h"
+#include "dialog_preview_checks.h"
 #include "task/ui/SettingsLayout.h"
 #include "task/ui/SettingsText.h"
 #include "task/ui/Shinonome.h"
@@ -36,6 +37,7 @@ int main(int argc,char** argv){
     }
     for(unsigned n=0;n<SettingCount;++n){
         for(unsigned choice=0;choice<settingChoices(n);++choice){
+            if(n==static_cast<unsigned>(SettingId::Dataset) && !choice)continue;
             char value[32];settingsValueText(language,n,choice,value,sizeof(value));
             const int value_x=236-width(value,english||n==0);
             check(20+width(settingsOperationLabel(language,n),english)+8<=value_x,"setting label overlaps right-aligned value");
@@ -45,7 +47,7 @@ int main(int argc,char** argv){
                     SettingsLabel::ResetScope,SettingsLabel::KeepSd})
         check(width(settingsLabel(language,label),english)<=232,"confirmation text exceeds screen");
     check(width(settingsLabel(language,SettingsLabel::ResetAction),english)<=216,"reset action exceeds screen");
-    M5GFX display;UiRenderer renderer(display);check(renderer.begin(),"renderer init");
+    M5GFX display;UiRenderer renderer(display);check(renderer.begin(previewColorDepth()),"renderer init");
     UiModel ui;UiData data{};data.settings=defaultSettings();data.settings.language=language;
     if(!std::strcmp(mode,"timeout-never"))data.settings.screen_timeout=4;
     data.storage.settings_state=SettingsState::Defaults;
@@ -95,6 +97,7 @@ int main(int argc,char** argv){
             }
         };
         for(unsigned row=0;row<SettingCount;++row)for(unsigned choice=0;choice<settingChoices(row);++choice) {
+            if(row==static_cast<unsigned>(SettingId::Dataset) && !choice)continue;
             UiData trial=data;
             check(setSettingValue(trial.settings,row,choice),"setting choice fixture");
             trial.settings.language=language;
@@ -106,7 +109,7 @@ int main(int argc,char** argv){
                 if(choice!=static_cast<unsigned>(language))model.keyPressed(UiKey::Right,11);
             }
             renderer.draw(model);
-            const auto color=settingEditable(row)?TFT_CYAN:TFT_DARKGREY;
+            const auto color=settingEditable(row)||row==static_cast<unsigned>(SettingId::Dataset)?TFT_CYAN:TFT_DARKGREY;
             const int y=27+(row-SettingsLayout::firstVisible(row,SettingCount))*20;
             verifyText(20,y,settingsOperationLabel(language,row),english,color);
             char value[32];settingsValueText(language,row,choice,value,sizeof(value));
@@ -115,7 +118,7 @@ int main(int argc,char** argv){
                 check(display.pixels.at(yy*240+x)==TFT_BLACK,"value crossed the right margin");
         }
     }
-    renderer.draw(ui);
+    renderAndCheckDialog(renderer,ui,display);
     auto pixel=[&](int x,int y,uint16_t color){check(display.pixels.at(y*240+x)==color,"native font pixel mismatch");};
     auto ascii=[&](int x,int y,char c,uint16_t color){
         for(int row=0;row<16;++row)for(int col=0;col<8;++col)
@@ -157,7 +160,7 @@ def main():
     args = parser.parse_args()
     output = ROOT / "doc/画面・操作/settings"
     enum_source = (M5GFX / "v1/misc/enum.hpp").read_text()
-    renderer = (ROOT / "application/task/ui/UiRenderer.cpp").read_text()
+    renderer = (ROOT / "application/task/ui/UiRenderer.cpp").read_text() + (ROOT / "application/task/ui/UiCanvas.h").read_text()
     colors = []
     for name in sorted(set(re.findall(r"\bTFT_[A-Z]+\b", SCENE + renderer))):
         value = re.search(rf"\b{name}\s*=\s*(0x[0-9A-Fa-f]+)", enum_source)[1]
@@ -171,16 +174,16 @@ def main():
                   ("PixelFont", "UiRenderer", "UiModel", "LicenseText", "SettingsText", "Shinonome")]
         executable = work / "render"
         subprocess.run(["g++", "-std=c++17", "-Wall", "-Wextra", "-Werror", "-pedantic", "-fsanitize=undefined",
-                        "-fno-sanitize-recover=all", "-I", str(work), "-I", str(ROOT / "application"),
+                        "-fno-sanitize-recover=all", "-I", str(work), "-I", str(ROOT / "tools"), "-I", str(ROOT / "application"),
                         "-I", str(ROOT / "tests/support"), "-I", str(M5GFX / "Fonts"), str(work / "scene.cpp"),
-                        *map(str, source), str(ROOT / "application/Settings.cpp"), "-o", str(executable)], check=True, timeout=60)
+                        *map(str, source), str(ROOT / "application/Settings.cpp"), "-o", str(executable)], check=True, timeout=180)
         license_frames = []
         for language in ("ja", "en"):
-            license_frames.append(subprocess.check_output([str(executable), "license-baseline", language], timeout=20))
+            license_frames.append(reference_frame(executable, "license-baseline", language))
             for mode in modes:
                 ppm = work / "screen.ppm"
                 with ppm.open("wb") as target:
-                    subprocess.run([str(executable), mode, language], stdout=target, check=True, timeout=10)
+                    target.write(reference_frame(executable, mode, language))
                 with Image.open(ppm) as source_image:
                     image = source_image.convert("RGB")
                 stem = f"settings-{language}-{mode}"

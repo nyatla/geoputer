@@ -5,22 +5,6 @@
 
 namespace geoputer {
 namespace {
-const uint16_t Cp932[] = {
-#include "Cp932Table.inc"
-};
-
-void appendUtf8(std::string& out, uint16_t cp) {
-    if (cp < 0x80) out += static_cast<char>(cp);
-    else if (cp < 0x800) {
-        out += static_cast<char>(0xC0 | (cp >> 6));
-        out += static_cast<char>(0x80 | (cp & 0x3F));
-    } else {
-        out += static_cast<char>(0xE0 | (cp >> 12));
-        out += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
-        out += static_cast<char>(0x80 | (cp & 0x3F));
-    }
-}
-
 size_t charBytes(unsigned char c) {
     return c < 0x80 ? 1 : c < 0xE0 ? 2 : c < 0xF0 ? 3 : 4;
 }
@@ -43,32 +27,6 @@ void copyLine(const std::string& value, char* out) {
     }
 }
 }  // namespace
-
-std::string cp932ToUtf8(const std::string& source) {
-    std::string result;
-    result.reserve(source.size() * 2);
-    for (size_t i = 0; i < source.size(); ++i) {
-        const auto c = static_cast<unsigned char>(source[i]);
-        uint16_t cp = 0;
-        if (c < 0x80) cp = c;
-        else if (c >= 0xA1 && c <= 0xDF) cp = 0xFF61 + c - 0xA1;
-        else if (c == 0x80) cp = 0x80;
-        else if (c == 0xA0) cp = 0xF8F0;
-        else if (c >= 0xFD) cp = 0xF8F1 + c - 0xFD;
-        else {
-            const int lead = c >= 0x81 && c <= 0x9F ? c - 0x81 :
-                             c >= 0xE0 && c <= 0xFC ? c - 0xE0 + 31 : -1;
-            if (lead < 0 || i + 1 == source.size()) throw std::runtime_error("invalid CP932 lead byte");
-            const auto t = static_cast<unsigned char>(source[++i]);
-            const int trail = t >= 0x40 && t <= 0x7E ? t - 0x40 :
-                              t >= 0x80 && t <= 0xFC ? t - 0x80 + 63 : -1;
-            if (trail < 0 || !(cp = Cp932[lead * 188 + trail])) throw std::runtime_error("invalid CP932 pair");
-        }
-        if (!cp) throw std::runtime_error("NUL in place name");
-        appendUtf8(result, cp);
-    }
-    return result;
-}
 
 bool validUtf8(const std::string& source) {
     for (size_t i = 0; i < source.size();) {

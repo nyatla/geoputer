@@ -1,6 +1,7 @@
 #include "PlaceLookup.h"
 #include "TextEncoding.h"
 #include "ObservedFileReader.h"
+#include "../dataset/DatasetMetadata.h"
 #include <cctype>
 #include <cmath>
 #include <cstdio>
@@ -39,6 +40,19 @@ std::string metadataString(const std::string& metadata, const char* key) {
 }
 }  // namespace
 
+void PlaceLookup::configure(std::string directory, std::string language) {
+    close(); directory_ = std::move(directory); language_ = std::move(language); manifest_ = true;
+}
+bool PlaceLookup::describe(DatasetDetail& result) const {
+    if (!map_ || !wordbook_) return false;
+    const auto bounds = map_->coverage();
+    result.west = bounds.x; result.south = bounds.y;
+    result.east = bounds.x + bounds.width; result.north = bounds.y + bounds.height;
+    result.unit_inv_x = map_->unitInvX(); result.unit_inv_y = map_->unitInvY();
+    result.chunks = map_->chunkCount();
+    return true;
+}
+
 void PlaceLookup::close() {
     const bool had_reader = wordbook_ || map_;
     wordbook_cache_.clear();
@@ -56,6 +70,18 @@ PlaceState PlaceLookup::open() {
     dataset_.limit = config::MaxDatasetChunks;
     std::string mapPath, wordbookPath;
     unsigned maps = 0, books = 0;
+    if (manifest_) {
+        const auto metadata = readDatasetMetadata(directory_, UiLanguage::Japanese, language_.c_str(), observer_);
+        if (metadata.error != DatasetError::None)
+            return metadata.error == DatasetError::Missing ? PlaceState::DatasetMissing : PlaceState::DataError;
+        language_ = metadata.language;
+        mapPath = directory_ + "/" + metadata.map;
+        wordbookPath = directory_ + "/" + metadata.wordbook;
+        SdAccessScope access(observer_);
+        struct stat status{};
+        if (stat(mapPath.c_str(), &status) || !S_ISREG(status.st_mode) ||
+            stat(wordbookPath.c_str(), &status) || !S_ISREG(status.st_mode)) return PlaceState::DatasetMissing;
+    } else {
     {
     SdAccessScope directory_access(observer_);
     std::unique_ptr<DIR, int (*)(DIR*)> dir(opendir(directory_.c_str()), closedir);
@@ -74,6 +100,7 @@ PlaceState PlaceLookup::open() {
     if (maps > 1 || books > 1) return PlaceState::AmbiguousFiles;
     if (!maps || !books) return PlaceState::DatasetMissing;
     }
+    }
     // Same ReaderFactory/Reader API as the SDK's file sample. ESP-IDF's VFS
     // exposes the already-mounted FatFs volume at /sd; do not mount SD twice.
     std::unique_ptr<CachedMapReader> map;
@@ -90,9 +117,7 @@ PlaceState PlaceLookup::open() {
     auto encoding = metadataString(book->metadata(), "token_encoding");
     if (encoding.empty()) encoding = metadataString(book->metadata(), "text_encoding");
     for (auto& c : encoding) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-    if (encoding == "cp932" || encoding == "sjis" || encoding == "shift_jis" || encoding == "shift-jis") cp932_ = true;
-    else if (encoding == "utf8" || encoding == "utf-8") cp932_ = false;
-    else return PlaceState::EncodingError;
+    if (encoding != "utf8" && encoding != "utf-8") return PlaceState::EncodingError;
     map_ = std::move(map); wordbook_ = std::move(book);
     dataset_.state = PlaceState::Ready;
     return PlaceState::Ready;
@@ -162,7 +187,6 @@ PlaceResult PlaceLookup::search(const PlaceRequest& request) {
         result.region_code = code;
         try {
             ElapsedTime elapsed(timing_.text_us);
-            if (cp932_) for (auto& part : components) part = cp932ToUtf8(part);
             formatPlaceLines(components, result.lines);
             wordbook_cache_.remember(static_cast<uint32_t>(code), result.lines);
         } catch (const std::bad_alloc&) {

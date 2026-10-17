@@ -7,6 +7,7 @@
 #include "WordBookCache.h"
 #include "ReadTiming.h"
 #include "../PlaceTypes.h"
+#include "../dataset/DatasetTypes.h"
 
 namespace geoputer {
 
@@ -18,6 +19,9 @@ public:
     PlaceLookup& operator=(const PlaceLookup&) = delete;
     void setObserver(StorageObserver* observer) { observer_ = observer; }
     PlaceResult search(const PlaceRequest& request);
+    void configure(std::string directory, std::string language = "");
+    bool describe(DatasetDetail& result) const;
+    const std::string& selectedLanguage() const { return language_; }
     PlaceResult prepare();  // Validate file pair/headers/encoding without requiring GPS.
     void close();
     MapCacheStats cacheStats() const { return map_ ? map_->stats() : MapCacheStats{}; }
@@ -27,11 +31,12 @@ public:
 private:
     PlaceState open();
     std::string directory_;
+    std::string language_;
+    bool manifest_ = false;
     PlaceReadTiming timing_{}; // Must outlive the Readers that refer to its I/O counters.
     std::unique_ptr<CachedMapReader> map_;
     std::unique_ptr<galuchat::GaluchatGisWordBookReader> wordbook_;
     WordBookCache wordbook_cache_;
-    bool cp932_ = true;
     StorageObserver* observer_ = nullptr;
     DatasetInfo dataset_{};
 };

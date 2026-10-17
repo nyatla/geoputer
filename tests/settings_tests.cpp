@@ -16,7 +16,7 @@ void codec() {
     uint8_t record[SettingsRecordSize];
     for (unsigned log = 0; log < 3; ++log) for (unsigned flush = 0; flush < 5; ++flush)
     for (unsigned timeout = 0; timeout < settingChoices(static_cast<unsigned>(SettingId::ScreenTimeout)); ++timeout) for (unsigned light = 0; light < 5; ++light)
-    for (unsigned dataset = 0; dataset < 3; ++dataset) for (unsigned gps = 0; gps < 2; ++gps)
+    for (unsigned dataset = 1; dataset <= 3; ++dataset) for (unsigned gps = 0; gps < 2; ++gps)
     for (unsigned language = 0; language < 2; ++language) {
         value = {static_cast<uint8_t>(log), static_cast<uint8_t>(flush), static_cast<uint8_t>(timeout),
                  static_cast<uint8_t>(light), static_cast<uint8_t>(dataset), static_cast<uint8_t>(gps), static_cast<UiLanguage>(language)};
@@ -154,7 +154,7 @@ void destructiveConfirmationAndSleep() {
           "format requires separate confirmation and defaults to cancel");
     ui.keyPressed(UiKey::Enter, 50);
     check(!ui.confirming() && ui.snapshot().action.kind == ActionKind::None, "default Enter cancels format");
-    ui.keyPressed(UiKey::Enter, 60); ui.keyPressed(UiKey::Up, 70); ui.keyPressed(UiKey::Enter, 80);
+    ui.keyPressed(UiKey::Enter, 60); ui.keyPressed(UiKey::Right, 70); ui.keyPressed(UiKey::Enter, 80);
     check(ui.snapshot().action.kind == ActionKind::Storage &&
           ui.snapshot().action.storage_operation == StorageOperation::Format && ui.snapshot().action.confirmed,
           "only explicit OK creates a confirmed format action");
@@ -164,7 +164,7 @@ void destructiveConfirmationAndSleep() {
     reset.keyPressed(UiKey::Down, 10); reset.keyPressed(UiKey::Down, 20); reset.keyPressed(UiKey::Enter, 30);
     reset.keyPressed(UiKey::Enter, 40); reset.keyPressed(UiKey::Escape, 50);
     check(!reset.confirming() && reset.snapshot().action.kind == ActionKind::None, "Escape cancels reset");
-    reset.keyPressed(UiKey::Enter, 60); reset.keyPressed(UiKey::Down, 70); reset.keyPressed(UiKey::Enter, 80);
+    reset.keyPressed(UiKey::Enter, 60); reset.keyPressed(UiKey::Right, 70); reset.keyPressed(UiKey::Enter, 80);
     check(reset.snapshot().action.kind == ActionKind::ResetSettings && reset.snapshot().action.confirmed &&
           sameSettings(reset.snapshot().action.settings, defaultSettings()), "reset contains defaults only");
 

@@ -6,7 +6,7 @@ Application・UI・GPS座標受信・Storageを実装する。ApplicationはArdu
 application/
   main.cpp                 メインタスクの入口
   Application.h/.cpp       全体状態、通知受信、UI・GPS・Storageの同期操作
-  Config.h                 チャンク上限・GISキャッシュ容量・読出しバッファ・検索周期
+  Config.h                 UI色深度・SD予約枠・チャンク上限・GISキャッシュ・検索周期
   LogBrowser.cpp           一覧・詳細・測位点の要求、結果照合、10件キャッシュ
   Settings.h/.cpp          設定の初期値・値域検証・NVSレコード符号化
   BootStatus.h             起動チェックの状態・表示略称・完了判定
@@ -15,10 +15,11 @@ application/
     UiTask.h/.cpp          UI受信ループ、キー入力、通知・結果返送
     UiModel.h/.cpp         選択状態、未処理確定操作、画面指定の保持
     UiRenderer.h/.cpp      メイン画面とSettingsの描画
+    UiCanvas.h             RGB565描画色と4bit・16色パレット画像の対応
     PixelFont.h/.cpp       8×8・16×16ドットの固定セル描画
     Shinonome.h/.cpp       東雲16ドット字形のFlash参照
     UiTypes.h              画面・操作・表示データの値型
-    KeyBindings.h          FnなしのMENU・方向操作と物理キーの対応
+    KeyBindings.h          1/2/3の画面選択・方向操作と物理キーの対応
     LivePlaceLayout.h      画面の領域・GPS数値と未取得表示
     PlacePresentation.h    Appでの2行住所整形と検索中の表示保持
     LicenseText.h/.cpp      Flash内のライセンス本文（生成済み）
@@ -47,7 +48,7 @@ application/
       PlaceLookup.h/.cpp  SDKのファイルReader、データ検出、地名検索
       CachedMapReader.h/.cpp 128×128・32bitの矩形キャッシュと点検索
       WordBookCache.h     区域コードをキーにした16件のUTF-8地名LRU
-      TextEncoding.h/.cpp CP932からUTF-8への変換と3行への整形
+      TextEncoding.h/.cpp UTF-8の検証と3行への整形
   utils/
     ShortLock.h            ESP32の短いクリティカル区間 / ホストmutex
     Task.h                 受信キュー1つを所有するサブタスク基底クラス
@@ -79,13 +80,13 @@ pio run -e cardputer-adv
 
 ## 現在の操作とGPS接続
 
-- 起動後はBoot画面で6項目の確認結果を表示する。完了後は通常2秒、警告・失敗があれば5秒でLive Placeへ進み、Enterでも進める。GPS受信はBootの表示中から開始する。
-- 2でMENUを開く。Fnは不要で、従来のFn＋2でも同じ操作となる。GPS LOGGER / SETTINGSを上下キーで選び、Enterで開く。Esc / DelでLive Placeへ戻る。Settingsは従来どおり上下・Enterで下位画面へ進み、Esc / Delで戻る。
+- 起動後はBoot画面で6項目の確認結果を表示する。選択先のデータセットが見つからない場合は起動エラー画面で停止する。それ以外は完了後に通常2秒、警告・失敗があれば5秒でLive Placeへ進み、Enterでも進める。GPS受信はBootの表示中から開始する。
+- Live Placeで1はGPS記録、2は設定、3はログ一覧を直接開く。MENU画面は設けない。いずれもEsc / DelでLive Placeへ戻る。Settingsの子画面はEsc / Delで一つ上へ戻る。数字の画面ショートカットはLive Place以外や確認中には作用しない。
 - GPS LOGGERのSTARTで新しい有効Fixから記録する。メイン画面のF1（Fn＋1）は一時停止確認、GPS LOGGERのRESUMEは再開、STOPは終了確認。いずれも記録だけを制御し、GPSデバイスの電源は変更しない。
-- 動作設定ではEnterで編集、左右キーで候補変更、Enterで確定、EscまたはDelで取消。DelはFnなしで使用できる。Cardputerの実キーはMENUが2、上が`;`、下が`.`、左が`,`、右が`/`で、すべてFnなしで使用できる。従来のFn併用でも同じ操作となる。EscはFn＋バッククォート、決定はEnter、一時停止はFn＋1とする。左右はSettingsの値編集中だけ有効とする。
+- 動作設定ではEnterで編集、左右キーで候補変更、Enterで確定、EscまたはDelで取消。DelはFnなしで使用できる。Cardputerの実キーは画面選択が1/2/3、上が`;`、下が`.`、左が`,`、右が`/`で、すべてFnなしで使用できる。2/3と方向操作はFn併用でも同じ操作となる。1単独とFn＋1は別の機能とし、押し続けたままFnを変更しても再発火しない。EscはFn＋バッククォート、決定はEnter、一時停止はFn＋1とする。左右はSettingsの値編集中と共通確認ダイアログで有効とする。確認では左が取消、右が実行項目の選択となる。
 - 無操作で設定時間後に画面を消灯する。最初のキーはLive Placeへの復帰だけに使い、同時に画面操作を実行しない。GPS受信は消灯中も継続する。
 - 測位前は`NO FIX`、有効NMEAが3秒以上届かない場合は`NO GPS`とし、座標を`--`にする。受信が続いていても有効座標が3秒以上更新されなければ`NO FIX`に戻す。
-- GPS受信はSettings表示中も継続する。Live Placeの表示中は有効FixからSD上のデータセット01を検索し、地名を16×16ドットで表示する。起動時のログはSTOPPED。記録中は画面消灯・Settings表示を経ても新しいFixの採用と保存を継続する。
+- GPS受信はSettings表示中も継続する。Live Placeの表示中は有効FixからSD上の選択済みデータセットを検索し、地名を16×16ドットで表示する。起動時のログはSTOPPED。記録中は画面消灯・Settings表示を経ても新しいFixの採用と保存を継続する。
 
 接続は[Mesh Kitの標準接続](https://docs.m5stack.com/en/arduino/projects/cap/cap_lora868)を使用し、UART1のRX=G15、TX=G13、115200 bps・8N1とする。受信バッファは2048バイトとし、5ms周期で最大1024バイトを取り出す。GPIOと通信速度は現在の実装では固定であり、設定画面から変更しない。LoRaは初期化しない。
 
@@ -99,29 +100,32 @@ GGAとRMCをチェックサム付きで解析し、GP・GNなどのトーカー�
 
 USBシリアル（115200 bps）には状態変化と有効座標を出力する。5秒ごとの`RX` / `NMEA` / `rejected`は、UART到着・有効行の受信・破損行の切り分けに使用する。`coalesced`は通知待ち中に統合された更新数とする。`NO FIX`が続く場合はGPSアンテナから空が見える場所で測位を確認する。
 
-16×16の地名・GPS測位待ちは、英数字と日本語を東雲16ドットに統一する。MENU・GPS Logger・ログ詳細の操作項目とSettingsの主表示は、日本語モードを日本語表記の東雲16×16、英語モードをM5GFXのAsciiFont8x16とする。言語名は日本語を16×16、Englishを8×16で表示する。東雲16ドット部分のASCII英数字には全角字形を使い、該当する全角記号がない場合だけ同じ東雲の8×16字形をセル中央へ置く。8×8字形の2倍拡大は行わない。未収録文字は東雲の白四角で表示する。8×8のASCIIはM5GFXの`Font8x8C64`、補助表示の日本語は`lgfxJapanGothic_8`を使用する。描画は1ビット字形から整数座標へ行い、アンチエイリアスを使用しない。東雲の固定ソース・ライセンス・変換手順は[third_party/shinonome](../third_party/shinonome/README.md)に保持し、`python3 tools/prepare_shinonome.py`でFlash上の読取専用字形表を生成する。
+16×16の地名・GPS測位待ちは、英数字と日本語を東雲16ドットに統一する。GPS Logger・ログ詳細の操作項目とSettingsの主表示は、日本語モードを日本語表記の東雲16×16、英語モードをM5GFXのAsciiFont8x16とする。言語名は日本語を16×16、Englishを8×16で表示する。東雲16ドット部分のASCII英数字には全角字形を使い、該当する全角記号がない場合だけ同じ東雲の8×16字形をセル中央へ置く。8×8字形の2倍拡大は行わない。未収録文字は東雲の白四角で表示する。8×8のASCIIはM5GFXの`Font8x8C64`、補助表示の日本語は`lgfxJapanGothic_8`を使用する。描画は1ビット字形から整数座標へ行い、アンチエイリアスを使用しない。東雲の固定ソース・ライセンス・変換手順は[third_party/shinonome](../third_party/shinonome/README.md)に保持し、`python3 tools/prepare_shinonome.py`でFlash上の読取専用字形表を生成する。
 
-MENUはGPS LOGGER / SETTINGS / LOGSを表示する。LOGSからファイル名一覧、詳細、測位点を閲覧できる。Place Viewは未実装のため表示しない。[Boot画面](../doc/画面・操作/boot/README.md)はAppが集約した初期化結果を表示する。通信契約は[タスク構成設計](../doc/06_タスク構成設計.md)に従う。
+Live Placeの最下段は`F1 PAUSE  1:GPS 2:SET 3:LOG`とし、画面選択の数字をシアン、説明をライトグレーで表示する。ログ一覧からファイル名一覧、詳細、測位点を閲覧できる。ログ一覧のDで削除確認を開き、取消を初期選択として削除を実行できる。Delは戻る操作として維持し、一覧の案内は`[ENTER] OPEN    [D] DELETE`とする。記録・保存・終了処理中の対象はUIとStorageで保護する。Place Viewは未実装のため表示しない。[Boot画面](../doc/画面・操作/boot/README.md)はAppが集約した初期化結果を表示する。通信契約は[タスク構成設計](../doc/06_タスク構成設計.md)に従う。
 
 BootのチェックはDISPLAY、TASKS/QUEUES、NVS SETTINGS、SD CARD、GPS UART、GALUCHAT DATAの6項目。NVS設定の未保存はDEFAULTとして正常扱いとし、SD未認識と混同しない。GaluchatはGPS Fixを待たずにCheckDataset通知で番号01のファイル・ヘッダー・辞書形式・文字コードを確認する。未確認・確認中・成功・警告・失敗を色と記号で区別する。Boot表示中は無操作消灯を行わず、完了前のEnter・2・Esc・Del等でチェックを中断しない。UART OKは受信準備の成功であり、測位成功やGNSS PAUSEを意味しない。
 
 ## Galuchatのファイル読出し
 
-FAT32のSDカードに、同じデータセットのWGSMapSet/3（`.glc`）とGisWordBook/0（`.giswordbook`）を各1ファイル配置する。番号01を固定使用し、ファイル名は拡張子から検出する。配布物のファイル名を変更する必要はない。候補が複数ある場合は任意選択せず`MULTIPLE DATA FILES`と表示する。
+FAT32のSDカードの`/dataset/01/`〜`/dataset/99/`に、`dataset.ini`、WGSMapSet/3（`.glc`）、言語別GisWordBook/0（`.giswordbook`）を配置する。INIのファイル名指定を使い、余分なGLC・辞書があっても自動選択しない。初回は番号01とINIの既定言語を使う。[配置用INI例](../examples/sd/dataset/01/dataset.ini)のファイル名は、実際に配置するファイル名へ合わせる。
+
+データセット切替用の`dataset.ini`は[データセットメタデータ仕様](../doc/08_データセットメタデータ仕様.md)で定義する。UTF-8の行単位のINIで、言語別のタイトル・説明・Wordbookと共通のGLCを指定する。解像度・格納範囲・チャンク数はGLCから取得する。切替対応版では01〜99から番号と言語を選択し、ログの停止・保存・閉鎖完了後に検証・NVS保存して再起動する。起動時に選択先が見つからなければエラーを表示して通常画面へ進まない。メタデータの読取りと切替は実装済み。[実装検証](../doc/検証/データセット切替実装検証.md)にホスト試験を記録する。UTF-8専用化、メニュー遷移のスタック削減、UIの休止処理を含む修正版を実機へ書込み済み。SD上のINIとファイル名を合わせた後、地名取得に成功した。データセット適用後の再起動と切替先の復元を確認し、最終版で切替済みデータの読出し・MENU・SETTINGS・戻る操作を90秒間監視した。[メニュー遷移修正の検証](../doc/検証/メニュー遷移リセット修正検証.md)に結果を記録する。
 
 ```text
 SDカード直下/
 └ dataset/
   └ 01/
+    ├ dataset.ini
     ├ 任意名.glc
-    └ 任意名.sjis.giswordbook
+    └ 任意名.giswordbook
 ```
 
-WordBookのメタデータに従い、Shift_JIS（CP932）をUTF-8へ変換する。UTF-8のWordBookも使用できる。UTF-16はこの段階では非対応とし、未対応の文字コードや不正な文字列は`ENCODING ERROR`とする。CP932変換表は`tools/prepare_cp932.py`から生成し、Flash内の読取専用配列として保持する。
+Wordbookと`dataset.ini`、タスク間メッセージ、UIの文字列はUTF-8に統一する。Wordbook内部の`token_encoding`を優先し、未指定または空の場合は`text_encoding`を参照する。値は大文字・小文字を区別せず`utf8`または`utf-8`だけを受け付ける。文字コードの未指定・未対応や不正なUTF-8は`ENCODING ERROR`とし、端末内で文字コード変換は行わない。SJIS（CP932）版やUTF-16版のWordbookは使用できない。既存のSDカードでは、同じGLCに対応するUTF-8版Wordbookへ置き換え、INIの`wordbook`をそのファイル名へ変更する。ファイル名やメタデータだけの変更では文字コードを変換できない。[UTF-8統一の検証結果](../doc/検証/UTF-8統一検証.md)に実ファイル試験と容量を記録する。
 
 Storageがマウント済みの`/sd`をSDK互換の`ObservedFileReaderFactory`から読む。実際のopen・seek・バッファ補充・closeだけをSDアクセスとして観測し、バッファ内の1バイト参照は対象外にする。各読出しセッションのバッファは4KiB、WordBookのトークンキャッシュは無効とし、データ全体のRAM展開は行わない。SDKのReaderは[third_party/galuchat](../third_party/galuchat/README.md)に無改変で取り込み、C++17と例外処理を有効にする。
 
-WordBookの地名検索はアプリ側のWordBookCacheで包む。32bit区域コードとUTF-8変換・整形済みの地名3階層（各64バイト）を16件まで固定長で保持する。利用順だけを16バイトのインデックス配列で管理するLRUとし、時刻・内部Tickは使わない。ヒット時は辞書読出しと文字変換を省き、ミス時に成功した結果だけを登録する。今回の座標・時刻・要求世代は毎回の要求から結果へ設定する。
+WordBookの地名検索はアプリ側のWordBookCacheで包む。32bit区域コードとUTF-8検証・整形済みの地名3階層（各64バイト）を16件まで固定長で保持する。利用順だけを16バイトのインデックス配列で管理するLRUとし、時刻・内部Tickは使わない。ヒット時は辞書読出しとUTF-8検証・整形を省き、ミス時に成功した結果だけを登録する。今回の座標・時刻・要求世代は毎回の要求から結果へ設定する。
 
 地名キャッシュは矩形の再構築・GPS喪失・画面切替では保持し、PlaceLookupのclose、SD媒体操作、Reader再オープンで消去する。矩形と地名がともにヒットした検索ではSDを読まない。RGは従来どおり矩形の状態、SDはログ等も含めた実I/Oを表示する。実装と検証は[WordBook地名キャッシュ検証](../doc/検証/WordBook地名キャッシュ検証.md)を参照する。
 
@@ -161,9 +165,9 @@ SD直下のlogsへ、最初の採用点のJSTからYYYYMMDD_HHMMSS_n.gps.datを�
 
 ## 設定・ストレージ・ライセンス
 
-Settingsは動作設定、ストレージ操作、初期化、ライセンス情報の4メニューとする。項目・値・確認文・カード情報は日本語を東雲16×16、英語をAsciiFont8x16とし、タイトルとライセンス本文はASCIIの8×8ドットとする。GPS状態・キーガイド・短い通知も8×8ドットとする。動作設定は項目名をx=20で左寄せ、値を実描画幅に応じて右端x=236へ右寄せする。4行表示で全7項目へスクロールし、カード容量等はカード情報パネルを開いて表示する。動作設定の先頭に表示言語（日本語 / English、初期値日本語）を置き、表示言語・GPSログ間隔・SD保存間隔・消灯時間・輝度を編集してNVSへ保存できる。表示言語はEnter確定後、Appが適用した時点で同じ画面・選択位置のまま反映する。輝度・消灯時間も即時反映する。ログ間隔はAppのFix採用間隔、SD保存間隔はStorageの未保存データの期限へ反映する。データセットとGPS接続モードは現在の01 / Mesh Kit固定を示す読取専用項目とする。
+Settingsは動作設定、ストレージ操作、初期化、ライセンス情報の4メニューとする。項目・値・確認文・カード情報は日本語を東雲16×16、英語をAsciiFont8x16とし、タイトルとライセンス本文はASCIIの8×8ドットとする。GPS状態・キーガイド・短い通知も8×8ドットとする。動作設定は項目名をx=20で左寄せ、値を実描画幅に応じて右端x=236へ右寄せする。4行表示で全7項目へスクロールし、カード容量等はカード情報パネルを開いて表示する。動作設定の先頭に表示言語（日本語 / English、初期値日本語）を置き、表示言語・GPSログ間隔・SD保存間隔・消灯時間・輝度を編集してNVSへ保存できる。表示言語はEnter確定後、Appが適用した時点で同じ画面・選択位置のまま反映する。輝度・消灯時間も即時反映する。ログ間隔はAppのFix採用間隔、SD保存間隔はStorageの未保存データの期限へ反映する。データセットは一覧・詳細・地名用言語の選択を開く。GPS接続モードは現在のMesh Kit固定を示す読取専用項目とする。
 
-NVSの名前空間は`geoputer`、キーは`config`。16バイトのレコードへ識別子、形式バージョン2、7項目、検査値を保存し、長さ・形式・値域・検査値を検証してから使用する。設定が未保存なら初期値を使用し、不正・読込障害は設定エラーとして表示する。旧バージョン1の6項目は元の値を保持して読み込み、言語を日本語とする。次の保存でバージョン2へ移行する。保存形式の詳細は[Settings画面仕様](../doc/画面・操作/settings/README.md#7-nvsの形式と旧設定の引継ぎ)に従う。SD未挿入でも設定を読み書きできる。SaveSettingsは設定のコピーを保持した時点で同期結果を返し、実保存成功はSettingsWritten、失敗はStorageErrorで通知する。LoadSettingsは通知で要求し、ReadCompleted / ReadFailedで復元結果を返す。完了通知はキュー満杯時も保持して再投入し、実処理を二重実行しない。
+NVSの名前空間は`geoputer`、キーは`config`。48バイトのレコードへ識別子、形式バージョン3、7項目、Wordbook言語、検査値を保存し、長さ・形式・値域・検査値を検証してから使用する。設定が未保存なら初期値を使用し、不正・読込障害は設定エラーとして表示する。旧バージョン1・2の16バイト設定を読み、他項目を維持してデータセットだけ01・INIの既定言語へ移行する。次の保存でバージョン3へ移行する。保存形式の詳細は[Settings画面仕様](../doc/画面・操作/settings/README.md#7-nvsの形式と旧設定の引継ぎ)に従う。SD未挿入でも設定を読み書きできる。SaveSettingsは設定のコピーを保持した時点で同期結果を返し、実保存成功はSettingsWritten、失敗はStorageErrorで通知する。LoadSettingsは通知で要求し、ReadCompleted / ReadFailedで復元結果を返す。完了通知はキュー満杯時も保持して再投入し、実処理を二重実行しない。
 
 SDはLCDと別のSPI（FSPI、SCK=G40、MISO=G39、MOSI=G14、CS=G12）を4MHzで使用し、未使用LoRaのNSS=G5をHIGHに保つ。ストレージ操作画面にはカード状態、カード容量、FAT種別、総容量・空き容量、再マウント、安全な取り外し、FAT32フォーマットを用意する。FAT32以外は利用対象外として表示する。SD操作はOperateStorageの同期受付後にStorageが実行し、StorageOperationCompleted / StorageErrorで結果を通知する。
 
@@ -189,7 +193,7 @@ Fnなしの2・方向操作と、MENUの操作ガイド更新は[キーバイン
 
 USBログの取得には、pyserialを導入したPythonで`python tests/capture_serial.py COM6 --seconds 30`を使用する。COM6は実機の接続先へ置き換える。esptool 4.9を同じPython環境へ導入すれば`--reset`で起動ログを取得でき、`--output ファイル名`で受信ログを保存できる。USB切断時は取得を終了し、それまでのログを保存する。
 
-Galuchatの実ファイル検証は、同じ組の日本向けWGSMapSetとShift_JISのWordBookを指定して`python3 tests/run_place_files.py <mapset.glc> <names.sjis.giswordbook>`を実行する。習志野市庁舎・皇居付近の繰り返し検索、未収録座標、ファイル不足・重複・破損・修復後の再読込みを検証する。キャッシュは元の点検索との324点の比較、矩形境界、コード0、負座標、地図重なり、32bit値域、読込み途中の失敗と復旧、ヒット時に地図読出しセッションを作らないことを検証する。
+Galuchatの実ファイル検証は、同じ組の日本向けWGSMapSetとUTF-8のWordbookを指定して`python3 tests/run_place_files.py <mapset.glc> <names.giswordbook>`を実行する。習志野市庁舎・皇居付近の繰り返し検索、未収録座標、ファイル不足・重複・破損・修復後の再読込みを検証する。キャッシュは元の点検索との324点の比較、矩形境界、コード0、負座標、地図重なり、32bit値域、読込み途中の失敗と復旧、ヒット時に地図読出しセッションを作らないことを検証する。
 
 検証手順と結果は[Galuchat矩形キャッシュ検証](../doc/検証/Galuchat矩形キャッシュ検証.md)、[表示時計・アクセス表示検証](../doc/検証/表示時計・アクセス表示検証.md)、[東雲フォント・Settings文字サイズ検証](../doc/検証/東雲フォント・Settings文字サイズ検証.md)を参照する。
 
@@ -222,4 +226,12 @@ Live Placeで`2`、MENUで下へ2回（`.`）、EnterでLOGSを開く。ファ�
 
 地図初期化時にRAMへチャンクの座標・寸法・ファイル位置を保持し、矩形検索時は交差するチャンクだけを開く。起動時・Reader再オープン時にチャンク数を確認し、1501以上は索引確保・Origin列と地図本文の走査へ進まず利用不可とする。逐次探索へ戻さない。上限超過とメモリ確保失敗はGPS更新によって再試行せず、Readerの明示的な閉鎖・SD再マウント後に再確認する。GPS受信とログ記録は継続する。
 
-起動チェックでは`TOO LARGE` / `NO MEMORY`を表示する。Live Placeへ移った後に日英の警告を表示し、上限超過では実数と上限を示す。Esc / Del / Enterで閉じるまで自動消灯せず、閉じた後もエラー帯で利用不可を示す。データセット切替のUIは従来どおり未実装で、現在は番号01の検証へ適用する。`[DATASET]`ログにチャンク数・設定上限・状態を記録する。
+起動チェックでは`TOO LARGE` / `NO MEMORY`を表示する。Live Placeへ移った後に日英の警告を表示し、上限超過では実数と上限を示す。Esc / Del / Enterで閉じるまで自動消灯せず、閉じた後もエラー帯で利用不可を示す。同じ制限を選択済みデータと切替候補へ適用する。`[DATASET]`ログにチャンク数・設定上限・状態を記録する。
+
+## メモリ削減後の描画と通信
+
+`Config.h`の`UiColorDepth = 4`で16色パレットの全画面バッファを使用する。現在の9色・240×135の解像度・字形・一括転送を維持し、RGB565色から番号への変換はUiCanvasに集約する。値16は従来のRGB565参照描画とし、プレビュー生成時に両者のRGBピクセルが一致することを確認する。SDのVFS予約枠は`SdMaxOpenFiles = 3`とし、2本を同時に開く地図初期化へ1本の余裕を持たせる。
+
+キューは用途ごとにUiRequest（1056 B）/ GpsRequest（16 B）/ StorageRequest（144 B）/ AppNotification（664 B）/ ReturnMessage（280 B）を使用する。UI更新以外のキューや結果保持領域へUIデータ全体を予約しない。Appの2キュー・サブタスクの各1キューと件数、同期結果の必須回収、値コピーによる所有権を維持する。起動ログの`[MEMORY]`に各型のサイズとSD枠・色深度を記録する。
+
+実装・実測・検証範囲は[メモリ削減実装検証](../doc/検証/メモリ削減実装検証.md)にまとめる。

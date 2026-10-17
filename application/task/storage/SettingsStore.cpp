@@ -12,9 +12,10 @@ SettingsState SettingsStore::load(Settings& value) {
     if (!ready_) return SettingsState::Unavailable;
     if (!preferences_.isKey("config")) return SettingsState::Defaults;
     uint8_t record[SettingsRecordSize]{};
-    if (preferences_.getBytesLength("config") != sizeof(record) ||
-        preferences_.getBytes("config", record, sizeof(record)) != sizeof(record) ||
-        !decodeSettings(record, sizeof(record), value)) return SettingsState::Invalid;
+    const auto size = preferences_.getBytesLength("config");
+    if ((size != sizeof(record) && size != LegacySettingsRecordSize) ||
+        preferences_.getBytes("config", record, size) != size ||
+        !decodeSettings(record, size, value)) return SettingsState::Invalid;
     return SettingsState::Loaded;
 }
 

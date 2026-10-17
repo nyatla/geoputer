@@ -51,7 +51,7 @@ void exerciseLicenses(UiModel& ui, Paint paint) {
                 --stale.data.revision;
                 licenseCheck(ui.updateContent(stale) == OperationStatus::StaleContent, "reject stale content while reading");
             }
-            for (const auto ignored : {UiKey::Left, UiKey::Right, UiKey::Enter, UiKey::Menu}) key(ignored);
+            for (const auto ignored : {UiKey::Left, UiKey::Right, UiKey::Enter, UiKey::OpenSettings}) key(ignored);
             licenseCheck(ui.snapshot().action.kind == ActionKind::None && !ui.editing() && !ui.confirming(),
                          "license input cannot issue storage/settings operations");
             ui.notificationSent();  // App consumed the local content-change notice.
@@ -90,7 +90,7 @@ void exerciseLicenses(UiModel& ui, Paint paint) {
     command.processed_action_id = wake.action_id;
     command.action_result = ActionResult::Applied;
     licenseCheck(ui.setScreen(command) == OperationStatus::Ok, "wake returns to Live Place");
-    key(UiKey::Menu);
+    key(UiKey::OpenSettings);
     const auto settings = ui.snapshot().action;
     licenseCheck(settings.kind == ActionKind::ChangeScreen, "2 works after waking from licenses");
     command.screen = ScreenId::Settings;

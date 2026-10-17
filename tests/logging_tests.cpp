@@ -91,9 +91,9 @@ void uiTests() {
     check(!ui.confirming() && ui.snapshot().action.kind==ActionKind::None,"F1 cannot start a stopped logger");
     data.recording.state=RecordingState::Recording;
     ui.updateContent({DisplayMode::View,1,data,0,ActionResult::None});
-    ui.keyPressed(UiKey::F1,101); ui.keyPressed(UiKey::Left,102);
-    check(ui.confirming() && !ui.confirmChoice(),"pause confirmation defaults to cancel; Left is ignored");
-    ui.keyPressed(UiKey::Down,103); ui.keyPressed(UiKey::Enter,104);
+    ui.keyPressed(UiKey::F1,101); ui.keyPressed(UiKey::Up,102);
+    check(ui.confirming() && !ui.confirmChoice(),"pause confirmation defaults to cancel; Up is ignored");
+    ui.keyPressed(UiKey::Right,103); ui.keyPressed(UiKey::Enter,104);
     auto action=ui.snapshot().action;
     check(action.kind==ActionKind::Logging && action.log_action==LogAction::Pause && action.confirmed,"F1 confirms pause only");
     data.recording.state=RecordingState::Paused;

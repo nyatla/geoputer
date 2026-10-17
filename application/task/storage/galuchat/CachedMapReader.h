@@ -37,6 +37,9 @@ public:
     void invalidate() { stats_.valid = false; if (observer_) observer_->cacheState(RgCacheState::Unprepared); }
     const MapCacheStats& stats() const { return stats_; }
     size_t chunkCount() const { return reader_.mapCount(); }
+    galuchat::DoubleRect coverage() const { return reader_.areaOfWgs(); }
+    int unitInvX() const { return reader_.unit_inv_x; }
+    int unitInvY() const { return reader_.unit_inv_y; }
 
 private:
     bool contains(int x, int y) const;

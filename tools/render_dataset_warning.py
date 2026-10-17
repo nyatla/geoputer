@@ -4,7 +4,7 @@ import re
 import subprocess
 import tempfile
 from PIL import Image
-from ui_preview_support import ROOT, M5GFX, ADAPTER
+from ui_preview_support import ROOT, M5GFX, ADAPTER, reference_frame
 
 SCENE = r'''
 #include <cstdio>
@@ -25,7 +25,7 @@ int main(int argc, char** argv) {
     data.place_state = data.dataset.state;
     M5GFX display;
     UiRenderer renderer(display);
-    if (!renderer.begin()) return 2;
+    if (!renderer.begin(previewColorDepth())) return 2;
     UiModel model;
     model.setScreen({ScreenId::LivePlace, DisplayMode::View, 1, data, 0, ActionResult::None});
     if (!model.datasetWarning()) return 3;
@@ -45,7 +45,7 @@ int main(int argc, char** argv) {
 
 def main():
     enum_source = (M5GFX / "v1/misc/enum.hpp").read_text()
-    renderer = (ROOT / "application/task/ui/UiRenderer.cpp").read_text()
+    renderer = (ROOT / "application/task/ui/UiRenderer.cpp").read_text() + (ROOT / "application/task/ui/UiCanvas.h").read_text()
     colors = []
     for name in sorted(set(re.findall(r"\bTFT_[A-Z]+\b", SCENE + renderer))):
         value = re.search(rf"\b{name}\s*=\s*(0x[0-9A-Fa-f]+)", enum_source)[1]
@@ -67,7 +67,7 @@ def main():
             for kind in ("limit", "memory"):
                 ppm = work / "screen.ppm"
                 with ppm.open("wb") as target:
-                    subprocess.run([str(executable), language, kind], stdout=target, check=True, timeout=10)
+                    target.write(reference_frame(executable, language, kind))
                 with Image.open(ppm) as source:
                     image = source.convert("RGB")
                 stem = f"dataset-{kind}-{language}"

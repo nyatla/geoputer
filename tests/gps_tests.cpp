@@ -128,20 +128,22 @@ void testClockRolloverAndUiIsolation() {
     receiver.poll(3200);
     check(!receiver.snapshot().fix.valid, "stale timeout survives uint32 rollover");
 
-    Queue<TaskMessage, 1> results, gps_commands, notifications;
+    Queue<ReturnMessage, 1> results;
+    Queue<GpsRequest, 1> gps_commands;
+    Queue<AppNotification, 1> notifications;
     results.initialize(); gps_commands.initialize(); notifications.initialize();
     SyncClient client(results);
-    TaskMessage request{};
+    GpsRequest request{};
     request.kind = MessageKind::GetGpsStatus;
     check(client.sendSync(TaskId::GPS, gps_commands, request, 0) == SyncSendResult::AwaitingResult,
           "GPS uses the same single outstanding sync contract");
     gps_commands.receive(request);
-    TaskMessage event{};
+    AppNotification event{};
     event.kind = MessageKind::GpsSampleReady;
     event.source = TaskId::GPS;
     event.payload.gps = receiver.snapshot();
     notifications.send(event);
-    TaskMessage reply{};
+    ReturnMessage reply{};
     reply.kind = MessageKind::SyncReturn;
     reply.source = TaskId::GPS;
     reply.request_id = request.request_id;
@@ -155,7 +157,7 @@ void testClockRolloverAndUiIsolation() {
     SetUiScreen screen{};
     screen.screen = ScreenId::LivePlace; screen.mode = DisplayMode::View; screen.generation = 1;
     ui.setScreen(screen);
-    ui.keyPressed(UiKey::Menu, 10);
+    ui.keyPressed(UiKey::OpenSettings, 10);
     const auto action = ui.snapshot().action;
     UpdateUiContent update{};
     update.mode = DisplayMode::View; update.generation = 1; update.data.revision = 2;

@@ -71,7 +71,7 @@ void settingsValueText(UiLanguage language, unsigned row, uint8_t choice, char* 
             break;
         }
         case SettingId::Brightness: std::snprintf(out, size, "%u%%", Brightnesses[choice]); break;
-        case SettingId::Dataset: std::snprintf(out, size, "01"); break;
+        case SettingId::Dataset: std::snprintf(out, size, "%02u", choice); break;
         case SettingId::GpsMode: std::snprintf(out, size, "%s", choice ?
             (language == UiLanguage::English ? "External" : "外付け") :
             (language == UiLanguage::English ? "Mesh Kit" : "MESH")); break;

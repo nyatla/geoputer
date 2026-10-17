@@ -2,6 +2,7 @@
 
 #include "UiTypes.h"
 #include "DisplayClock.h"
+#include "ChoiceDialog.h"
 #include "../../TaskMessages.h"
 
 namespace geoputer {
@@ -21,8 +22,9 @@ public:
     void notificationSent() { notification_pending_ = false; }
     bool editing() const { return editing_; }
     uint8_t editValue() const { return edit_value_; }
-    bool confirming() const { return confirming_; }
-    bool confirmChoice() const { return confirm_yes_; }
+    bool confirming() const { return dialog_.active(); }
+    bool confirmChoice() const { return dialog_.selected(); }
+    const ChoiceDialog& dialog() const { return dialog_; }
     uint32_t licenseOffset() const { return license_offset_; }
     bool cardInfo() const { return card_info_; }
     bool datasetWarning() const { return dataset_warning_ && screen_ != ScreenId::Boot; }
@@ -43,8 +45,10 @@ private:
     void copyData(const UiData& data);
     void acknowledge(uint32_t action_id, ActionResult result);
     void changed();
+    void datasetAction(DatasetAction kind, uint32_t index = 0);
     void browseAction(BrowseAction kind,uint32_t index=0);
     void action(ActionKind kind, ScreenId target = ScreenId::LivePlace);
+    void acceptDialog(DialogKind kind);
 
     ScreenId screen_ = ScreenId::LivePlace;
     DisplayMode mode_ = DisplayMode::View;
@@ -57,16 +61,16 @@ private:
     uint8_t selection_ = 0;
     SettingsPage page_ = SettingsPage::Root;
     bool editing_ = false;
-    bool confirming_ = false;
-    bool confirm_yes_ = false;
+    ChoiceDialog dialog_;
     uint8_t edit_value_ = 0;
+    uint8_t dataset_list_start_ = 1;
+    char dataset_edit_original_[config::DatasetLanguageBytes]{};
     uint32_t license_offset_ = 0;
     bool card_info_ = false;
     bool dataset_warning_ = false;
     UiData data_{};
     BatteryStatus battery_{};
     bool sd_seen_ = false;
-    LogAction confirm_log_action_ = LogAction::Pause;
     DisplayClock clock_;
     UiAction action_{};
     bool redraw_ = false;

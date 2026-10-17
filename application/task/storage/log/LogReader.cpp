@@ -1,5 +1,6 @@
 #include "LogReader.h"
 #include <cerrno>
+#include <cctype>
 #include <cstring>
 #include <sys/stat.h>
 
@@ -24,7 +25,8 @@ bool LogReader::begin(const LogReadRequest& request) {
     result_={}; result_.request=request;
     result_.summary.first_utc=result_.summary.last_utc=UINT64_MAX;
     eligible_=0; started_=false; done_=false;
-    if(request.kind!=LogReadKind::List && !validLogName(request.name)) fail(LogReadError::InvalidName);
+    if(request.kind==LogReadKind::Delete && !request.confirmed) fail(LogReadError::Unconfirmed);
+    else if(request.kind!=LogReadKind::List && !validLogName(request.name)) fail(LogReadError::InvalidName);
     else if(request.kind==LogReadKind::List && request.direction!=LogListDirection::Newest && !validLogName(request.anchor))
         fail(LogReadError::InvalidName);
     else if(request.kind==LogReadKind::Records && (!request.session_id || !request.count || request.count>LogReadCount || request.limit>LogMaxRecords))
@@ -42,7 +44,8 @@ void LogReader::cancel() {
 void LogReader::finishList(LogWriter* writer) {
     closedir(directory_handle_); directory_handle_=nullptr;
     const auto direction=result_.request.direction;
-    result_.has_newer=direction==LogListDirection::Older || (direction==LogListDirection::Newer && eligible_>LogListRows);
+    if(direction!=LogListDirection::FromAnchor)
+        result_.has_newer=direction==LogListDirection::Older || (direction==LogListDirection::Newer && eligible_>LogListRows);
     result_.has_older=direction==LogListDirection::Newer || eligible_>LogListRows;
     if(writer && writer->hasRetainedSession()) {
         for(unsigned n=0;n<result_.count;++n)
@@ -52,6 +55,7 @@ void LogReader::finishList(LogWriter* writer) {
 }
 bool LogReader::step(LogWriter* writer) {
     if(done_) return true;
+    if(result_.request.kind==LogReadKind::Delete) { deleteTarget(writer); return true; }
     SdAccessScope access(observer_);
     if(result_.request.kind!=LogReadKind::List) { readTarget(writer); return true; }
     if(!started_) {
@@ -68,6 +72,7 @@ bool LogReader::step(LogWriter* writer) {
         const auto direction=result_.request.direction;
         if(direction!=LogListDirection::Newest) {
             const int cmp=order(entry->d_name,result_.request.anchor);
+            if(direction==LogListDirection::FromAnchor && cmp>0) {result_.has_newer=true;continue;}
             if((direction==LogListDirection::Older && cmp>=0)||(direction==LogListDirection::Newer && cmp<=0)) continue;
         }
         ++eligible_;
@@ -86,6 +91,27 @@ bool LogReader::step(LogWriter* writer) {
         std::memcpy(names[position],entry->d_name,std::strlen(entry->d_name)+1); ++count;
     }
     return false;
+}
+void LogReader::deleteTarget(LogWriter* writer) {
+    const auto path=directory_+"/"+result_.request.name;
+    // FAT32 filenames are case-insensitive. Protect even an alias of the
+    // retained writer path, including paused/closing/failed-save sessions.
+    auto samePath=[](const std::string& a,const std::string& b) {
+        if(a.size()!=b.size()) return false;
+        for(size_t n=0;n<a.size();++n)
+            if(std::tolower(static_cast<unsigned char>(a[n]))!=std::tolower(static_cast<unsigned char>(b[n]))) return false;
+        return true;
+    };
+    if(writer && writer->hasRetainedSession() && samePath(path,writer->path())) {
+        fail(LogReadError::Active); return;
+    }
+    SdAccessScope access(observer_);
+    if(file_.opened() && !file_.close()) {fail(LogReadError::DeleteFailed);return;}
+    struct stat info{};
+    if(stat(path.c_str(),&info)) {fail(errno==ENOENT?LogReadError::NotFound:LogReadError::DeleteFailed);return;}
+    if(!S_ISREG(info.st_mode)) {fail(LogReadError::InvalidName);return;}
+    if(std::remove(path.c_str())) {fail(LogReadError::DeleteFailed);return;}
+    done_=true;
 }
 void LogReader::readTarget(LogWriter* writer) {
     const auto& request=result_.request;

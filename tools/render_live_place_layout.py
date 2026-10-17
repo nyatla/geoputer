@@ -12,7 +12,7 @@ import tempfile
 
 from PIL import Image
 
-from ui_preview_support import ADAPTER, M5GFX, OUTPUT, ROOT
+from ui_preview_support import ADAPTER, M5GFX, OUTPUT, ROOT, reference_frame
 
 
 SCENE = r'''
@@ -37,7 +37,7 @@ int main(int argc, char** argv) {
     const bool missing = std::strcmp(mode,"missing") == 0;
     M5GFX display;
     UiRenderer renderer(display);
-    if (!renderer.begin()) return 1;
+    if (!renderer.begin(previewColorDepth())) return 1;
     UiModel model; model.tick(1000); model.setBattery(full_battery ? 100 : 72,false,true);
     UiData data{}; data.settings = defaultSettings(); data.revision = 1;
     data.recording.state = unprepared ? RecordingState::Stopped : paused ? RecordingState::Paused : RecordingState::Recording;
@@ -96,13 +96,15 @@ int main(int argc, char** argv) {
             check_pixel(84+x,89+y,degree[y] & (0x8000u>>x) ? TFT_WHITE : TFT_BLACK);
     }
     // The left labels stay in the upper-left corner of each equal-height row.
-    auto check_ascii = [&](int x,int y,const char* value) {
+    auto check_ascii = [&](int x,int y,const char* value,uint16_t color=TFT_WHITE) {
         for (const auto* p=value;*p;++p,x+=8)
             for(int row=0;row<8;++row) for(int col=0;col<8;++col)
-                check_pixel(x+col,y+row,font8x8_c64[(*p-32)*8+col] & (1u<<row) ? TFT_WHITE : TFT_BLACK);
+                check_pixel(x+col,y+row,font8x8_c64[(*p-32)*8+col] & (1u<<row) ? color : TFT_BLACK);
     };
     check_ascii(4,62,"SPD"); check_ascii(4,85,"HDG");
-    check_ascii(188,124,"2 MENU");
+    check_ascii(84,124,"1",TFT_CYAN); check_ascii(92,124,":GPS",TFT_LIGHTGREY);
+    check_ascii(132,124,"2",TFT_CYAN); check_ascii(140,124,":SET",TFT_LIGHTGREY);
+    check_ascii(180,124,"3",TFT_CYAN); check_ascii(188,124,":LOG",TFT_LIGHTGREY);
     if (!std::strcmp(mode,"speed-metres")) check_ascii(84,73,"m/h");
     if (long_speed || !std::strcmp(mode,"speed-integer")) check_ascii(84,73,"km/h");
     if (!std::strcmp(mode,"n03"))
@@ -124,7 +126,7 @@ int main(int argc, char** argv) {
 
 def main():
     enum_source = (M5GFX / "v1/misc/enum.hpp").read_text()
-    renderer_source = (ROOT / "application/task/ui/UiRenderer.cpp").read_text()
+    renderer_source = (ROOT / "application/task/ui/UiRenderer.cpp").read_text() + (ROOT / "application/task/ui/UiCanvas.h").read_text()
     names = sorted(set(re.findall(r"\bTFT_[A-Z]+\b", SCENE + renderer_source)))
     colors = []
     for name in names:
@@ -149,17 +151,17 @@ def main():
             str(ROOT / "application/Settings.cpp"),
             str(ROOT / "application/task/ui/Shinonome.cpp"),
             "-o", str(executable),
-        ], check=True, timeout=60)
+        ], check=True, timeout=180)
         image_modes = ("rec", "pause", "sd-error", "gps-error", "reload", "n03", "sd-write", "sd-read", "dictionary-read", "unprepared")
         verification_modes = ("speed-long", "speed-metres", "speed-integer", "full-battery", "bounds", "missing", "heading-wrap", "overflow", "zero", "long-address")
         for mode in image_modes + verification_modes:
             ppm = work / f"{mode}.ppm"
             with ppm.open("wb") as output:
-                subprocess.run([str(executable), mode], stdout=output, check=True, timeout=10)
+                output.write(reference_frame(executable, mode))
             with Image.open(ppm) as source:
                 image = source.convert("RGB")
             assert image.size == (240, 135)
-            assert len(image.getcolors(256)) <= 8
+            assert len(image.getcolors(256)) <= 9
             assert image.getpixel((124, 2)) == ((0, 255, 0) if mode not in ("reload", "unprepared") else (255, 255, 0) if mode == "reload" else (123, 125, 123))
             if mode in ("sd-read", "sd-write", "reload", "dictionary-read"):
                 assert image.getpixel((152, 2)) == (0, 0, 255)

@@ -12,7 +12,7 @@ struct WordBookCacheStats {
     uint8_t entries = 0;
 };
 
-// Storage-owned, dataset-local cache of fully converted place names. Requests
+// Storage-owned, dataset-local cache of validated/formatted UTF-8 names. Requests
 // and coordinates never enter the cache. order_[0] is most recently used.
 class WordBookCache {
 public:

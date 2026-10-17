@@ -9,6 +9,7 @@ void testGps();
 void testSettings();
 void testPlace();
 void testBoot();
+void testDatasets();
 void testClock();
 void testFonts();
 void testLicenses();
@@ -19,13 +20,14 @@ void testLiveLayout();
 void testWordBookCache();
 void testKeyBindings();
 void testSettingsLanguage();
+void testDialogs();
 
 static void check(bool value, const char* detail) {
     if (!value) throw std::runtime_error(detail);
 }
 
-static TaskMessage terminal(const TaskMessage& request, OperationStatus status = OperationStatus::Ok) {
-    TaskMessage result{};
+static ReturnMessage terminal(const UiRequest& request, OperationStatus status = OperationStatus::Ok) {
+    ReturnMessage result{};
     result.kind = MessageKind::SyncReturn;
     result.source = TaskId::UI;
     result.request_id = request.request_id;
@@ -35,21 +37,21 @@ static TaskMessage terminal(const TaskMessage& request, OperationStatus status =
 }
 
 static void testLateReturnAndSeparateNotifications() {
-    Queue<TaskMessage, 1> returns;
-    Queue<TaskMessage, 1> notifications;
-    Queue<TaskMessage, 2> destination;
+    Queue<ReturnMessage, 1> returns;
+    Queue<AppNotification, 1> notifications;
+    Queue<UiRequest, 2> destination;
     returns.initialize();
     notifications.initialize();
     destination.initialize();
     SyncClient client(returns);
-    TaskMessage notification{};
+    AppNotification notification{};
     notification.kind = MessageKind::UiContentChanged;
     check(notifications.send(notification), "normal queue accepts a notification");
-    TaskMessage request{};
+    UiRequest request{};
     request.kind = MessageKind::GetUiContent;
     check(client.sendSync(TaskId::UI, destination, request, 0) == SyncSendResult::AwaitingResult,
           "initial sync request is accepted");
-    TaskMessage accepted{};
+    UiRequest accepted{};
     check(destination.receive(accepted), "subtask receives one request");
     check(accepted.request_id != 0 && accepted.source == TaskId::Application, "request identity");
     SyncReturn result{};
@@ -71,14 +73,16 @@ static void testLateReturnAndSeparateNotifications() {
     check(returns.send(completed), "place protocol test value in return queue");
     check(client.receiveSyncResult(result, 0) == SyncReceiveResult::NoPendingSyncError,
           "idle retrieval is an error");
-    check(returns.receive(request), "idle retrieval does not consume return queue");
+    ReturnMessage unconsumed{};
+    check(returns.receive(unconsumed), "idle retrieval does not consume return queue");
 }
 
 static void testSendFailuresAndReturnIdentity() {
-    Queue<TaskMessage, 1> returns, destination, unavailable;
+    Queue<ReturnMessage, 1> returns;
+    Queue<UiRequest, 1> destination, unavailable;
     destination.initialize();
     SyncClient client(returns);
-    TaskMessage request{};
+    UiRequest request{};
     request.kind = MessageKind::GetUiContent;
     check(client.sendSync(TaskId::UI, destination, request, 0) == SyncSendResult::DestinationUnavailable,
           "uninitialized return queue rejects enqueue");
@@ -110,6 +114,84 @@ static void testSendFailuresAndReturnIdentity() {
     check(client.receiveSyncResult(result, 0) == SyncReceiveResult::Returned, "correct identity completes request");
 }
 
+static void testDirectionalPayloadCopies() {
+    Queue<StorageRequest, 1> storage;
+    Queue<AppNotification, 8> notifications;
+    Queue<ReturnMessage, 1> returns;
+    storage.initialize(); notifications.initialize(); returns.initialize();
+    StorageRequest request{};
+    request.kind = MessageKind::ReadLogRecords;
+    request.request_id = 91;
+    request.payload.log_read.session_id = UINT64_C(0x1234567812345678);
+    request.payload.log_read.name[LogNameBytes - 2] = 'N';
+    request.payload.log_read.anchor[LogNameBytes - 2] = 'A';
+    check(storage.send(request), "compact Storage request is queued");
+    StorageRequest received{};
+    storage.receive(received);
+    check(received.request_id == 91 && received.payload.log_read.session_id == request.payload.log_read.session_id &&
+          received.payload.log_read.name[LogNameBytes - 2] == 'N' &&
+          received.payload.log_read.anchor[LogNameBytes - 2] == 'A',
+          "largest Storage request survives its smaller queue intact");
+    AppNotification event{};
+    event.kind = MessageKind::ReadCompleted; event.source = TaskId::Storage;
+    auto& result = event.payload.storage_completion;
+    result.read_kind = StorageReadKind::LogBrowse;
+    result.logs.request = request.payload.log_read;
+    result.logs.count = LogReadCount;
+    for (unsigned n = 0; n < LogReadCount; ++n) for (unsigned b = 0; b < 32; ++b)
+        result.logs.data.records[n][b] = static_cast<uint8_t>(n * 32 + b);
+    for (unsigned n = 0; n < 8; ++n) check(notifications.send(event), "all eight notification slots remain available");
+    check(!notifications.send(event), "notification capacity is still eight");
+    ReturnMessage reply{};
+    reply.kind = MessageKind::SyncReturn; reply.source = TaskId::Storage;
+    reply.payload.result.storage.log.saved = 12345;
+    check(returns.send(reply), "full notification queue does not block a Storage return");
+    reply = {}; returns.receive(reply);
+    check(reply.payload.result.storage.log.saved == 12345, "Storage return snapshot survives the compact return queue");
+    while (notifications.receive(event)) {
+        const auto& copied = event.payload.storage_completion.logs;
+        check(copied.request.session_id == request.payload.log_read.session_id && copied.count == LogReadCount,
+              "log batch identity is retained");
+        for (unsigned n = 0; n < LogReadCount; ++n) for (unsigned b = 0; b < 32; ++b)
+            check(copied.data.records[n][b] == static_cast<uint8_t>(n * 32 + b),
+                  "all ten binary records survive the compact notification queue");
+    }
+}
+
+static void testSyncCallerEnvelopeAndQueuedSnapshot() {
+    Queue<ReturnMessage, 1> returns;
+    Queue<UiRequest, 1> destination;
+    returns.initialize(); destination.initialize();
+    SyncClient client(returns);
+    UiRequest request{};
+    request.kind = MessageKind::SetUiScreen;
+    request.payload.screen.generation = 42;
+    request.payload.screen.data.datasets.detail = true;
+    request.payload.screen.data.datasets.info = {};
+    std::strcpy(request.payload.screen.data.datasets.info.description, "UTF-8 dataset description");
+    check(client.sendSync(TaskId::UI, destination, request, 0) == SyncSendResult::AwaitingResult,
+          "full UI request is accepted from a caller-owned envelope");
+    check(request.source == TaskId::Application && request.request_id && request.sequence,
+          "sync stamps the existing envelope rather than making a full request copy");
+    const auto first_id = request.request_id;
+    const auto first_sequence = request.sequence;
+    check(client.sendSync(TaskId::UI, destination, request, 0) == SyncSendResult::SyncPendingError &&
+          request.request_id == first_id && request.sequence == first_sequence,
+          "rejected overlapping sync does not mutate the outstanding envelope");
+    request.payload.screen.generation = 99;
+    request.payload.screen.data.datasets.info.description[0] = 'X';
+    UiRequest queued{};
+    check(destination.receive(queued) && queued.request_id == first_id &&
+          queued.payload.screen.generation == 42 &&
+          !std::strcmp(queued.payload.screen.data.datasets.info.description, "UTF-8 dataset description"),
+          "queue owns an independent value snapshot after the send returns");
+    auto reply = terminal(queued);
+    returns.send(reply);
+    SyncReturn result{};
+    check(client.receiveSyncResult(result, 0) == SyncReceiveResult::Returned && !client.waiting(),
+          "caller reuse cannot alter return matching for the accepted request");
+}
+
 static SetUiScreen initialScreen() {
     SetUiScreen command{};
     command.screen = ScreenId::LivePlace;
@@ -126,13 +208,13 @@ static void testUiActionOwnershipAndStaleUpdates() {
     check(model.setScreen(command) == OperationStatus::Ok, "initial screen accepted");
     check(!model.notificationPending(), "App screen update does not notify App again");
     check(model.takeRedraw() && !model.takeRedraw(), "screen requests one redraw");
-    model.keyPressed(UiKey::Menu, 10);
+    model.keyPressed(UiKey::OpenSettings, 10);
     const auto confirmed = model.snapshot();
     check(model.notificationPending(), "confirmed UI action creates notification");
     check(confirmed.screen == ScreenId::LivePlace, "UI cannot switch top-level screen on its own");
-    check(confirmed.action.target == ScreenId::Menu, "2 requests Menu");
+    check(confirmed.action.target == ScreenId::Settings, "2 requests Settings");
     model.keyPressed(UiKey::Escape, 20);
-    model.keyPressed(UiKey::Menu, 30);
+    model.keyPressed(UiKey::OpenSettings, 30);
     check(model.snapshot().action.action_id == confirmed.action.action_id, "pending action cannot be overwritten");
     check(model.snapshot().content_revision == confirmed.content_revision, "duplicate key does not repeat action");
     check(confirmed.last_input_ms == 10, "snapshot is not mutated by later keys");
@@ -179,7 +261,7 @@ static void testRepeatedUiRoundTripsAndValueCopies() {
     check(std::strcmp(model.data().place[0], "千葉県") == 0, "UI keeps a value copy of App data");
     for (uint32_t i = 0; i < 1000; ++i) {
         const auto previous = model.snapshot().screen;
-        model.keyPressed(previous == ScreenId::LivePlace ? UiKey::Menu : UiKey::Escape, i + 1);
+        model.keyPressed(previous == ScreenId::LivePlace ? UiKey::OpenSettings : UiKey::Escape, i + 1);
         auto snapshot = model.snapshot();
         check(snapshot.screen == previous, "top-level screen stays until App sends it");
         check(snapshot.action.action_id == i + 1, "each confirmed action has a distinct ID");
@@ -198,15 +280,19 @@ int main() {
     try {
         testLateReturnAndSeparateNotifications();
         testSendFailuresAndReturnIdentity();
+        testDirectionalPayloadCopies();
+        testSyncCallerEnvelopeAndQueuedSnapshot();
         testUiActionOwnershipAndStaleUpdates();
         testRepeatedUiRoundTripsAndValueCopies();
         testGps();
         testSettings();
         testSettingsLanguage();
+        testDialogs();
         testPlace();
         testWordBookCache();
         testKeyBindings();
         testBoot();
+        testDatasets();
         testClock();
         testFonts();
         testLicenses();
@@ -214,7 +300,7 @@ int main() {
         testLogRing();
         testLogReader();
         testLiveLayout();
-        std::cout << "PASS: queue/sync, UI/settings/GPS, CP932/place search, Boot, JST clock, Shinonome and full license navigation, RG/SD lamps and binary log recovery\n";
+        std::cout << "PASS: queue/sync, UI/settings/GPS, UTF-8/place search, Boot, JST clock, Shinonome and full license navigation, RG/SD lamps and binary log recovery\n";
     } catch (const std::exception& error) {
         std::cerr << "FAIL: " << error.what() << '\n';
         return 1;

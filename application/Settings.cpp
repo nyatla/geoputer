@@ -1,78 +1,78 @@
 #include "Settings.h"
+#include <cstring>
 
 namespace geoputer {
-
+bool validDatasetLanguage(const char* value, bool allow_empty) {
+    if (!value) return false;
+    const size_t length = strnlen(value, config::DatasetLanguageBytes);
+    if (!length) return allow_empty;
+    if (length >= config::DatasetLanguageBytes || value[0] < 'a' || value[0] > 'z' || !std::strcmp(value,"dataset")) return false;
+    bool separator = false;
+    for (size_t i=0;i<length;++i) {
+        const char ch=value[i];
+        if (ch=='-') { if (separator || i+1==length) return false; separator=true; }
+        else { if (!((ch>='a' && ch<='z') || (ch>='0' && ch<='9'))) return false; separator=false; }
+    }
+    return true;
+}
 unsigned settingChoices(unsigned index) {
-    constexpr unsigned counts[] = {2, 3, 5, 5, 5, 3, 2};
+    constexpr unsigned counts[] = {2, 3, 5, 5, 5, 100, 2};
     return index < SettingCount ? counts[index] : 0;
 }
-
-uint8_t settingValue(const Settings& value, unsigned index) {
-    switch (index) {
-        case 0: return static_cast<uint8_t>(value.language);
-        case 1: return value.log_interval;
-        case 2: return value.flush_interval;
-        case 3: return value.screen_timeout;
-        case 4: return value.brightness;
-        case 5: return value.dataset;
-        case 6: return value.gps_mode;
-        default: return UINT8_MAX;
+uint8_t settingValue(const Settings& v, unsigned index) {
+    switch(index) {
+        case 0:return static_cast<uint8_t>(v.language); case 1:return v.log_interval;
+        case 2:return v.flush_interval; case 3:return v.screen_timeout; case 4:return v.brightness;
+        case 5:return v.dataset; case 6:return v.gps_mode; default:return UINT8_MAX;
     }
 }
-
-bool setSettingValue(Settings& value, unsigned index, uint8_t choice) {
-    if (choice >= settingChoices(index)) return false;
-    switch (index) {
-        case 0: value.language = static_cast<UiLanguage>(choice); break;
-        case 1: value.log_interval = choice; break;
-        case 2: value.flush_interval = choice; break;
-        case 3: value.screen_timeout = choice; break;
-        case 4: value.brightness = choice; break;
-        case 5: value.dataset = choice; break;
-        case 6: value.gps_mode = choice; break;
-        default: return false;
+bool setSettingValue(Settings& v,unsigned index,uint8_t choice) {
+    if(choice>=settingChoices(index) || (index==5 && !choice)) return false;
+    switch(index) {
+        case 0:v.language=static_cast<UiLanguage>(choice);break; case 1:v.log_interval=choice;break;
+        case 2:v.flush_interval=choice;break;case 3:v.screen_timeout=choice;break;case 4:v.brightness=choice;break;
+        case 5:v.dataset=choice;break;case 6:v.gps_mode=choice;break;default:return false;
     }
     return true;
 }
-
-bool validSettings(const Settings& value) {
-    for (unsigned i = 0; i < SettingCount; ++i) if (settingValue(value, i) >= settingChoices(i)) return false;
-    return true;
+bool validSettings(const Settings& v) {
+    for(unsigned i=0;i<SettingCount;++i) if(settingValue(v,i)>=settingChoices(i)) return false;
+    return v.dataset && validDatasetLanguage(v.wordbook_language,true);
 }
-
-bool sameSettings(const Settings& a, const Settings& b) {
-    for (unsigned i = 0; i < SettingCount; ++i) if (settingValue(a, i) != settingValue(b, i)) return false;
-    return true;
+bool sameSettings(const Settings& a,const Settings& b) {
+    for(unsigned i=0;i<SettingCount;++i) if(settingValue(a,i)!=settingValue(b,i)) return false;
+    return !std::strncmp(a.wordbook_language,b.wordbook_language,config::DatasetLanguageBytes);
 }
-
-static uint32_t checksum(const uint8_t* bytes) {
-    uint32_t hash = 2166136261u;
-    for (unsigned i = 0; i < 12; ++i) hash = (hash ^ bytes[i]) * 16777619u;
+static uint32_t checksum(const uint8_t* bytes,size_t size) {
+    uint32_t hash=2166136261u;
+    for(size_t i=0;i<size;++i) hash=(hash^bytes[i])*16777619u;
     return hash;
 }
-
-void encodeSettings(const Settings& value, uint8_t (&record)[SettingsRecordSize]) {
-    for (auto& byte : record) byte = 0;
-    record[0] = 'G'; record[1] = 'P'; record[2] = 2; record[3] = SettingCount;
-    // Keep the original six fields at their v1 offsets, regardless of menu order.
-    for (unsigned i = 0; i < 6; ++i) record[4 + i] = settingValue(value, i + 1);
-    record[10] = static_cast<uint8_t>(value.language);
-    const auto sum = checksum(record);
-    for (unsigned i = 0; i < 4; ++i) record[12 + i] = static_cast<uint8_t>(sum >> (i * 8));
+void encodeSettings(const Settings& v,uint8_t (&record)[SettingsRecordSize]) {
+    for(auto& byte:record) byte=0;
+    record[0]='G';record[1]='P';record[2]=3;record[3]=SettingCount;
+    for(unsigned i=0;i<6;++i) record[4+i]=settingValue(v,i+1);
+    record[10]=static_cast<uint8_t>(v.language);
+    std::memcpy(record+12,v.wordbook_language,config::DatasetLanguageBytes);
+    const auto hash=checksum(record,SettingsRecordSize-4);
+    for(unsigned i=0;i<4;++i) record[SettingsRecordSize-4+i]=static_cast<uint8_t>(hash>>(8*i));
 }
-
-bool decodeSettings(const uint8_t* record, size_t size, Settings& value) {
-    if (!record || size != SettingsRecordSize || record[0] != 'G' || record[1] != 'P' || record[11]) return false;
-    const bool legacy = record[2] == 1 && record[3] == 6 && record[10] == 0;
-    if (!legacy && !(record[2] == 2 && record[3] == SettingCount)) return false;
-    uint32_t sum = 0;
-    for (unsigned i = 0; i < 4; ++i) sum |= static_cast<uint32_t>(record[12 + i]) << (i * 8);
-    if (sum != checksum(record)) return false;
-    Settings candidate = defaultSettings();
-    for (unsigned i = 0; i < 6; ++i) if (!setSettingValue(candidate, i + 1, record[4 + i])) return false;
-    if (!legacy && !setSettingValue(candidate, 0, record[10])) return false;
-    value = candidate;  // Leave the caller's previous settings untouched on any failure.
+bool decodeSettings(const uint8_t* record,size_t size,Settings& value) {
+    if(!record || (size!=SettingsRecordSize && size!=LegacySettingsRecordSize) || record[0]!='G' || record[1]!='P' || record[11]) return false;
+    const bool old=size==LegacySettingsRecordSize;
+    if(old ? !((record[2]==1 && record[3]==6 && record[10]==0) || (record[2]==2 && record[3]==SettingCount)) : !(record[2]==3 && record[3]==SettingCount)) return false;
+    uint32_t hash=0;
+    for(unsigned i=0;i<4;++i) hash|=static_cast<uint32_t>(record[size-4+i])<<(8*i);
+    if(hash!=checksum(record,size-4)) return false;
+    Settings candidate=defaultSettings();
+    for(unsigned i=0;i<6;++i) {
+        if(old && i==4) { if(record[8]>=3) return false; continue; } // Old values were unused mode indices, never folder IDs.
+        if(!setSettingValue(candidate,i+1,record[4+i])) return false;
+    }
+    if(record[2]!=1 && !setSettingValue(candidate,0,record[10])) return false;
+    if(!old) std::memcpy(candidate.wordbook_language,record+12,config::DatasetLanguageBytes);
+    if(!validSettings(candidate)) return false;
+    value=candidate;
     return true;
 }
-
-}  // namespace geoputer
+} // namespace geoputer

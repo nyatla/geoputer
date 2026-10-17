@@ -16,7 +16,7 @@ bool Application::begin() {
     data_.boot.set(BootItem::Tasks, BootCheckState::Checking, "STARTING");
     data_.boot.set(BootItem::GPS, BootCheckState::Checking, "UART INIT");
     if (!setScreen(ScreenId::Boot)) return false;
-    TaskMessage request{};
+    GpsRequest request{};
     request.kind = MessageKind::StartGpsReception;
     SyncReturn result{};
     const bool gps_started = gps_.initialize() && gps_.start("GPS", 4096, 2);
@@ -36,11 +36,11 @@ bool Application::begin() {
     data_.boot.set(BootItem::SD, BootCheckState::Checking, "MOUNTING");
     bootChanged();
     if (!publishUiContent()) return false;
-    request = {};
-    request.kind = MessageKind::InitializeStorage;
+    StorageRequest storage_request{};
+    storage_request.kind = MessageKind::InitializeStorage;
     const bool storage_started = storage_.initialize() && storage_.start("Storage", 12288, 1);
     if (!storage_started ||
-        !callTask(TaskId::Storage, storage_.inbox(), request, result) || result.status != OperationStatus::Ok) {
+        !callTask(TaskId::Storage, storage_.inbox(), storage_request, result) || result.status != OperationStatus::Ok) {
         message("STORAGE UNAVAILABLE");
         data_.boot.set(BootItem::Settings, BootCheckState::Failed, "NO STORE");
         data_.boot.set(BootItem::SD, BootCheckState::Failed, "NO STORE");
@@ -51,18 +51,20 @@ bool Application::begin() {
     }
     data_.boot.set(BootItem::Tasks, gps_started && storage_started ? BootCheckState::Passed : BootCheckState::Failed,
                    gps_started && storage_started ? "4T/5Q" : "TASK ERR");
+    Serial.printf("[MEMORY] messages ui=%u gps=%u storage=%u notify=%u return=%u sd_files=%u frame_bpp=%u\n",
+                  static_cast<unsigned>(sizeof(UiRequest)), static_cast<unsigned>(sizeof(GpsRequest)),
+                  static_cast<unsigned>(sizeof(StorageRequest)), static_cast<unsigned>(sizeof(AppNotification)),
+                  static_cast<unsigned>(sizeof(ReturnMessage)), config::SdMaxOpenFiles, config::UiColorDepth);
     bootChanged();
     if (!publishUiContent()) return false;
     return true;
 }
 
-bool Application::callUi(const TaskMessage& request, SyncReturn& result) {
+bool Application::callUi(UiRequest& request, SyncReturn& result) {
     return callTask(TaskId::UI, ui_.inbox(), request, result);
 }
 
-bool Application::callTask(TaskId peer, Queue<TaskMessage, 1>& destination,
-                           const TaskMessage& request, SyncReturn& result) {
-    const auto sent = sync_.sendSync(peer, destination, request, pdMS_TO_TICKS(50));
+bool Application::awaitSyncResult(SyncSendResult sent, SyncReturn& result) {
     if (sent != SyncSendResult::AwaitingResult) {
         Serial.printf("[APP] sync send failed: %u\n", static_cast<unsigned>(sent));
         return false;
@@ -81,9 +83,15 @@ bool Application::callTask(TaskId peer, Queue<TaskMessage, 1>& destination,
 
 bool Application::setScreen(ScreenId target, uint32_t action_id, ActionResult action_result) {
     if(isLogBrowser(target) || isLogBrowser(screen_)) prepareLogScreen(target,screen_);
-    TaskMessage request{};
+    UiRequest request{};
     request.kind = MessageKind::SetUiScreen;
-    request.payload.screen = {target, DisplayMode::View, generation_ + 1, data_, action_id, action_result};
+    auto& command = request.payload.screen;
+    command.screen = target;
+    command.mode = DisplayMode::View;
+    command.generation = generation_ + 1;
+    command.data = data_;
+    command.processed_action_id = action_id;
+    command.action_result = action_result;
     const uint32_t sent_revision = data_.revision;
     SyncReturn result{};
     if (!callUi(request, result) || result.status != OperationStatus::Ok) return false;
@@ -93,13 +101,14 @@ bool Application::setScreen(ScreenId target, uint32_t action_id, ActionResult ac
     if (target == ScreenId::LivePlace) refreshPlace();
     ui_data_dirty_ = data_.revision != sent_revision;
     if (action_id) last_processed_action_ = action_id;
-    Serial.printf("[APP] screen=%s generation=%lu action=%lu\n",
-                  target == ScreenId::LivePlace ? "LivePlace" : target == ScreenId::Boot ? "Boot" : target==ScreenId::Logs?"Logs":target==ScreenId::LogDetail?"LogDetail":target==ScreenId::LogPoint?"LogPoint":target==ScreenId::Menu?"Menu":target==ScreenId::GpsLogger?"GpsLogger":"Settings",
-                  static_cast<unsigned long>(generation_), static_cast<unsigned long>(action_id));
+    Serial.printf("[APP] screen=%s generation=%lu action=%lu stack_free=%u\n",
+                  target == ScreenId::LivePlace ? "LivePlace" : target == ScreenId::Boot ? "Boot" : target==ScreenId::Logs?"Logs":target==ScreenId::LogDetail?"LogDetail":target==ScreenId::LogPoint?"LogPoint":target==ScreenId::GpsLogger?"GpsLogger":"Settings",
+                  static_cast<unsigned long>(generation_), static_cast<unsigned long>(action_id),
+                  static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)));
     return true;
 }
 
-void Application::handleNotification(const TaskMessage& event) {
+void Application::handleNotification(const AppNotification& event) {
     if (event.source == TaskId::UI && event.kind == MessageKind::UiContentChanged) ui_changed_ = true;
     if (event.source == TaskId::Storage &&
         (event.kind == MessageKind::RgCacheStateChanged || event.kind == MessageKind::SdAccessChanged)) {
@@ -114,6 +123,7 @@ void Application::handleNotification(const TaskMessage& event) {
          event.kind == MessageKind::StorageError || event.kind == MessageKind::LogWritten)) {
         const auto& completed = event.payload.storage_completion;
         applyStorage(completed.snapshot);
+        if (completed.read_kind == StorageReadKind::DatasetBrowser) { completeDataset(completed.dataset_view); return; }
         if(completed.read_kind==StorageReadKind::LogBrowse) { completeBrowser(completed.logs); return; }
         if (completed.read_kind == StorageReadKind::Log) { log_retry_at_ = taskTimeMs(); return; }
         if (completed.read_kind == StorageReadKind::Dataset) {
@@ -178,9 +188,14 @@ void Application::handleNotification(const TaskMessage& event) {
 }
 
 bool Application::publishUiContent(uint32_t action_id, ActionResult action_result) {
-    TaskMessage request{};
+    UiRequest request{};
     request.kind = MessageKind::UpdateUiContent;
-    request.payload.update = {mode_, generation_, data_, action_id, action_result};
+    auto& command = request.payload.update;
+    command.mode = mode_;
+    command.generation = generation_;
+    command.data = data_;
+    command.processed_action_id = action_id;
+    command.action_result = action_result;
     const uint32_t sent_revision = data_.revision;
     SyncReturn result{};
     const bool accepted = callUi(request, result) && result.status == OperationStatus::Ok;
@@ -190,22 +205,30 @@ bool Application::publishUiContent(uint32_t action_id, ActionResult action_resul
 }
 
 void Application::drainNotifications() {
-    TaskMessage event{};
+    AppNotification event{};
     // Bound this work so result retrieval is revisited even under notification load.
     for (unsigned i = 0; i < 8 && notifications_.receive(event); ++i) handleNotification(event);
 }
 
-void Application::readUiContent() {
-    ui_changed_ = false;
-    TaskMessage request{};
+bool Application::readUiSnapshot(UiSnapshot& content) {
+    // Release the large request/result frame before dispatching an action that
+    // can send another UI request. Only the small immutable snapshot survives.
+    UiRequest request{};
     request.kind = MessageKind::GetUiContent;
     SyncReturn result{};
-    if (!callUi(request, result) || result.status != OperationStatus::Ok) {
+    if (!callUi(request, result) || result.status != OperationStatus::Ok) return false;
+    content = result.content;
+    return true;
+}
+
+void Application::readUiContent() {
+    ui_changed_ = false;
+    UiSnapshot content{};
+    if (!readUiSnapshot(content)) {
         ui_changed_ = true;
         vTaskDelay(pdMS_TO_TICKS(10));
         return;
     }
-    const auto& content = result.content;
     const auto& action = content.action;
     if (action.kind == ActionKind::None) return;
     if (content.screen != screen_ || action.screen_generation != generation_ || content.screen_generation != generation_) {
@@ -235,6 +258,12 @@ void Application::readUiContent() {
         if (!publishUiContent(action.action_id, accepted ? ActionResult::Applied : ActionResult::Rejected)) ui_changed_ = true;
         return;
     }
+    if (action.kind == ActionKind::Dataset && screen_ == ScreenId::Settings && mode_ == DisplayMode::View) {
+        const bool accepted = operateDataset(action);
+        last_processed_action_ = action.action_id;
+        if (!publishUiContent(action.action_id, accepted ? ActionResult::Applied : ActionResult::Rejected)) ui_changed_ = true;
+        return;
+    }
     if (action.kind == ActionKind::Logging && mode_ == DisplayMode::View) {
         if (!queueLogAction(action)) {
             last_processed_action_ = action.action_id;
@@ -251,11 +280,10 @@ void Application::readUiContent() {
     }
     const bool valid = action.kind == ActionKind::ChangeScreen && content.screen == screen_ &&
                        action.screen_generation == generation_ && content.screen_generation == generation_ &&
-                       ((screen_ == ScreenId::Boot && data_.boot.complete && action.target == ScreenId::LivePlace) ||
-                        (screen_ == ScreenId::LivePlace && action.target == ScreenId::Menu) ||
-                        (screen_ == ScreenId::Menu && (action.target == ScreenId::GpsLogger || action.target == ScreenId::Settings || action.target==ScreenId::Logs || action.target == ScreenId::LivePlace)) ||
+                       ((screen_ == ScreenId::Boot && data_.boot.complete && !data_.boot.fatal_dataset && action.target == ScreenId::LivePlace) ||
+                        (screen_ == ScreenId::LivePlace && (action.target == ScreenId::GpsLogger || action.target == ScreenId::Settings || action.target==ScreenId::Logs)) ||
                         ((screen_ == ScreenId::Settings || screen_ == ScreenId::GpsLogger) && action.target == ScreenId::LivePlace) ||
-                        (screen_==ScreenId::Logs && action.target==ScreenId::Menu) ||
+                        (screen_==ScreenId::Logs && action.target==ScreenId::LivePlace) ||
                         (screen_==ScreenId::LogDetail && action.target==ScreenId::Logs) ||
                         (screen_==ScreenId::LogPoint && action.target==ScreenId::LogDetail));
     if (valid && action.action_id != last_processed_action_) {
@@ -298,10 +326,16 @@ void Application::applyStorage(const StorageSnapshot& state) {
 }
 
 bool Application::operateStorage(const UiAction& action) {
-    if (data_.storage.busy || storage_operation_id_) { message("STORAGE BUSY"); return false; }
+    if (dataset_applying_ || data_.storage.busy || storage_operation_id_) { message("STORAGE BUSY"); return false; }
     const bool saving = action.kind == ActionKind::SaveSettings || action.kind == ActionKind::ResetSettings;
     const auto value = action.kind == ActionKind::ResetSettings ? defaultSettings() : action.settings;
-    if (saving && (!validSettings(value) || value.gps_mode != 0 || value.dataset != 2)) {
+    if (action.kind == ActionKind::ResetSettings &&
+        (data_.settings.dataset != 1 || data_.settings.wordbook_language[0])) {
+        DatasetRequest reset{}; reset.action = DatasetAction::Apply; reset.number = 1; reset.reset_settings = true;
+        return requestDataset(reset);
+    }
+    if (saving && (!validSettings(value) || value.gps_mode != 0 || value.dataset != data_.settings.dataset ||
+                   std::strcmp(value.wordbook_language, data_.settings.wordbook_language))) {
         message("SETTING NOT AVAILABLE"); return false;
     }
     if (!saving && (data_.storage.log.open || data_.storage.log.closing || data_.storage.log.buffered || log_control_.action_id)) {
@@ -312,7 +346,7 @@ bool Application::operateStorage(const UiAction& action) {
                     (action.storage_operation == StorageOperation::Format && !action.confirmed))) {
         message("INVALID SD OPERATION"); return false;
     }
-    TaskMessage request{};
+    StorageRequest request{};
     request.kind = saving ? MessageKind::SaveSettings : MessageKind::OperateStorage;
     request.payload.storage_command = {saving ? StorageOperation::SaveSettings : action.storage_operation,
                                        value, action.action_id, action.confirmed};
@@ -347,7 +381,7 @@ bool Application::canSearchPlace() const {
 void Application::requestPlace() {
     const auto now = taskTimeMs();
     if (!canSearchPlace() || place_flow_.waitMs(now, data_.gps.sample_seq) != 0) return;
-    TaskMessage request{};
+    StorageRequest request{};
     request.kind = MessageKind::SearchPlace;
     request.source = TaskId::Application;
     if (++place_request_id_ == 0) ++place_request_id_;
@@ -375,7 +409,7 @@ void Application::advanceBoot() {
     }
     if (boot_stage_ == BootStage::NeedSettings || boot_stage_ == BootStage::NeedDataset) {
         const bool settings = boot_stage_ == BootStage::NeedSettings;
-        TaskMessage request{};
+        StorageRequest request{};
         request.kind = settings ? MessageKind::LoadSettings : MessageKind::CheckDataset;
         request.source = TaskId::Application;
         request.request_id = settings ? BootSettingsRequest : BootDatasetRequest;
@@ -449,7 +483,7 @@ bool Application::appendPendingLog() {
 }
 
 bool Application::logRequest(MessageKind kind, const LogCommand& command) {
-    TaskMessage request{};
+    StorageRequest request{};
     request.kind = kind; request.payload.log = command;
     SyncReturn result{};
     if (!callTask(TaskId::Storage, storage_.inbox(), request, result)) return false;
@@ -461,6 +495,7 @@ bool Application::logRequest(MessageKind kind, const LogCommand& command) {
 }
 
 bool Application::queueLogAction(const UiAction& action) {
+    if (dataset_applying_ || restart_pending_ || data_.boot.fatal_dataset) return false;
     if (log_control_.action_id) return action.action_id == log_control_.action_id;
     const auto state = data_.recording.state;
     const bool logger_screen = screen_ == ScreenId::GpsLogger;
@@ -519,6 +554,13 @@ void Application::processLog() {
 
 void Application::runOnce() {
     drainNotifications();
+    if (restart_pending_) {
+        message("RESTARTING...");
+        publishUiContent();
+        vTaskDelay(pdMS_TO_TICKS(150));
+        ESP.restart();
+        return;
+    }
     advanceBoot();
     updateLogElapsed();
     processLog();
@@ -532,14 +574,14 @@ void Application::runOnce() {
         if (!publishUiContent()) vTaskDelay(pdMS_TO_TICKS(10));
         return;
     }
-    if (screen_ == ScreenId::Boot && data_.boot.complete && taskTimeMs() - boot_completed_at_ >= data_.boot.holdMs()) {
+    if (screen_ == ScreenId::Boot && data_.boot.complete && !data_.boot.fatal_dataset && taskTimeMs() - boot_completed_at_ >= data_.boot.holdMs()) {
         if (!setScreen(ScreenId::LivePlace)) vTaskDelay(pdMS_TO_TICKS(10));
         return;
     }
-    TaskMessage event{};
+    AppNotification event{};
     TickType_t wait = portMAX_DELAY;
     if (screen_ == ScreenId::Boot) {
-        if (data_.boot.complete) {
+        if (data_.boot.complete && !data_.boot.fatal_dataset) {
             const auto elapsed = taskTimeMs() - boot_completed_at_;
             const auto hold = data_.boot.holdMs();
             wait = elapsed < hold ? pdMS_TO_TICKS(hold - elapsed) : 0;

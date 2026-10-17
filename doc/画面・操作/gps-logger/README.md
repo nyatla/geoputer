@@ -8,7 +8,7 @@
 
 ## 1. 目的
 
-GPSログの開始・再開・停止と、記録・保存状態の確認を行う。緯度・経度・速度・進行方位・海抜高度・衛星数等のGPS情報は[Live Place](../live-place/README.md)へ集約する。本画面ではGaluchat検索を実行しない。
+Live Placeの数字1から直接開き、Esc / DelでLive Placeへ戻る。GPSログの開始・再開・停止と、記録・保存状態の確認を行う。緯度・経度・速度・進行方位・海抜高度・衛星数等のGPS情報は[Live Place](../live-place/README.md)へ集約する。本画面ではGaluchat検索を実行しない。
 
 ## 2. レイアウト
 
@@ -45,7 +45,7 @@ RAMへの追加受付エラーはtryAppendLogの通常の戻り値、開始・fl
 
 ## 4. GPSログ操作
 
-上下キーで操作項目を選択し、Enterで決定する。UIは選択・確認操作をタスク内で処理し、確定操作を保持して内容更新を通知する。Appが同期取得してログ操作を実行し、処理結果をUIへ反映する。Escはキャンセル・Live Placeへ戻る。左右キーは使用しない。
+上下キーで操作項目を選択し、Enterで決定する。UIは選択・確認操作をタスク内で処理し、確定操作を保持して内容更新を通知する。Appが同期取得してログ操作を実行し、処理結果をUIへ反映する。Escはキャンセル・Live Placeへ戻る。左右キーは共通確認ダイアログの選択にだけ使用する。
 
 | ログ状態 | 選択可能な操作 |
 |---|---|
@@ -56,7 +56,7 @@ RAMへの追加受付エラーはtryAppendLogの通常の戻り値、開始・fl
 
 - STARTは新規セッションを準備し、STARTINGを経て次の新しい有効Fixから記録を開始する。操作前の古いFixは保存しない。
 - RESUMEは一時停止中に取得した点を遡って記録せず、次の新しい有効FixからRECORDINGへ戻す。ログとセッションを継続する。
-- STOPは確認ダイアログを開く。Enterで停止、Escでキャンセルする。
+- STOPは[共通確認ダイアログ](../共通確認ダイアログ.md)を開く。初期選択は取消とし、右で停止を選んでEnterを押した場合だけ停止する。Esc / Delまたは取消のEnterは元画面へ戻る。
 - 停止確定時は新しいログ追加を止め、保存・終了要求の受付結果を同期操作で取得してSTOPPEDへ移行する。実保存とファイル終了はStorageが非同期に処理して通知する。
 - flushに失敗した未保存レコードはRAMに保持し、件数とSDエラーを表示する。ログ状態と保存エラーは別に表示する。
 - 記録の一時停止はLive PlaceのF1から行う。一時停止・停止でGPSデバイスをOFFにせず、UART受信とLatestFix更新を継続する。GNSSの休止・復帰は後続実装とする。
@@ -89,6 +89,6 @@ RAMへの追加受付エラーはtryAppendLogの通常の戻り値、開始・fl
 
 ## 操作項目の言語とフォント
 
-開始・再開・停止・保存中および停止確認の項目は、表示言語に従う。日本語は開始 / 再開 / 停止 / 保存中 / 取消 / 実行を東雲16×16、英語はSTART / RESUME / STOP / SAVING... / CANCEL / OKをAsciiFont8x16で表示する。タイトル、保存件数・状態・キーガイドは既存のASCII 8×8とする。
+開始・再開・停止・保存中および停止確認の項目は、表示言語に従う。日本語は開始 / 再開 / 停止 / 保存中 / 取消 / 停止を東雲16×16、英語はSTART / RESUME / STOP / SAVING... / Cancel / StopをAsciiFont8x16で表示する。タイトル、保存件数・状態・キーガイドは既存のASCII 8×8とする。
 
 [日本語の停止操作](log-browser-logger-preview.png) / [English](log-browser-en-logger-preview.png) / [日本語の再開操作](log-browser-logger-paused-preview.png) / [English](log-browser-en-logger-paused-preview.png)

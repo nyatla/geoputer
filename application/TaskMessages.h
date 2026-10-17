@@ -31,6 +31,7 @@ enum class MessageKind : uint8_t {
     ListLogs,
     ReadLogSummary,
     ReadLogRecords,
+    DeleteLog,
     CancelLogRead,
     LogWritten,
     SettingsWritten,
@@ -38,6 +39,7 @@ enum class MessageKind : uint8_t {
     ReadFailed,
     StorageOperationCompleted,
     StorageError,
+    DatasetOperation,
     SyncReturn,
 };
 enum class OperationStatus : uint8_t { Ok, InvalidRequest, StaleContent, Unavailable };
@@ -55,29 +57,53 @@ struct UiContentChanged {
     uint32_t screen_generation;
 };
 
-struct TaskMessage {
+// The envelope and queue counts are common; payload storage is direction-specific.
+struct MessageHeader {
     MessageKind kind;
     TaskId source;
     uint32_t request_id;
     uint32_t sequence;
     uint32_t sent_at_ms;
-    union {
-        SetUiScreen screen;
-        UpdateUiContent update;
-        SyncReturn result;
-        UiContentChanged changed;
-        GpsSnapshot gps;
-        StorageCommand storage_command;
-        StorageCompletion storage_completion;
-        PlaceRequest place_request;
-        RgCacheSnapshot rg;
-        SdAccessSnapshot sd;
-        LogCommand log;
-        LogReadRequest log_read;
-    } payload;
 };
 
-static_assert(std::is_trivially_copyable<TaskMessage>::value,
+template <typename Payload>
+struct Message : MessageHeader { Payload payload; };
+
+union UiRequestPayload {
+    SetUiScreen screen;
+    UpdateUiContent update;
+};
+union StorageRequestPayload {
+    StorageCommand storage_command;
+    PlaceRequest place_request;
+    LogCommand log;
+    LogReadRequest log_read;
+    DatasetRequest dataset;
+};
+union AppNotificationPayload {
+    UiContentChanged changed;
+    GpsSnapshot gps;
+    StorageCompletion storage_completion;
+    RgCacheSnapshot rg;
+    SdAccessSnapshot sd;
+};
+struct ReturnPayload { SyncReturn result; };
+
+using UiRequest = Message<UiRequestPayload>;
+using StorageRequest = Message<StorageRequestPayload>;
+// Current GPS commands have no arguments.
+struct GpsRequest : MessageHeader {};
+using AppNotification = Message<AppNotificationPayload>;
+using ReturnMessage = Message<ReturnPayload>;
+
+static_assert(std::is_trivially_copyable<UiRequest>::value &&
+              std::is_trivially_copyable<StorageRequest>::value &&
+              std::is_trivially_copyable<GpsRequest>::value &&
+              std::is_trivially_copyable<AppNotification>::value &&
+              std::is_trivially_copyable<ReturnMessage>::value,
               "Task messages must be safe to copy through FreeRTOS queues");
+static_assert(sizeof(GpsRequest) == sizeof(MessageHeader), "GPS requests have no payload");
+static_assert(sizeof(StorageRequest) < sizeof(UiRequest) && sizeof(ReturnMessage) < sizeof(UiRequest) &&
+              sizeof(AppNotification) < sizeof(UiRequest), "Only UI requests carry full UI content");
 
 }  // namespace geoputer

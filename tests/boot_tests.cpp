@@ -54,13 +54,13 @@ void testBoot() {
     command.data.settings = defaultSettings();
     check(ui.setScreen(command) == OperationStatus::Ok, "Boot is a valid screen");
     ui.tick(100); ui.tick(100000);
-    for (auto key : {UiKey::Enter, UiKey::Escape, UiKey::Menu, UiKey::Up, UiKey::Down, UiKey::Left, UiKey::Right}) ui.keyPressed(key, 100001);
+    for (auto key : {UiKey::Enter, UiKey::Escape, UiKey::OpenSettings, UiKey::Up, UiKey::Down, UiKey::Left, UiKey::Right}) ui.keyPressed(key, 100001);
     check(ui.snapshot().action.kind == ActionKind::None, "unfinished boot neither sleeps nor accepts screen/menu actions");
     UpdateUiContent update{};
     update.generation = 1; update.mode = DisplayMode::View; update.data = command.data;
     update.data.revision = 2; update.data.boot = ready(); update.data.boot.finish();
     check(ui.updateContent(update) == OperationStatus::Ok, "App can publish completed startup checks");
-    ui.keyPressed(UiKey::Menu, 100002);
+    ui.keyPressed(UiKey::OpenSettings, 100002);
     check(ui.snapshot().action.kind == ActionKind::None, "2 cannot bypass boot acknowledgement");
     ui.keyPressed(UiKey::Enter, 100003);
     const auto action = ui.snapshot().action;

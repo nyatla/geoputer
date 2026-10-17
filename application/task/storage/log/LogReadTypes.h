@@ -5,9 +5,9 @@
 
 namespace geoputer {
 constexpr unsigned LogListRows=6, LogReadCount=10, LogNameBytes=48;
-enum class LogReadKind : uint8_t { List, Summary, Records };
-enum class LogListDirection : uint8_t { Newest, Older, Newer };
-enum class LogReadError : uint8_t { None, Io, InvalidName, Header, Unsupported, Corrupt, Range, Changed, Cancelled, NoCard, SaveFailed };
+enum class LogReadKind : uint8_t { List, Summary, Records, Delete };
+enum class LogListDirection : uint8_t { Newest, Older, Newer, FromAnchor };
+enum class LogReadError : uint8_t { None, Io, InvalidName, Header, Unsupported, Corrupt, Range, Changed, Cancelled, NoCard, SaveFailed, Active, Unconfirmed, DeleteFailed, NotFound };
 struct LogSummary {
     uint64_t session_id, bytes, first_utc, last_utc;
     uint32_t records;
@@ -19,6 +19,7 @@ struct LogReadRequest {
     LogReadKind kind;
     LogListDirection direction;
     uint8_t count;
+    bool confirmed;
     char name[LogNameBytes], anchor[LogNameBytes];
 };
 struct LogReadReply {
@@ -43,6 +44,10 @@ inline const char* logReadErrorName(LogReadError error) {
         case LogReadError::Cancelled:return "CANCELLED";
         case LogReadError::NoCard:return "SD NOT AVAILABLE";
         case LogReadError::SaveFailed:return "SAVE FAILED; READ CANCELLED";
+        case LogReadError::Active:return "LOG IS IN USE";
+        case LogReadError::Unconfirmed:return "DELETE NOT CONFIRMED";
+        case LogReadError::DeleteFailed:return "SD DELETE FAILED";
+        case LogReadError::NotFound:return "LOG FILE NOT FOUND";
     }
     return "LOG READ ERROR";
 }
@@ -53,6 +58,6 @@ struct LogBrowserView {
     char names[LogListRows][LogNameBytes], name[LogNameBytes];
     LogReadError error;
     uint8_t count, selected, active_mask;
-    bool loading, has_newer, has_older;
+    bool loading, has_newer, has_older, deleting;
 };
 } // namespace geoputer

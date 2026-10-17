@@ -1,6 +1,6 @@
 #pragma once
 
-#include <M5GFX.h>
+#include "UiCanvas.h"
 
 namespace geoputer {
 
@@ -12,7 +12,7 @@ public:
     explicit PixelFont(M5GFX& display) : glyph_(&display) {}
     bool begin();
     static int width(const char* text, TextRole role);
-    void draw(M5Canvas& target, int x, int y, const char* text, TextRole role, uint16_t color);
+    void draw(UiCanvas& target, int x, int y, const char* text, TextRole role, uint16_t color);
 
 private:
     M5Canvas glyph_;

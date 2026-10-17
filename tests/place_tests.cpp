@@ -12,16 +12,21 @@ void check(bool value, const char* detail) { if (!value) throw std::runtime_erro
 }
 
 void testPlace() {
-    check(cp932ToUtf8("\x90\xE7\x97\x74\x8C\xA7\x8F\x4B\x8E\x75\x96\xEC\x8E\x73\x8D\xEB\x8F\xC0\x93\xF1\x92\x9A\x96\xDA") ==
-          "千葉県習志野市鷺沼二丁目", "CP932 address converts to UTF-8");
-    check(cp932ToUtf8("\xEE\xE0\xED\x95\xB1\x41") == "髙﨑ｱA", "CP932 extensions, half-width kana and ASCII");
-    for (const auto& bad : {std::string("\x81"), std::string("\x81\x30"), std::string("\x81\xAD"), std::string(1, '\0')}) {
-        bool rejected = false;
-        try { cp932ToUtf8(bad); } catch (const std::runtime_error&) { rejected = true; }
-        check(rejected, "invalid CP932 is reported rather than displayed as UTF-8");
-    }
-    check(!validUtf8("\xC0\xAF") && !validUtf8("\xED\xA0\x80") && !validUtf8("\xE3\x81"), "reject malformed UTF-8");
+    check(validUtf8("千葉県習志野市鷺沼二丁目") && validUtf8("髙﨑ｱA") && validUtf8("\xF0\x9F\x9A\x80"),
+          "UTF-8 Japanese, compatibility characters, half-width kana, ASCII and supplementary characters");
     char lines[3][64];
+    for (const auto& bad : {std::string("\x81"), std::string("\x90\xE7\x97\x74"),
+                           std::string("\xC0\xAF"), std::string("\xED\xA0\x80"), std::string("\xE3\x81"),
+                           std::string("\xF4\x90\x80\x80"), std::string("\xF0\x80\x80\x80"),
+                           std::string("a\0b", 3)}) {
+        check(!validUtf8(bad), "reject legacy bytes, NUL and malformed UTF-8");
+        for (unsigned component = 0; component < 6; ++component) {
+            std::vector<std::string> parts(6); parts[component] = bad;
+            bool rejected = false;
+            try { formatPlaceLines(parts, lines); } catch (const std::runtime_error&) { rejected = true; }
+            check(rejected, "all hierarchy slots reject invalid UTF-8 without conversion");
+        }
+    }
     formatPlaceLines({"千葉県", "", "習志野市", "", "鷺沼", "二丁目"}, lines);
     check(std::strcmp(lines[0], "千葉県") == 0 && std::strcmp(lines[1], "習志野市") == 0 &&
           std::strcmp(lines[2], "鷺沼二丁目") == 0, "Integrated six slots preserve empty hierarchy slots");
@@ -150,7 +155,7 @@ void testPlace() {
         warning.setScreen({ScreenId::LivePlace, DisplayMode::View, 1, rejected, 0, ActionResult::None});
         check(warning.datasetWarning(), "unusable dataset opens an acknowledgement warning");
         warning.tick(100); warning.tick(100000);
-        warning.keyPressed(UiKey::Menu, 100001);
+        warning.keyPressed(UiKey::OpenSettings, 100001);
         check(warning.snapshot().action.kind == ActionKind::None && warning.datasetWarning(),
               "dataset warning does not sleep or allow menu keys to bypass acknowledgement");
         warning.keyPressed(close_key, 100002);

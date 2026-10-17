@@ -9,10 +9,10 @@
 using namespace geoputer;
 namespace {
 void check(bool value, const char* message) { if (!value) throw std::runtime_error(message); }
-void updateChecksum(uint8_t (&record)[16]) {
+void updateChecksum(uint8_t (&record)[SettingsRecordSize]) {
     uint32_t hash = 2166136261u;
-    for (unsigned i = 0; i < 12; ++i) hash = (hash ^ record[i]) * 16777619u;
-    for (unsigned i = 0; i < 4; ++i) record[12+i] = static_cast<uint8_t>(hash >> (8*i));
+    for (unsigned i = 0; i < SettingsRecordSize-4; ++i) hash = (hash ^ record[i]) * 16777619u;
+    for (unsigned i = 0; i < 4; ++i) record[SettingsRecordSize-4+i] = static_cast<uint8_t>(hash >> (8*i));
 }
 }
 
@@ -22,7 +22,7 @@ void testSettingsLanguage() {
     Settings restored{};
     check(decodeSettings(legacy, sizeof(legacy), restored) && restored.language == UiLanguage::Japanese &&
           restored.log_interval == 2 && restored.flush_interval == 4 && restored.screen_timeout == 3 &&
-          restored.brightness == 4 && restored.dataset == 2 && restored.gps_mode == 0,
+          restored.brightness == 4 && restored.dataset == 1 && restored.gps_mode == 0,
           "v1 NVS fixture restores all six original fields and adds Japanese without resetting settings");
     Preferences::records.clear();
     Preferences::records["geoputer/config"] = {legacy, legacy + sizeof(legacy)};
@@ -33,13 +33,13 @@ void testSettingsLanguage() {
     SettingsStore rebooted; Settings after_reboot{};
     check(rebooted.begin() && rebooted.load(after_reboot) == SettingsState::Loaded && sameSettings(restored, after_reboot),
           "reboot retains the selected language and original settings");
-    check(Preferences::records["geoputer/config"][2] == 2 && Preferences::records["geoputer/config"][3] == SettingCount,
+    check(Preferences::records["geoputer/config"][2] == 3 && Preferences::records["geoputer/config"][3] == SettingCount,
           "saved record carries the new version and field count");
-    uint8_t record[16]; encodeSettings(restored, record);
+    uint8_t record[SettingsRecordSize]; encodeSettings(restored, record);
     record[10] = 2; updateChecksum(record);
     check(!decodeSettings(record, sizeof(record), after_reboot) && sameSettings(after_reboot, restored),
           "invalid language is rejected even with a valid checksum, without changing active settings");
-    encodeSettings(restored, record); record[2] = 3; updateChecksum(record);
+    encodeSettings(restored, record); record[2] = 4; updateChecksum(record);
     check(!decodeSettings(record, sizeof(record), after_reboot), "unsupported future format is rejected");
     encodeSettings(restored, record); record[11] = 1; updateChecksum(record);
     check(!decodeSettings(record, sizeof(record), after_reboot), "reserved bytes remain validated");

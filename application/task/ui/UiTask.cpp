@@ -6,7 +6,7 @@
 
 namespace geoputer {
 
-void UiTask::handle(const TaskMessage& request, bool ready) {
+void UiTask::handle(const UiRequest& request, bool ready) {
     if (request.source != TaskId::Application || request.request_id == 0) {
         Serial.println("[UI] invalid request envelope");
         return;
@@ -50,7 +50,7 @@ void UiTask::sendReturn() {
 void UiTask::notifyContentChanged() {
     if (!model_.notificationPending()) return;
     const auto content = model_.snapshot();
-    TaskMessage event{};
+    AppNotification event{};
     event.kind = MessageKind::UiContentChanged;
     event.source = TaskId::UI;
     event.sequence = ++sequence_;
@@ -68,16 +68,16 @@ void UiTask::run() {
     UiRenderer renderer(M5Cardputer.Display);
     const bool ready = renderer.begin();
     Serial.println(ready ? "[UI] ready (240x135)" : "[UI] initialization failed");
-    bool was_f1 = false, was_menu = false, was_escape = false, was_up = false, was_down = false;
+    bool was_one = false, was_settings = false, was_logs = false, was_escape = false, was_up = false, was_down = false;
     bool was_left = false, was_right = false, was_enter = false, was_any = false;
+    bool was_delete = false;
     uint32_t repeat_at = 0;
     bool clock_reported = false;
     uint32_t battery_at = 0;
     bool battery_sampled = false;
-    TickType_t wake = xTaskGetTickCount();
     for (;;) {
         sendReturn();
-        TaskMessage request{};
+        UiRequest request{};
         if (!has_return_ && inbox().receive(request)) {
             handle(request, ready);
             sendReturn();  // Return after copying/accepting, before rendering.
@@ -87,12 +87,16 @@ void UiTask::run() {
         // Normalize physical keys before detecting edges; adding/removing Fn
         // while holding a navigation key must not create another press.
         // Physical Del/Backspace and Fn+` share one Back/Cancel press edge.
-        bool f1 = false, menu = false, escape = keys.del, up = false, down = false;
+        bool f1 = false, gps = false, settings = false, logs = false, escape = keys.del, up = false, down = false;
         bool left = false, right = false;
+        bool delete_log = false;
         for (const auto& position : M5Cardputer.Keyboard.keyList()) {
             const auto key = mapPhysicalKey(M5Cardputer.Keyboard.getKeyValue(position).value_first, keys.fn);
             f1 |= key == UiKey::F1;
-            menu |= key == UiKey::Menu;
+            gps |= key == UiKey::OpenGpsLogger;
+            settings |= key == UiKey::OpenSettings;
+            logs |= key == UiKey::OpenLogs;
+            delete_log |= key == UiKey::DeleteLog;
             escape |= key == UiKey::Escape;
             up |= key == UiKey::Up;
             down |= key == UiKey::Down;
@@ -101,6 +105,7 @@ void UiTask::run() {
         }
         const uint32_t now = taskTimeMs();
         const bool enter = keys.enter;
+        const bool one = f1 || gps; // Plain 1 and Fn+1 share a physical press edge.
         const bool any = M5Cardputer.Keyboard.isPressed() || keys.fn || keys.shift || keys.ctrl || keys.alt;
         if (ready) {
             if (!battery_sampled || now - battery_at >= 5000) {
@@ -109,15 +114,17 @@ void UiTask::run() {
                                   charging != m5::Power_Class::charge_unknown);
                 battery_sampled = true; battery_at = now;
             }
-            if (f1 && !was_f1) model_.keyPressed(UiKey::F1, now);
-            if (menu && !was_menu) model_.keyPressed(UiKey::Menu, now);
+            if (one && !was_one) model_.keyPressed(f1 ? UiKey::F1 : UiKey::OpenGpsLogger, now);
+            if (settings && !was_settings) model_.keyPressed(UiKey::OpenSettings, now);
+            if (logs && !was_logs) model_.keyPressed(UiKey::OpenLogs, now);
+            if (delete_log && !was_delete) model_.keyPressed(UiKey::DeleteLog, now);
             if (escape && !was_escape) model_.keyPressed(UiKey::Escape, now);
             if (up && !was_up) model_.keyPressed(UiKey::Up, now);
             if (down && !was_down) model_.keyPressed(UiKey::Down, now);
             if (left && !was_left) model_.keyPressed(UiKey::Left, now);
             if (right && !was_right) model_.keyPressed(UiKey::Right, now);
             if (enter && !was_enter) model_.keyPressed(UiKey::Enter, now);
-            if (any && !was_any && !f1 && !menu && !escape && !up && !down && !left && !right && !enter) model_.keyPressed(UiKey::Other, now);
+            if (any && !was_any && !one && !settings && !logs && !delete_log && !escape && !up && !down && !left && !right && !enter) model_.keyPressed(UiKey::Other, now);
             if ((up && !was_up) || (down && !was_down)) repeat_at = now + 400;
             else if ((up || down) && repeat_at && static_cast<int32_t>(now - repeat_at) >= 0) {
                 model_.keyPressed(up ? UiKey::Up : UiKey::Down, now);
@@ -131,8 +138,10 @@ void UiTask::run() {
                 clock_reported = true;
             }
         }
-        was_f1 = f1;
-        was_menu = menu;
+        was_one = one;
+        was_settings = settings;
+        was_logs = logs;
+        was_delete = delete_log;
         was_escape = escape;
         was_up = up;
         was_down = down;
@@ -140,7 +149,10 @@ void UiTask::run() {
         if (!up && !down) repeat_at = 0;
         notifyContentChanged();
         if (ready && model_.takeRedraw()) renderer.draw(model_);
-        vTaskDelayUntil(&wake, pdMS_TO_TICKS(10));
+        // Rendering/SD-driven updates can exceed 10 ms. An absolute deadline
+        // would then run catch-up iterations without blocking and starve IDLE.
+        // Always yield after a UI iteration, including slow full-screen draws.
+        vTaskDelay(pdMS_TO_TICKS(10));
     }
 }
 

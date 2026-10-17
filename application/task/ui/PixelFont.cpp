@@ -25,7 +25,7 @@ int PixelFont::width(const char* text, TextRole role) {
     return result;
 }
 
-void PixelFont::draw(M5Canvas& target, int x, int y, const char* text,
+void PixelFont::draw(UiCanvas& target, int x, int y, const char* text,
                      TextRole role, uint16_t color) {
     while (*text) {
         const auto first = static_cast<unsigned char>(*text);

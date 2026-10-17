@@ -3,6 +3,7 @@
 #include <sd_diskio.h>
 #include <ff.h>
 #include <esp_heap_caps.h>
+#include <cstring>
 #include "../../utils/SyncClient.h"
 
 namespace geoputer {
@@ -33,7 +34,7 @@ void StorageTask::mountCard() {
     if (drive_ == 0xFF) { state_.sd_error = state_.error = -10; return; }
     log_writer_.setDrive(drive_);
     log_reader_.setDrive(drive_);
-    mounted_ = sdcard_mount(drive_, "/sd", 5, false);  // Never format on mount failure.
+    mounted_ = sdcard_mount(drive_, "/sd", config::SdMaxOpenFiles, false);  // Never format on mount failure.
     const auto type = sdcard_type(drive_);
     if (type == CARD_SD || type == CARD_SDHC || type == CARD_MMC) {
         state_.card_bytes = static_cast<uint64_t>(sdcard_num_sectors(drive_)) * 512;
@@ -79,6 +80,7 @@ bool StorageTask::formatCard() {
 
 bool StorageTask::loadSettings() {
     state_.settings_state = settings_store_.load(state_.settings);
+    place_lookup_.configure(DatasetCatalog{}.directory(state_.settings.dataset), state_.settings.wordbook_language);
     if (state_.settings_state != SettingsState::Loaded && state_.settings_state != SettingsState::Defaults) {
         state_.nvs_error = state_.error = -20;
         return false;
@@ -100,10 +102,11 @@ bool StorageTask::saveSettings(const Settings& value) {
     return true;
 }
 
-void StorageTask::handle(const TaskMessage& request) {
+void StorageTask::handle(const StorageRequest& request) {
     if (request.source != TaskId::Application || request.request_id == 0) return;
     if(request.kind==MessageKind::CancelLogRead) {
-        if(has_read_ && request.payload.log_read.token==log_reader_.result().request.token) log_reader_.cancel();
+        if(has_read_ && log_reader_.result().request.kind!=LogReadKind::Delete &&
+           request.payload.log_read.token==log_reader_.result().request.token) log_reader_.cancel();
         return;
     }
     if (request.kind == MessageKind::LoadSettings || request.kind == MessageKind::SearchPlace ||
@@ -129,13 +132,23 @@ void StorageTask::handle(const TaskMessage& request) {
     auto& result = pending_return_.payload.result;
     result.request_kind = request.kind;
     result.status = OperationStatus::InvalidRequest;
-    if (request.kind == MessageKind::InitializeStorage) {
+    if (request.kind == MessageKind::DatasetOperation) {
+        if (initialized_ && !has_read_ && !has_job_ && !has_completion_) {
+            dataset_request_ = request.payload.dataset;
+            dataset_request_.language[sizeof(dataset_request_.language)-1] = 0;
+            has_job_ = dataset_browser_job_ = true;
+            load_job_ = search_job_ = dataset_job_ = false;
+            job_ = {}; job_request_id_ = request.request_id;
+            state_.busy = true; ++state_.revision; result.status = OperationStatus::Ok;
+        } else result.status = OperationStatus::Unavailable;
+    } else if (request.kind == MessageKind::InitializeStorage) {
         if (!initialized_) {
             pinMode(5, OUTPUT); digitalWrite(5, HIGH);  // Keep unused LoRa SPI deselected.
             pinMode(12, OUTPUT); digitalWrite(12, HIGH);
             spi_.begin(40, 39, 14, 12);
             nvs_ready_ = settings_store_.begin();
             state_.settings = defaultSettings();
+            place_lookup_.configure(DatasetCatalog{}.directory(state_.settings.dataset), state_.settings.wordbook_language);
             state_.settings_state = nvs_ready_ ? SettingsState::Defaults : SettingsState::Unavailable;
             state_.nvs_error = nvs_ready_ ? 0 : -20;
             mountCard();
@@ -146,10 +159,10 @@ void StorageTask::handle(const TaskMessage& request) {
         result.status = OperationStatus::Ok;  // Individual backend outcomes are in the snapshot.
     } else if (request.kind == MessageKind::GetStorageStatus) {
         result.status = initialized_ ? OperationStatus::Ok : OperationStatus::Unavailable;
-    } else if(request.kind==MessageKind::ListLogs || request.kind==MessageKind::ReadLogSummary || request.kind==MessageKind::ReadLogRecords) {
+    } else if(request.kind==MessageKind::ListLogs || request.kind==MessageKind::ReadLogSummary || request.kind==MessageKind::ReadLogRecords || request.kind==MessageKind::DeleteLog) {
         if(initialized_ && !has_read_ && !has_job_ && !has_completion_) {
             auto read=request.payload.log_read;
-            read.kind=request.kind==MessageKind::ListLogs?LogReadKind::List:request.kind==MessageKind::ReadLogSummary?LogReadKind::Summary:LogReadKind::Records;
+            read.kind=request.kind==MessageKind::ListLogs?LogReadKind::List:request.kind==MessageKind::ReadLogSummary?LogReadKind::Summary:request.kind==MessageKind::DeleteLog?LogReadKind::Delete:LogReadKind::Records;
             if(log_reader_.begin(read)) {
                 has_read_=true; read_prepared_=false; read_request_id_=request.request_id;
                 const auto log=log_writer_.snapshot(); read_barrier_session_=log.session_id; read_barrier_=log.accepted;
@@ -197,6 +210,33 @@ void StorageTask::sendReturn() {
 }
 
 void StorageTask::completeJob() {
+    if (dataset_browser_job_) {
+        DatasetView view{};
+        const bool applying = dataset_request_.action == DatasetAction::Apply;
+        if (applying && log_writer_.hasRetainedSession()) view.error = DatasetError::NotStopped;
+        else if (!mounted_ || state_.card_state != CardState::Mounted) view.error = DatasetError::Missing;
+        else {
+            view = DatasetCatalog("/sd/dataset", this).read(dataset_request_, state_.settings.language);
+        }
+        if (applying && view.error == DatasetError::None) {
+            Settings candidate = dataset_request_.reset_settings ? defaultSettings() : state_.settings;
+            candidate.dataset = dataset_request_.number;
+            std::snprintf(candidate.wordbook_language, sizeof(candidate.wordbook_language), "%s", view.info.language);
+            view.restart_required = candidate.dataset != state_.settings.dataset ||
+                std::strcmp(candidate.wordbook_language, state_.settings.wordbook_language);
+            if (!saveSettings(candidate)) view.error = DatasetError::SaveFailed;
+        }
+        view.applying = applying; view.revision = dataset_request_.token;
+        state_.busy = has_read_; ++state_.revision;
+        completion_ = {}; completion_.kind = view.error == DatasetError::None ? MessageKind::ReadCompleted : MessageKind::ReadFailed;
+        completion_.source = TaskId::Storage; completion_.request_id = job_request_id_;
+        completion_.sequence = ++sequence_; completion_.sent_at_ms = taskTimeMs();
+        auto& result = completion_.payload.storage_completion;
+        result.request_id = job_request_id_; result.snapshot = state_;
+        result.read_kind = StorageReadKind::DatasetBrowser; result.dataset_view = view;
+        has_completion_ = true; has_job_ = dataset_browser_job_ = false;
+        return;
+    }
     bool ok = false;
     state_.error = 0;
     PlaceResult place{};
@@ -208,6 +248,9 @@ void StorageTask::completeJob() {
             place = dataset_job_ ? place_lookup_.prepare() : place_lookup_.search(place_request_);
         else { place.request = place_request_; place.state = PlaceState::NoCard; }
         ok = place.state == PlaceState::Ready || place.state == PlaceState::NotFound;
+        if (dataset_job_ && place.state == PlaceState::Ready && !state_.settings.wordbook_language[0])
+            std::snprintf(state_.settings.wordbook_language, sizeof(state_.settings.wordbook_language), "%s",
+                          place_lookup_.selectedLanguage().c_str());
     } else if (load_job_) ok = loadSettings();
     else switch (job_.operation) {
         case StorageOperation::SaveSettings: ok = saveSettings(job_.settings); break;
@@ -320,7 +363,7 @@ void StorageTask::cacheState(RgCacheState cache, bool new_dataset) {
     notifyActivity();
 }
 void StorageTask::notifyActivity() {
-    TaskMessage event{};
+    AppNotification event{};
     event.source = TaskId::Storage; event.sent_at_ms = taskTimeMs();
     if (rg_dirty_) {
         event.kind = MessageKind::RgCacheStateChanged;
@@ -359,7 +402,7 @@ void StorageTask::stepLogRead() {
     if(!read_prepared_ && !log_reader_.done()) {
         const auto log=log_writer_.snapshot();
         if(state_.card_state!=CardState::Mounted) log_reader_.fail(LogReadError::NoCard);
-        else if(log.session_id==read_barrier_session_ && log.saved<read_barrier_) {
+        else if(log_reader_.result().request.kind!=LogReadKind::Delete && log.session_id==read_barrier_session_ && log.saved<read_barrier_) {
             if(log.error!=LogError::None && static_cast<int32_t>(taskTimeMs()-next_log_retry_)<0)
                 log_reader_.fail(LogReadError::SaveFailed);
             else { flushLog(true); return; }
@@ -386,7 +429,7 @@ void StorageTask::run() {
     for (;;) {
         sendReturn();
         notify();
-        TaskMessage request{};
+        StorageRequest request{};
         // Keep the one accepted operation/result until delivered. An incoming
         // read notification must never be consumed and silently discarded.
         if (!has_return_ && !has_job_ && !has_completion_ && inbox().receive(request)) { handle(request); sendReturn(); }

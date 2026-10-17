@@ -1,12 +1,14 @@
 #include "UiModel.h"
 #include "LicenseText.h"
 #include "SettingsLayout.h"
+#include "DatasetPresentation.h"
+#include <cstring>
 
 namespace geoputer {
 
 OperationStatus UiModel::setScreen(const SetUiScreen& command) {
     if (command.screen != ScreenId::LivePlace && command.screen != ScreenId::Settings && command.screen != ScreenId::Boot &&
-        command.screen != ScreenId::Menu && command.screen != ScreenId::GpsLogger && !isLogBrowser(command.screen)) {
+        command.screen != ScreenId::GpsLogger && !isLogBrowser(command.screen)) {
         return OperationStatus::InvalidRequest;
     }
     if (command.generation <= generation_) return OperationStatus::StaleContent;
@@ -23,7 +25,7 @@ OperationStatus UiModel::setScreen(const SetUiScreen& command) {
     copyData(command.data);
     selection_ = command.screen==ScreenId::Logs ? command.data.browse.selected : 0;
     page_ = SettingsPage::Root;
-    editing_ = confirming_ = confirm_yes_ = false;
+    editing_ = false; dialog_.close();
     license_offset_ = 0;
     card_info_ = false;
     redraw_ = true;
@@ -53,6 +55,7 @@ void UiModel::copyData(const UiData& data) {
         access_started_ms_ = last_tick_ms_; sd_seen_ = true;
     }
     const auto old_browse=data_.browse.revision;
+    const auto old_dataset_revision=data_.datasets.revision;
     data_ = data;
     // Activity is global; an older job snapshot cannot roll it back.
     if (newerRevision(previous_sd.revision, data_.storage.sd.revision)) data_.storage.sd = previous_sd;
@@ -62,7 +65,23 @@ void UiModel::copyData(const UiData& data) {
     data_.browse.name[LogNameBytes-1]='\0';
     if(screen_==ScreenId::Logs && !data_.browse.loading && data_.browse.revision!=old_browse) {
         selection_=data_.browse.selected;
+        dialog_.close(); // A refreshed list invalidates the previously shown target.
     }
+    if (screen_ == ScreenId::Settings &&
+        (page_ == SettingsPage::DatasetList || page_ == SettingsPage::DatasetDetail) &&
+        old_dataset_revision != data_.datasets.revision && !data_.datasets.loading) {
+        if (data_.datasets.detail) {
+            if (page_ != SettingsPage::DatasetDetail) { selection_ = 0; editing_ = false; }
+            page_ = SettingsPage::DatasetDetail;
+            const auto count = datasetDetailRows(data_.datasets, data_.settings.language == UiLanguage::Japanese);
+            if (selection_ >= count) selection_ = count-1;
+        } else {
+            page_ = SettingsPage::DatasetList; selection_ = data_.datasets.selected; editing_ = false;
+            if (data_.datasets.count) dataset_list_start_ = data_.datasets.rows[0].number;
+        }
+    }
+    if (dialog_.kind() == DialogKind::DeleteLog)
+        dialog_.setActionEnabled(selection_ < data_.browse.count && !(data_.browse.active_mask & (1u << selection_)));
     data_.message[sizeof(data_.message) - 1] = '\0';
 }
 
@@ -83,7 +102,7 @@ void UiModel::keyPressed(UiKey key, uint32_t now_ms) {
     last_input_ms_ = now_ms;
     if (action_.kind != ActionKind::None || generation_ == 0) return;
     if (screen_ == ScreenId::Boot) {
-        if (data_.boot.complete && key == UiKey::Enter) action(ActionKind::ChangeScreen, ScreenId::LivePlace);
+        if (data_.boot.complete && !data_.boot.fatal_dataset && key == UiKey::Enter) action(ActionKind::ChangeScreen, ScreenId::LivePlace);
         return;
     }
     if (mode_ == DisplayMode::Background) { action(ActionKind::Wake); return; }
@@ -91,28 +110,21 @@ void UiModel::keyPressed(UiKey key, uint32_t now_ms) {
         if (key == UiKey::Escape || key == UiKey::Enter) { dataset_warning_ = false; changed(); }
         return;
     }
-    if (screen_ == ScreenId::Menu) {
-        if (key == UiKey::Escape) action(ActionKind::ChangeScreen);
-        else if (key == UiKey::Up && selection_) { --selection_; changed(); }
-        else if (key == UiKey::Down && selection_ < 2) { ++selection_; changed(); }
-        else if (key == UiKey::Enter) action(ActionKind::ChangeScreen, selection_==2?ScreenId::Logs:selection_?ScreenId::Settings:ScreenId::GpsLogger);
-        return;
-    }
-    if ((screen_ == ScreenId::LivePlace || screen_ == ScreenId::GpsLogger) && confirming_) {
-        if (key == UiKey::Escape) { confirming_ = false; changed(); }
-        else if (key == UiKey::Up || key == UiKey::Down) { confirm_yes_ = !confirm_yes_; changed(); }
-        else if (key == UiKey::Enter) {
-            confirming_ = false;
-            if (confirm_yes_) { action(ActionKind::Logging); action_.log_action = confirm_log_action_; action_.confirmed = true; }
-            else changed();
-        }
-        return;
+    if (dialog_.active()) {
+        const auto kind = dialog_.kind();
+        if (kind == DialogKind::DeleteLog)
+            dialog_.setActionEnabled(selection_ < data_.browse.count && !(data_.browse.active_mask & (1u << selection_)));
+        const auto result = dialog_.keyPressed(key);
+        if (result == DialogInput::Accepted) acceptDialog(kind);
+        else if (result != DialogInput::Ignored) changed();
+        return; // A modal owns all keys, including screen shortcuts.
     }
     if (screen_ == ScreenId::LivePlace) {
-        if (key == UiKey::Menu) action(ActionKind::ChangeScreen, ScreenId::Menu);
+        if (key == UiKey::OpenGpsLogger) action(ActionKind::ChangeScreen, ScreenId::GpsLogger);
+        else if (key == UiKey::OpenSettings) action(ActionKind::ChangeScreen, ScreenId::Settings);
+        else if (key == UiKey::OpenLogs) action(ActionKind::ChangeScreen, ScreenId::Logs);
         else if (key == UiKey::F1 && data_.recording.state == RecordingState::Recording) {
-            confirm_log_action_ = LogAction::Pause;
-            confirming_ = true; confirm_yes_ = false; changed();
+            dialog_.open(DialogKind::PauseLog); changed();
         }
         return;
     }
@@ -128,16 +140,16 @@ void UiModel::keyPressed(UiKey key, uint32_t now_ms) {
                 action(ActionKind::Logging);
                 action_.log_action = state == RecordingState::Stopped ? LogAction::Start : LogAction::Resume;
             } else {
-                confirm_log_action_ = LogAction::Stop;
-                confirming_ = true; confirm_yes_ = false; changed();
+                dialog_.open(DialogKind::StopLog); changed();
             }
         }
         return;
     }
     if(isLogBrowser(screen_)) {
         const auto& view=data_.browse;
+        if(view.deleting) return; // Accepted deletion must finish before leaving/sleeping.
         if(key==UiKey::Escape) {
-            action(ActionKind::ChangeScreen,screen_==ScreenId::Logs?ScreenId::Menu:screen_==ScreenId::LogDetail?ScreenId::Logs:ScreenId::LogDetail);
+            action(ActionKind::ChangeScreen,screen_==ScreenId::Logs?ScreenId::LivePlace:screen_==ScreenId::LogDetail?ScreenId::Logs:ScreenId::LogDetail);
             return;
         }
         if(screen_==ScreenId::LogPoint) {
@@ -147,7 +159,9 @@ void UiModel::keyPressed(UiKey key, uint32_t now_ms) {
         }
         if(view.loading) return;
         if(screen_==ScreenId::Logs) {
-            if(key==UiKey::Up) {
+            if(key==UiKey::DeleteLog && selection_<view.count) {
+                dialog_.open(DialogKind::DeleteLog, !(view.active_mask & (1u << selection_))); changed();
+            } else if(key==UiKey::Up) {
                 if(selection_) { --selection_; changed(); }
                 else if(view.has_newer) browseAction(BrowseAction::Newer);
             } else if(key==UiKey::Down) {
@@ -167,25 +181,53 @@ void UiModel::keyPressed(UiKey key, uint32_t now_ms) {
         }
         return;
     }
-    if (card_info_) {
-        if (key == UiKey::Escape || key == UiKey::Enter) { card_info_ = false; changed(); }
+    if (screen_ == ScreenId::Settings && (page_ == SettingsPage::DatasetList || page_ == SettingsPage::DatasetDetail)) {
+        const auto& view = data_.datasets;
+        if (view.applying) return;
+        if (key == UiKey::Escape) {
+            if (editing_) {
+                editing_ = false; datasetAction(DatasetAction::CancelLanguage);
+                std::strcpy(action_.settings.wordbook_language,dataset_edit_original_);
+            }
+            else if (page_ == SettingsPage::DatasetDetail) {
+                page_ = SettingsPage::DatasetList; selection_ = 0;
+                datasetAction(DatasetAction::Open, dataset_list_start_);
+            } else { page_ = SettingsPage::Operation; selection_ = static_cast<uint8_t>(SettingId::Dataset); changed(); }
+            return;
+        }
+        if (view.loading) return;
+        if (page_ == SettingsPage::DatasetList) {
+            if (key == UiKey::Up) {
+                if (selection_) { --selection_; changed(); }
+                else if (view.has_older) datasetAction(DatasetAction::Older);
+            } else if (key == UiKey::Down) {
+                if (selection_+1 < view.count) { ++selection_; changed(); }
+                else if (view.has_newer) datasetAction(DatasetAction::Newer);
+            } else if (key == UiKey::Enter && view.count) datasetAction(DatasetAction::Detail,selection_);
+            return;
+        }
+        if (view.error != DatasetError::None) {
+            if (key == UiKey::Enter && datasetRecoverable(view.error)) datasetAction(DatasetAction::Apply);
+            return;
+        }
+        const unsigned count = datasetDetailRows(view, data_.settings.language == UiLanguage::Japanese);
+        if (editing_) {
+            if (key == UiKey::Enter) { editing_ = false; changed(); }
+            else if (key == UiKey::Left || key == UiKey::Right) datasetAction(DatasetAction::Language,key==UiKey::Right?1:0);
+            return;
+        }
+        if (key == UiKey::Up && selection_) { --selection_; changed(); }
+        if (key == UiKey::Down && selection_+1u<count) { ++selection_; changed(); }
+        if (key == UiKey::Enter) {
+            if (selection_ == count-2) {
+                std::strcpy(dataset_edit_original_,view.info.language);editing_ = true; changed();
+            }
+            else if (selection_ == count-1) datasetAction(DatasetAction::Apply);
+        }
         return;
     }
-    if (confirming_) {
-        if (key == UiKey::Escape) { confirming_ = false; changed(); }
-        else if (key == UiKey::Up || key == UiKey::Down) { confirm_yes_ = !confirm_yes_; changed(); }
-        else if (key == UiKey::Enter) {
-            confirming_ = false;
-            if (!confirm_yes_) { changed(); return; }
-            if (page_ == SettingsPage::Reset) {
-                action(ActionKind::ResetSettings);
-                action_.settings = defaultSettings();
-            } else {
-                action(ActionKind::Storage);
-                action_.storage_operation = StorageOperation::Format;
-            }
-            action_.confirmed = true;
-        }
+    if (card_info_) {
+        if (key == UiKey::Escape || key == UiKey::Enter) { card_info_ = false; changed(); }
         return;
     }
     if (editing_) {
@@ -221,19 +263,46 @@ void UiModel::keyPressed(UiKey key, uint32_t now_ms) {
     if (page_ == SettingsPage::Root) {
         page_ = static_cast<SettingsPage>(selection_ + 1);
         selection_ = 0; license_offset_ = 0; changed();
+    } else if (page_ == SettingsPage::Operation && selection_ == static_cast<unsigned>(SettingId::Dataset)) {
+        page_ = SettingsPage::DatasetList; selection_ = 0;
+        datasetAction(DatasetAction::Open);
     } else if (page_ == SettingsPage::Operation && settingEditable(selection_) && !data_.storage.busy) {
         edit_value_ = settingValue(data_.settings, selection_);
         editing_ = true; changed();
     } else if (page_ == SettingsPage::Reset && !data_.storage.busy) {
-        confirming_ = true; confirm_yes_ = false; changed();
+        dialog_.open(DialogKind::ResetSettings); changed();
     } else if (page_ == SettingsPage::Storage && !data_.storage.busy) {
         if (selection_ == 0) { card_info_ = true; changed(); }
-        else if (selection_ == 3) { confirming_ = true; confirm_yes_ = false; changed(); }
+        else if (selection_ == 3) { dialog_.open(DialogKind::FormatSd); changed(); }
         else if (selection_ == 1 || selection_ == 2) {
             action(ActionKind::Storage);
             action_.storage_operation = selection_ == 1 ? StorageOperation::Remount : StorageOperation::Unmount;
         }
     }
+}
+
+void UiModel::acceptDialog(DialogKind kind) {
+    switch (kind) {
+        case DialogKind::PauseLog: case DialogKind::StopLog:
+            action(ActionKind::Logging);
+            action_.log_action = kind == DialogKind::PauseLog ? LogAction::Pause : LogAction::Stop;
+            break;
+        case DialogKind::DeleteLog:
+            browseAction(BrowseAction::Delete, selection_);
+            break;
+        case DialogKind::FormatSd:
+            action(ActionKind::Storage); action_.storage_operation = StorageOperation::Format;
+            break;
+        case DialogKind::ResetSettings:
+            action(ActionKind::ResetSettings); action_.settings = defaultSettings();
+            break;
+        case DialogKind::None: return;
+    }
+    action_.confirmed = true;
+}
+
+void UiModel::datasetAction(DatasetAction kind,uint32_t index) {
+    action(ActionKind::Dataset);action_.dataset_action=kind;action_.browse_index=index;
 }
 
 void UiModel::browseAction(BrowseAction kind,uint32_t index) {
@@ -257,7 +326,8 @@ void UiModel::tick(uint32_t now_ms) {
     const bool was_lit = sdAccessLit();
     last_tick_ms_ = now_ms;
     if (sdAccessLit() != was_lit) redraw_ = true;
-    if (screen_ == ScreenId::Boot || datasetWarning()) return;  // Keep warnings visible until acknowledged.
+    if (screen_ == ScreenId::Boot || datasetWarning() || data_.datasets.applying ||
+        (screen_==ScreenId::Logs && data_.browse.deleting)) return;
     if (data_.message[0] && now_ms - data_.message_at_ms >= 3000u) {
         data_.message[0] = '\0';
         redraw_ = true;  // Local toast expiry does not notify App.
@@ -267,7 +337,7 @@ void UiModel::tick(uint32_t now_ms) {
         !validSettings(data_.settings)) return;
     const auto timeout = ScreenTimeouts[data_.settings.screen_timeout];
     if (timeout && now_ms - last_input_ms_ >= timeout * 1000u) {
-        editing_ = confirming_ = false;
+        editing_ = false; dialog_.close();
         action(ActionKind::Sleep);
     }
 }

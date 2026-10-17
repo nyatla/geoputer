@@ -5,21 +5,22 @@
 #include "galuchat/PlaceLookup.h"
 #include "log/LogWriter.h"
 #include "log/LogReader.h"
+#include "dataset/DatasetCatalog.h"
 #include "../../TaskMessages.h"
 #include "../../utils/Task.h"
 
 namespace geoputer {
 
-class StorageTask final : public Task<TaskMessage, 1>, private StorageObserver {
+class StorageTask final : public Task<StorageRequest, 1>, private StorageObserver {
 public:
-    StorageTask(Queue<TaskMessage, 8>& notifications, Queue<TaskMessage, 1>& results)
+    StorageTask(Queue<AppNotification, 8>& notifications, Queue<ReturnMessage, 1>& results)
         : notifications_(notifications), results_(results), log_writer_("/sd/logs", this), log_reader_("/sd/logs",this) { place_lookup_.setObserver(this); }
     // Runs in the App caller; touches only the shared RAM ring, never SD or task queues.
     LogError tryAppendLog(const LogCommand& command, LogSnapshot& snapshot);
 protected:
     void run() override;
 private:
-    void handle(const TaskMessage& request);
+    void handle(const StorageRequest& request);
     void sendReturn();
     void completeJob();
     void notifyActivity();
@@ -35,8 +36,8 @@ private:
     bool loadSettings();
     bool saveSettings(const Settings& value);
 
-    Queue<TaskMessage, 8>& notifications_;
-    Queue<TaskMessage, 1>& results_;
+    Queue<AppNotification, 8>& notifications_;
+    Queue<ReturnMessage, 1>& results_;
     SettingsStore settings_store_;
     PlaceLookup place_lookup_;
     LogWriter log_writer_;
@@ -50,8 +51,8 @@ private:
     PlaceRequest place_request_{};
     SPIClass spi_{FSPI};  // LCD uses SPI3/HSPI. SD owns the other SPI peripheral.
     StorageSnapshot state_{};
-    TaskMessage pending_return_{};
-    TaskMessage completion_{};
+    ReturnMessage pending_return_{};
+    AppNotification completion_{};
     StorageCommand job_{};
     uint32_t job_request_id_ = 0;
     uint32_t sequence_ = 0;
@@ -65,6 +66,8 @@ private:
     bool search_job_ = false;
     bool dataset_job_ = false;
     bool has_completion_ = false;
+    bool dataset_browser_job_ = false;
+    DatasetRequest dataset_request_{};
 };
 
 }  // namespace geoputer

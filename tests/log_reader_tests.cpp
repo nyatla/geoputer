@@ -102,7 +102,7 @@ void uiTests() {
     auto action=ui.snapshot().action;ui.updateContent({DisplayMode::View,1,data,action.action_id,ActionResult::Applied});
     ui.keyPressed(UiKey::Left,11);check(ui.snapshot().action.kind==ActionKind::None,"left/right remain limited to Settings");
     data.browse.loading=true;ui.updateContent({DisplayMode::View,1,data,0,ActionResult::None});
-    ui.keyPressed(UiKey::Escape,12);check(ui.snapshot().action.target==ScreenId::Menu,"Escape leaves a pending read without blocking UI");
+    ui.keyPressed(UiKey::Escape,12);check(ui.snapshot().action.target==ScreenId::LivePlace,"Escape leaves a pending read without blocking UI");
     data.browse.loading=false;data.browse.summary.records=25;data.browse.target=9;
     ui.setScreen({ScreenId::LogPoint,DisplayMode::View,2,data,ui.snapshot().action.action_id,ActionResult::Applied});
     ui.keyPressed(UiKey::Down,13);check(ui.snapshot().action.browse_index==10,"point navigation crosses ten-record cache boundary");
@@ -110,10 +110,112 @@ void uiTests() {
     ui.keyPressed(UiKey::Down,14);check(ui.snapshot().action.kind==ActionKind::None,"last record does not wrap to first");
     ui.keyPressed(UiKey::Escape,15);check(ui.snapshot().action.target==ScreenId::LogDetail,"point Escape returns to file detail");
 }
+struct DeleteActivity : StorageObserver {
+    unsigned depth=0,accesses=0;
+    void sdBegin() override {++depth;++accesses;}
+    void sdEnd() override {check(depth>0,"balanced delete SD scope");--depth;}
+    void cacheState(RgCacheState,bool) override {}
+};
+void deleteTests(const std::string& dir) {
+    namespace fs=std::filesystem;
+    fs::create_directory(dir);
+    const std::string name="20261016_093012_0.gps.dat",path=dir+"/"+name;
+    file(path,1);
+    DeleteActivity activity;LogReader reader(dir,&activity);
+    LogReadRequest req{};req.kind=LogReadKind::Delete;req.token=71;req.screen_generation=9;
+    std::strcpy(req.name,name.c_str());
+    check(run(reader,req).error==LogReadError::Unconfirmed && fs::exists(path) && !activity.accesses,
+          "unconfirmed deletion is rejected without touching SD");
+    req.confirmed=true;
+    auto removed=run(reader,req);
+    check(removed.error==LogReadError::None && removed.request.token==71 && removed.request.screen_generation==9 &&
+          !fs::exists(path) && !activity.depth,"confirmed delete removes only the chosen file and retains result identity");
+    check(run(reader,req).error==LogReadError::NotFound,"disappeared log reports a distinct failure");
+    file(path,1);std::strcpy(req.name,"../outside.gps.dat");
+    check(run(reader,req).error==LogReadError::InvalidName && fs::exists(path),"delete rejects traversal");
+    std::strcpy(req.name,"directory.gps.dat");fs::create_directory(dir+"/"+req.name);
+    check(run(reader,req).error==LogReadError::InvalidName && fs::is_directory(dir+"/"+req.name),"delete never removes a directory");
+    std::strcpy(req.name,name.c_str());
+    if(::getuid()!=0) {
+        fs::permissions(dir,fs::perms::owner_read|fs::perms::owner_exec);
+        const auto failed=run(reader,req);
+        fs::permissions(dir,fs::perms::owner_all);
+        check(failed.error==LogReadError::DeleteFailed && fs::exists(path) && !activity.depth,
+              "unlink failure preserves the file and reports a delete-specific error");
+    }
+    LogWriter writer(dir);check(writer.open(900,UINT64_MAX)==LogError::None,"writer for protected deletion");
+    LogCommand initial{};initial.session_id=900;initial.sample_seq=1;initial.fix=fix(0);
+    initial.fix.fields&=~GpsTime;initial.fix.utc_epoch_ms=UINT64_MAX;
+    check(writer.append(initial)==LogError::None && writer.flush(500),"create and save an undated active log");
+    const auto active_name=fs::path(writer.path()).filename().string();
+    std::strcpy(req.name,active_name.c_str());const auto before=activity.accesses;
+    check(run(reader,req,&writer).error==LogReadError::Active && fs::exists(writer.path()) && activity.accesses==before,
+          "open recording cannot be deleted and protection performs no SD access");
+    for(size_t n=0;n<std::strlen(req.name)-8;++n) if(req.name[n]>='a'&&req.name[n]<='z')req.name[n]-=32;
+    check(run(reader,req,&writer).error==LogReadError::Active,"FAT32 case aliases cannot bypass active-file protection");
+    std::strcpy(req.name,active_name.c_str());
+    LogCommand sample{};sample.session_id=900;sample.sample_seq=2;sample.fix=fix(1);
+    check(writer.append(sample)==LogError::None && writer.requestFlush(900,2,true)==LogError::None,"create closing session with unsaved data");
+    check(run(reader,req,&writer).error==LogReadError::Active && writer.snapshot().buffered==1,"closing buffered log remains protected");
+    std::strcpy(req.name,name.c_str());
+    check(run(reader,req,&writer).error==LogReadError::None && writer.snapshot().buffered==1 && fs::exists(writer.path()),
+          "deleting another log leaves the active writer and RAM queue intact");
+    check(writer.flush(1000),"close protected log after saving retained records");
+    std::strcpy(req.name,active_name.c_str());
+    check(run(reader,req,&writer).error==LogReadError::None && !fs::exists(writer.path()),"fully closed and saved file can be deleted");
+
+    // Inclusive refresh keeps the old first row when it survives deletion.
+    for(unsigned n=0;n<8;++n) {char row[64];std::snprintf(row,sizeof(row),"20261016_0100%02u_0.gps.dat",n);file(dir+"/"+row,1);}
+    req={};req.kind=LogReadKind::List;auto first=run(reader,req);
+    req.direction=LogListDirection::FromAnchor;std::strcpy(req.anchor,first.data.names[0]);
+    auto refreshed=run(reader,req);
+    check(refreshed.count==6 && !refreshed.has_newer && refreshed.has_older && !std::strcmp(refreshed.data.names[0],first.data.names[0]),
+          "inclusive refresh preserves the current page start");
+    LogReadRequest del{};del.kind=LogReadKind::Delete;del.confirmed=true;std::strcpy(del.name,first.data.names[0]);
+    check(run(reader,del).error==LogReadError::None,"delete first row for anchored refresh");
+    refreshed=run(reader,req);
+    check(refreshed.count==6 && !std::strcmp(refreshed.data.names[0],first.data.names[1]),"removed page anchor still resumes at its next surviving row");
+    std::strcpy(req.anchor,"00000000_000000_0.gps.dat");refreshed=run(reader,req);
+    check(!refreshed.count && refreshed.has_newer,"empty old page signals a previous page for fallback");
+    req.direction=LogListDirection::Newer;
+    check(run(reader,req).count==6,"previous-page fallback can fill an emptied final page");
+    check(!activity.depth,"all delete and refresh SD scopes are balanced");
+}
+void deleteUiTests() {
+    UiData data{};data.settings=defaultSettings();data.browse.count=3;data.browse.selected=1;data.browse.revision=7;
+    for(unsigned n=0;n<3;++n)std::snprintf(data.browse.names[n],LogNameBytes,"20261016_09301%u_0.gps.dat",n);
+    UiModel ui;ui.setScreen({ScreenId::Logs,DisplayMode::View,1,data,0,ActionResult::None});
+    ui.keyPressed(UiKey::DeleteLog,10);
+    check(ui.confirming() && !ui.confirmChoice() && ui.snapshot().action.kind==ActionKind::None,"D opens confirmation with Cancel selected, no request");
+    ui.keyPressed(UiKey::Enter,11);
+    check(!ui.confirming() && ui.snapshot().action.kind==ActionKind::None,"default Enter cancels deletion");
+    ui.keyPressed(UiKey::DeleteLog,12);ui.keyPressed(UiKey::Escape,13);
+    check(!ui.confirming() && ui.snapshot().action.kind==ActionKind::None,"Esc/Del cancels without deleting");
+    ui.keyPressed(UiKey::DeleteLog,14);ui.keyPressed(UiKey::Right,15);ui.keyPressed(UiKey::Enter,16);
+    const auto action=ui.snapshot().action;
+    check(action.kind==ActionKind::Browse && action.browse_action==BrowseAction::Delete && action.confirmed &&
+          action.browse_index==1 && action.browse_revision==7,"only explicit Delete confirmation creates a request for the shown row/revision");
+    data.browse.loading=data.browse.deleting=true;
+    ui.updateContent({DisplayMode::View,1,data,action.action_id,ActionResult::Applied});
+    for(auto key:{UiKey::Escape,UiKey::DeleteLog,UiKey::Enter,UiKey::OpenGpsLogger,UiKey::OpenSettings,UiKey::OpenLogs})ui.keyPressed(key,20);
+    ui.tick(100);ui.tick(100000);
+    check(ui.snapshot().action.kind==ActionKind::None,"accepted deletion cannot be abandoned by navigation, duplicate D or sleep");
+    data.browse.loading=data.browse.deleting=false;data.browse.active_mask=2;
+    UiModel active;active.setScreen({ScreenId::Logs,DisplayMode::View,1,data,0,ActionResult::None});
+    active.keyPressed(UiKey::DeleteLog,10);active.keyPressed(UiKey::Right,11);active.keyPressed(UiKey::Enter,12);
+    check(!active.confirming() && active.snapshot().action.kind==ActionKind::None,"active row explains protection and cannot confirm Delete");
+    data.browse.active_mask=0;
+    UiModel changed;changed.setScreen({ScreenId::Logs,DisplayMode::View,1,data,0,ActionResult::None});
+    changed.keyPressed(UiKey::DeleteLog,10);++data.browse.revision;
+    changed.updateContent({DisplayMode::View,1,data,0,ActionResult::None});
+    check(!changed.confirming() && changed.snapshot().action.kind==ActionKind::None,"refreshed list invalidates the shown delete target");
+    data.browse.count=0;UiModel empty;empty.setScreen({ScreenId::Logs,DisplayMode::View,1,data,0,ActionResult::None});
+    empty.keyPressed(UiKey::DeleteLog,10);check(!empty.confirming(),"empty list offers no delete target");
+}
 }
 void testLogReader() {
     char root[]="/tmp/geoputer-reader-XXXXXX";check(mkdtemp(root)!=nullptr,"temporary read fixtures");
-    try {listTests(std::string(root)+"/pages");readTests(std::string(root)+"/read");activeTests(std::string(root)+"/active");uiTests();}
+    try {listTests(std::string(root)+"/pages");readTests(std::string(root)+"/read");activeTests(std::string(root)+"/active");deleteTests(std::string(root)+"/delete");uiTests();deleteUiTests();}
     catch(...) {std::filesystem::remove_all(root);throw;}
     std::filesystem::remove_all(root);
 }

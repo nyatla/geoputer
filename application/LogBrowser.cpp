@@ -37,6 +37,18 @@ bool Application::showCachedPoint() {
 bool Application::operateBrowser(const UiAction& action) {
     auto& view=data_.browse;
     switch(action.browse_action) {
+        case BrowseAction::Delete:
+            if(screen_!=ScreenId::Logs || view.loading || !action.confirmed ||
+               action.browse_revision!=view.revision || action.browse_index>=view.count) return false;
+            view.selected=action.browse_index;
+            if(view.active_mask&(1u<<view.selected)) {
+                view.error=LogReadError::Active; ++view.revision; ++data_.revision; ui_data_dirty_=true;
+                return true;
+            }
+            std::snprintf(view.name,sizeof(view.name),"%s",view.names[view.selected]);
+            browse_request_={}; browse_request_.kind=LogReadKind::Delete; browse_request_.confirmed=true;
+            view.deleting=true;
+            break;
         case BrowseAction::OpenFile:
             if(screen_!=ScreenId::Logs || view.loading || action.browse_revision!=view.revision || action.browse_index>=view.count) return false;
             view.selected=action.browse_index;
@@ -72,7 +84,7 @@ bool Application::operateBrowser(const UiAction& action) {
 }
 void Application::processBrowser() {
     if(browse_cancel_ && browse_waiting_) {
-        TaskMessage cancel{}; cancel.kind=MessageKind::CancelLogRead; cancel.source=TaskId::Application;
+        StorageRequest cancel{}; cancel.kind=MessageKind::CancelLogRead; cancel.source=TaskId::Application;
         cancel.request_id=browse_waiting_; cancel.payload.log_read.token=browse_waiting_;
         if(sendSpeculative(storage_.inbox(),cancel)==SpeculativeResult::Queued) browse_cancel_=false;
     }
@@ -88,8 +100,8 @@ void Application::processBrowser() {
         read.start=browse_single_?data_.browse.target:(data_.browse.target/LogReadCount)*LogReadCount;
         read.count=browse_single_?1:LogReadCount;
     }
-    TaskMessage request{};
-    request.kind=read.kind==LogReadKind::List?MessageKind::ListLogs:read.kind==LogReadKind::Summary?MessageKind::ReadLogSummary:MessageKind::ReadLogRecords;
+    StorageRequest request{};
+    request.kind=read.kind==LogReadKind::List?MessageKind::ListLogs:read.kind==LogReadKind::Summary?MessageKind::ReadLogSummary:read.kind==LogReadKind::Delete?MessageKind::DeleteLog:MessageKind::ReadLogRecords;
     request.payload.log_read=read;
     browse_need_=false; browse_waiting_=read.token;
     SyncReturn result{};
@@ -103,17 +115,33 @@ void Application::completeBrowser(const LogReadReply& reply) {
     browse_waiting_=0; browse_cancel_=false;
     if(transitioning || reply.request.screen_generation!=generation_ || !isLogBrowser(screen_)) return;
     auto& view=data_.browse;
-    if(reply.request.kind==LogReadKind::List && screen_==ScreenId::Logs) {
-        if(reply.error==LogReadError::None && !reply.count && reply.request.direction!=LogListDirection::Newest) {
+    if(reply.request.kind==LogReadKind::Delete && screen_==ScreenId::Logs) {
+        view.deleting=false; view.error=reply.error;
+        if(reply.error==LogReadError::None) {
+            browse_request_={}; browse_request_.kind=LogReadKind::List;
+            browse_request_.direction=LogListDirection::FromAnchor;
+            std::snprintf(browse_request_.anchor,sizeof(browse_request_.anchor),"%s",view.names[0]);
+            view.loading=browse_need_=true;
+        } else view.loading=false;
+    } else if(reply.request.kind==LogReadKind::List && screen_==ScreenId::Logs) {
+        if(reply.error==LogReadError::None && !reply.count && reply.request.direction==LogListDirection::FromAnchor) {
+            if(reply.has_newer) {
+                browse_request_=reply.request; browse_request_.direction=LogListDirection::Newer; browse_need_=true;
+                return;
+            }
+        } else if(reply.error==LogReadError::None && !reply.count && reply.request.direction!=LogListDirection::Newest) {
             browse_request_={}; browse_request_.kind=LogReadKind::List; browse_need_=true; return;
         }
         if(reply.request.direction==LogListDirection::Newest) view.page=0;
         else if(reply.request.direction==LogListDirection::Older) ++view.page;
-        else if(view.page) --view.page;
+        else if(reply.request.direction==LogListDirection::Newer && view.page) --view.page;
         view.count=reply.error==LogReadError::None?reply.count:0;
         std::memcpy(view.names,reply.data.names,sizeof(view.names));
         view.has_older=reply.has_older; view.has_newer=reply.has_newer; view.active_mask=reply.active_mask;
-        view.selected=reply.request.direction==LogListDirection::Newer && view.count?view.count-1:0;
+        if(reply.request.direction==LogListDirection::FromAnchor) {
+            if(view.selected>=view.count) view.selected=view.count?view.count-1:0;
+            if(!view.count) view.page=0;
+        } else view.selected=reply.request.direction==LogListDirection::Newer && view.count?view.count-1:0;
         view.error=reply.error; view.loading=false;
     } else if(reply.request.kind==LogReadKind::Summary && screen_==ScreenId::LogDetail) {
         view.summary=reply.summary; view.error=reply.error; view.loading=false; browse_cache_count_=0;

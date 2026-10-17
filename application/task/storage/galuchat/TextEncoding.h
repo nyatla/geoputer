@@ -5,8 +5,7 @@
 
 namespace geoputer {
 
-// The SDK returns dictionary bytes unchanged. The display consumes UTF-8.
-std::string cp932ToUtf8(const std::string& source);
+// Dictionary and display strings are UTF-8; no character-code conversion.
 bool validUtf8(const std::string& source);
 void formatPlaceLines(const std::vector<std::string>& components, char (&lines)[3][64]);
 

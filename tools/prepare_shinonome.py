@@ -35,19 +35,17 @@ def build():
     for code, rows in read_glyphs(SOURCE / "16/kanjic/font_src.bit").items():
         character = bytes([code >> 8 | 0x80, code & 0xFF | 0x80]).decode("euc_jp")
         result[ord(character)] = rows
-        # Preserve the CP932 spellings used by the place-name datasets too.
-        try:
-            alternate = character.encode("cp932").decode("cp932")
-            result[ord(alternate)] = rows
-        except UnicodeError:
-            pass
+    # Unicode compatibility forms share the original punctuation glyphs.
+    for original, alternate in ((0x301C, 0xFF5E), (0x2016, 0x2225), (0x2212, 0xFF0D),
+                                (0x00A2, 0xFFE0), (0x00A3, 0xFFE1), (0x00AC, 0xFFE2)):
+        result[alternate] = result[original]
     latin = read_glyphs(SOURCE / "16/latin1/font_src.bit")
     for code, rows in latin.items():
         if code >= 0x20:
             result.setdefault(code, rows)
     for code, rows in read_glyphs(SOURCE / "16/hankaku/font_src_diff.bit").items():
         if 0xA1 <= code <= 0xDF:
-            result[ord(bytes([code]).decode("shift_jis"))] = rows
+            result[0xFF61 + code - 0xA1] = rows
     # Use Shinonome's native full-width Latin forms in the fixed 16x16 grid.
     # Quotes/symbols absent from JIS X 0208 use its native 8x16 Latin glyphs.
     for code in range(0x20, 0x7F):

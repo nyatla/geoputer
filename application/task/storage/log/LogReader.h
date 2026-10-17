@@ -4,7 +4,7 @@
 #include "LogWriter.h"
 
 namespace geoputer {
-// Storage-only, bounded directory scan. Results are fixed-size value copies.
+// Storage-only log operations and bounded scans. Results are fixed-size values.
 class LogReader {
 public:
     explicit LogReader(std::string directory="/sd/logs",StorageObserver* observer=nullptr)
@@ -20,6 +20,7 @@ public:
 private:
     void finishList(LogWriter* writer);
     void readTarget(LogWriter* writer);
+    void deleteTarget(LogWriter* writer);
     std::string directory_;
     StorageObserver* observer_;
     DIR* directory_handle_=nullptr;

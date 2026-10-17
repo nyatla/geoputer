@@ -17,15 +17,20 @@ public:
     void runOnce();
 
 private:
-    bool callUi(const TaskMessage& request, SyncReturn& result);
-    bool callTask(TaskId peer, Queue<TaskMessage, 1>& destination,
-                  const TaskMessage& request, SyncReturn& result);
+    bool callUi(UiRequest& request, SyncReturn& result);
+    template <typename Request>
+    bool callTask(TaskId peer, Queue<Request, 1>& destination, Request& request, SyncReturn& result) {
+        return awaitSyncResult(sync_.sendSync(peer, destination, request, pdMS_TO_TICKS(50)), result);
+    }
+    bool awaitSyncResult(SyncSendResult sent, SyncReturn& result);
     bool publishUiContent(uint32_t action_id = 0, ActionResult action_result = ActionResult::None);
     bool setScreen(ScreenId target, uint32_t action_id = 0,
                    ActionResult action_result = ActionResult::None);
-    void handleNotification(const TaskMessage& event);
+    void handleNotification(const AppNotification& event);
     void drainNotifications();
     void readUiContent();
+    // Keep the transfer frame out of action dispatch even under optimization.
+    [[gnu::noinline]] bool readUiSnapshot(UiSnapshot& content);
     void applyStorage(const StorageSnapshot& state);
     bool operateStorage(const UiAction& action);
     void message(const char* value);
@@ -45,9 +50,13 @@ private:
     void processBrowser();
     void completeBrowser(const LogReadReply& reply);
     bool showCachedPoint();
+    bool operateDataset(const UiAction& action);
+    bool requestDataset(DatasetRequest request);
+    void completeDataset(const DatasetView& view);
+    bool datasetChangeReady() const;
 
-    Queue<TaskMessage, 8> notifications_;
-    Queue<TaskMessage, 1> results_;
+    Queue<AppNotification, 8> notifications_;
+    Queue<ReturnMessage, 1> results_;
     SyncClient sync_;
     UiTask ui_;
     GpsTask gps_;
@@ -71,6 +80,8 @@ private:
     uint8_t browse_cache_count_=0;
     bool browse_need_=false, browse_cancel_=false, browse_single_=false;
     PlaceSearchFlow place_flow_;
+    uint32_t dataset_token_ = 0, dataset_waiting_ = 0;
+    bool dataset_applying_ = false, restart_pending_ = false;
     uint32_t place_request_id_ = 0x90000000u;
     enum class BootStage { NeedSettings, WaitSettings, NeedDataset, WaitDataset, Complete };
     BootStage boot_stage_ = BootStage::NeedSettings;

@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include "Config.h"
 
 namespace geoputer {
 
@@ -18,15 +19,19 @@ struct Settings {
     uint8_t dataset;
     uint8_t gps_mode;
     UiLanguage language;
+    char wordbook_language[config::DatasetLanguageBytes]{}; // Empty means the dataset default at first boot.
 };
 
-constexpr Settings defaultSettings() { return {0, 2, 1, 1, 2, 0, UiLanguage::Japanese}; }
+constexpr Settings defaultSettings() { return {0, 2, 1, 1, 1, 0, UiLanguage::Japanese}; }
 constexpr unsigned LogIntervals[] = {1, 5, 10};
 constexpr unsigned FlushIntervals[] = {1, 5, 10, 30, 60};
 // Zero disables automatic screen sleep; append it to preserve stored indices.
 constexpr unsigned ScreenTimeouts[] = {5, 15, 30, 60, 0};
 constexpr unsigned Brightnesses[] = {20, 40, 60, 80, 100};
-constexpr size_t SettingsRecordSize = 16;
+constexpr size_t LegacySettingsRecordSize = 16;
+constexpr size_t SettingsRecordSize = 48;
+static_assert(config::DatasetLanguageBytes == 32, "NVS version 3 reserves 32 bytes for the language ID");
+bool validDatasetLanguage(const char* value, bool allow_empty = false);
 
 bool validSettings(const Settings& value);
 uint8_t settingValue(const Settings& value, unsigned index);

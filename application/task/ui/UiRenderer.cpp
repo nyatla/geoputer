@@ -5,16 +5,16 @@
 #include "SettingsText.h"
 #include "LivePlaceLayout.h"
 #include "PlacePresentation.h"
+#include "DatasetPresentation.h"
 #include <cstdio>
 
 namespace geoputer {
 
-bool UiRenderer::begin() {
+bool UiRenderer::begin(uint8_t color_depth) {
     display_.setRotation(1);
     display_.setBrightness(102);
-    frame_.setColorDepth(16);
     return display_.width() == 240 && display_.height() == 135 &&
-           frame_.createSprite(240, 135) && font_.begin();
+           frame_.begin(color_depth) && font_.begin();
 }
 
 void UiRenderer::text(int x, int y, const char* value, uint16_t color) {
@@ -59,6 +59,76 @@ static const char* recordingName(RecordingState state) {
     return "ERROR";
 }
 
+void UiRenderer::drawDialog(const UiModel& model, UiLanguage language) {
+    const bool japanese = language == UiLanguage::Japanese;
+    const auto role = japanese ? TextRole::UiLarge : TextRole::Ascii8x16;
+    const auto& dialog = model.dialog();
+    const char* title = "";
+    const char* detail = "";
+    const char* accept = "";
+    auto detail_role = role;
+    switch (dialog.kind()) {
+        case DialogKind::PauseLog:
+            title = japanese ? "記録を一時停止？" : "Pause logging?";
+            accept = japanese ? "一時停止" : "Pause";
+            break;
+        case DialogKind::StopLog:
+            title = japanese ? "記録を停止？" : "Stop logging?";
+            accept = japanese ? "停止" : "Stop";
+            break;
+        case DialogKind::DeleteLog: {
+            title = !dialog.actionEnabled() ? (japanese ? "記録中は削除不可" : "Log is in use") :
+                (japanese ? "このログを削除？" : "Delete this log?");
+            accept = japanese ? "削除" : "Delete";
+            const auto selected = model.snapshot().selected_setting;
+            if (selected < model.data().browse.count) detail = model.data().browse.names[selected];
+            detail_role = TextRole::UI;
+            break;
+        }
+        case DialogKind::FormatSd:
+            title = settingsLabel(language, SettingsLabel::FormatQuestion);
+            detail = settingsLabel(language, SettingsLabel::FormatScope);
+            accept = settingsLabel(language, SettingsLabel::Confirm);
+            break;
+        case DialogKind::ResetSettings:
+            title = settingsLabel(language, SettingsLabel::ResetQuestion);
+            detail = settingsLabel(language, SettingsLabel::KeepSd);
+            accept = settingsLabel(language, SettingsLabel::Confirm);
+            break;
+        case DialogKind::None: return;
+    }
+    // Details are either a 16-dot scope message, or an ASCII filename wrapped
+    // into 27-cell rows. Two rows cover the entire supported 47-byte filename.
+    constexpr unsigned FilenameColumns = 27;
+    const bool filename = detail_role == TextRole::UI;
+    const bool second_line = filename && std::strlen(detail) > FilenameColumns;
+    const int extra = filename ? (second_line ? 10 : 0) : (detail[0] ? 8 : 0);
+    const int height = 65 + extra;
+    const int top = (141 - height) / 2;
+    const int choice_y = top + 42 + extra;
+    frame_.fillRect(8, top, 224, height, TFT_BLACK);
+    frame_.drawFastHLine(8, top, 224, TFT_WHITE);
+    frame_.drawFastHLine(8, top + height - 1, 224, TFT_WHITE);
+    font_.draw(frame_, (240 - PixelFont::width(title, role)) / 2, top + 6, title, role,
+               dialog.actionEnabled() ? TFT_YELLOW : TFT_RED);
+    if (filename) {
+        char first[FilenameColumns + 1];
+        std::snprintf(first, sizeof(first), "%.27s", detail);
+        text((240 - PixelFont::width(first, TextRole::UI)) / 2, top + 26, first);
+        if (second_line) {
+            const auto* rest = detail + FilenameColumns;
+            text((240 - PixelFont::width(rest, TextRole::UI)) / 2, top + 36, rest);
+        }
+    } else font_.draw(frame_, (240 - PixelFont::width(detail, role)) / 2, top + 26, detail, role, TFT_WHITE);
+    const auto cancel_color = dialog.selected() ? TFT_WHITE : TFT_CYAN;
+    const auto action_color = !dialog.actionEnabled() ? TFT_DARKGREY : dialog.selected() ? TFT_CYAN : TFT_WHITE;
+    font_.draw(frame_, (dialog.selected() ? 152 : 56) - (japanese ? 24 : 16), choice_y, ">", role, TFT_CYAN);
+    font_.draw(frame_, 56, choice_y, settingsLabel(language, SettingsLabel::Cancel), role, cancel_color);
+    font_.draw(frame_, 152, choice_y, accept, role, action_color);
+    frame_.fillRect(0, 121, 240, 14, TFT_BLACK);
+    text(4, 124, "[ENTER] CONFIRM", TFT_LIGHTGREY);
+}
+
 void UiRenderer::draw(const UiModel& model) {
     const auto content = model.snapshot();
     const auto& data = model.data();
@@ -71,11 +141,22 @@ void UiRenderer::draw(const UiModel& model) {
     auto item = [&](int x, int y, const char* value, uint16_t color = TFT_WHITE) {
         font_.draw(frame_, x, y, value, item_role, color);
     };
+    frame_.setDimmed(model.confirming() && !model.datasetWarning());
     frame_.fillSprite(TFT_BLACK);
     const bool live = content.screen == ScreenId::LivePlace;
     frame_.drawFastHLine(0, live ? 16 : SettingsLayout::HeaderBottom, 240, live ? TFT_WHITE : TFT_DARKGREY);
     frame_.drawFastHLine(0, live ? LivePlaceLayout::FooterTop : 118, 240, live ? TFT_WHITE : TFT_DARKGREY);
     char line[64];
+    if (content.screen == ScreenId::Boot && data.boot.fatal_dataset) {
+        text(4,8,"STARTUP ERROR",TFT_RED);
+        if (japanese) {
+            item(4,35,"データセットが",TFT_RED);item(4,55,"見つかりません",TFT_RED);
+        } else item(4,35,"Dataset not found",TFT_RED);
+        std::snprintf(line,sizeof(line),"DATASET %02u",settings.dataset);text(4,84,line);
+        std::snprintf(line,sizeof(line),"LANG %.24s",settings.wordbook_language[0]?settings.wordbook_language:"DEFAULT");text(4,98,line);
+        text(4,124,"RESTORE SD AND RESTART",TFT_YELLOW);
+        frame_.pushSprite(0,0);return;
+    }
     if (content.screen == ScreenId::Boot) {
         text(4, 8, "GEOPUTER", TFT_CYAN);
         text(164, 8, "STARTUP", TFT_LIGHTGREY);
@@ -91,7 +172,8 @@ void UiRenderer::draw(const UiModel& model) {
             text(36, y, bootItemName(i), color);
             text(156, y, check.detail[0] ? check.detail : "WAIT", color);
         }
-        text(4, 110, "GPS:MESH  DATASET:01", TFT_LIGHTGREY);
+        std::snprintf(line,sizeof(line),"GPS:MESH  DATASET:%02u",settings.dataset);
+        text(4,110,line,TFT_LIGHTGREY);
         if (!data.boot.complete) text(4, 124, "CHECKING...", TFT_CYAN);
         else {
             text(4, 124, data.boot.hasIssues() ? "WITH WARNINGS" : "READY", data.boot.hasIssues() ? TFT_YELLOW : TFT_GREEN);
@@ -163,24 +245,9 @@ void UiRenderer::draw(const UiModel& model) {
             std::snprintf(line, sizeof(line), "BUF %02u/64", data.storage.log.buffered); text(156, LivePlaceLayout::LogY, line, TFT_WHITE);
         }
         text(4, 124, "F1 PAUSE", rec == RecordingState::Recording ? TFT_WHITE : TFT_DARKGREY);
-        text(188, 124, "2 MENU");
-        if (model.confirming()) {
-            frame_.fillRect(8, 29, 224, 72, TFT_BLACK); frame_.drawRect(8, 29, 224, 72, TFT_YELLOW);
-            text(20, 39, "PAUSE LOG?", TFT_YELLOW);
-            text(20, 61, model.confirmChoice() ? "  CANCEL" : "> CANCEL", TFT_CYAN);
-            text(20, 81, model.confirmChoice() ? "> OK" : "  OK", TFT_WHITE);
-            frame_.fillRect(0, 121, 240, 14, TFT_BLACK);
-            text(4, 124, "ESC CANCEL"); text(164, 124, "ENTER OK");
-        }
-    } else if (content.screen == ScreenId::Menu) {
-        text(4, 7, "MENU", TFT_LIGHTGREY);
-        const char* labels[] = {japanese ? "GPS記録" : "GPS LOGGER", japanese ? "設定" : "SETTINGS", japanese ? "ログ一覧" : "LOGS"};
-        for (unsigned row = 0; row < 3; ++row) {
-            const auto color = content.selected_setting == row ? TFT_CYAN : TFT_WHITE;
-            item(4, 31 + row * 24, content.selected_setting == row ? ">" : " ", color);
-            item(20, 31 + row * 24, labels[row], color);
-        }
-        text(4, 124, "ESC/DEL BACK"); text(148, 124, "ENTER OPEN");
+        text(84, 124, "1", TFT_CYAN); text(92, 124, ":GPS", TFT_LIGHTGREY);
+        text(132, 124, "2", TFT_CYAN); text(140, 124, ":SET", TFT_LIGHTGREY);
+        text(180, 124, "3", TFT_CYAN); text(188, 124, ":LOG", TFT_LIGHTGREY);
     } else if(isLogBrowser(content.screen)) {
         const auto& view=data.browse;
         const bool detail=content.screen==ScreenId::LogDetail;
@@ -203,8 +270,10 @@ void UiRenderer::draw(const UiModel& model) {
             }
             if(!view.count && !view.loading && view.error==LogReadError::None) text(4,47,"NO LOG FILES",TFT_LIGHTGREY);
             std::snprintf(line,sizeof(line),"PAGE %lu%s%s",static_cast<unsigned long>(view.page+1),view.has_newer?"  ^":"",view.has_older?"  v":"");
-            if(view.count) text(4,106,line,TFT_LIGHTGREY);
-            text(4,124,"ESC/DEL BACK"); text(view.count?148:140,124,view.count?"ENTER OPEN":"ENTER RELOAD");
+            if(view.count && !view.loading && view.error==LogReadError::None) text(4,106,line,TFT_LIGHTGREY);
+            text(4,124,view.count?"[ENTER] OPEN    [D] DELETE":"[ENTER] RELOAD",TFT_LIGHTGREY);
+            text(4,124,"[ENTER]",view.loading?TFT_DARKGREY:TFT_CYAN);
+            if(view.count) text(132,124,"[D]",view.loading || (view.active_mask&(1u<<content.selected_setting))?TFT_DARKGREY:TFT_CYAN);
         } else if(detail) {
             char name[30]; std::snprintf(name,sizeof(name),"%.29s",view.name); text(4,27,name);
             if(std::strlen(view.name)>29) text(4,37,view.name+29);
@@ -236,10 +305,10 @@ void UiRenderer::draw(const UiModel& model) {
             }
             text(4,124,"; PREV . NEXT ESC/DEL BACK");
         }
-        if(view.loading) text(detail?132:4,points?109:detail?7:106,"READING...",TFT_YELLOW);
-        else if(view.error!=LogReadError::None) {
+        if(view.loading) text(detail?132:4,points?109:detail?7:106,view.deleting?"DELETING...":"READING...",TFT_YELLOW);
+        else if(view.error!=LogReadError::None && !model.confirming()) {
             if(detail) { if(view.summary.session_id && view.error==LogReadError::Corrupt) text(128,7,"CRC!",TFT_RED); else { frame_.fillRect(0,49,240,8,TFT_BLACK); text(4,49,logReadErrorName(view.error),TFT_RED); } }
-            else text(4,points?109:47,logReadErrorName(view.error),TFT_RED);
+            else text(4,points?109:106,logReadErrorName(view.error),TFT_RED);
         }
     } else if (content.screen == ScreenId::GpsLogger) {
         text(4, 7, "GPS LOGGER", TFT_LIGHTGREY);
@@ -252,32 +321,24 @@ void UiRenderer::draw(const UiModel& model) {
         std::snprintf(line, sizeof(line), "SAVED %lu", static_cast<unsigned long>(log.saved)); text(4,41,line);
         std::snprintf(line, sizeof(line), "UNSAVED %u", log.buffered + (data.recording.pending ? 1u : 0u)); text(124,41,line);
         std::snprintf(line, sizeof(line), "BUF %u/64 LOST %lu", log.buffered, static_cast<unsigned long>(data.recording.dropped)); text(4,55,line);
-        if (model.confirming()) {
-            item(4, 69, japanese ? "記録を停止?" : "STOP LOG?", TFT_YELLOW);
-            item(4, 85, model.confirmChoice() ? " " : ">", TFT_CYAN);
-            item(20, 85, japanese ? "取消" : "CANCEL", TFT_CYAN);
-            item(4, 101, model.confirmChoice() ? ">" : " ", TFT_WHITE);
-            item(20, 101, japanese ? "実行" : "OK", TFT_WHITE);
-        } else {
-            const char* operation = state == RecordingState::Stopped ? (japanese ? "開始" : "START") :
-                state == RecordingState::Paused ? (japanese ? "再開" : "RESUME") : (japanese ? "停止" : "STOP");
-            const auto color = log.closing ? TFT_DARKGREY : TFT_CYAN;
-            item(4, 83, content.selected_setting == 0 ? ">" : " ", color);
-            item(20, 83, log.closing ? (japanese ? "保存中" : "SAVING...") : operation, color);
-            if (state == RecordingState::Paused) {
-                const auto stop_color = content.selected_setting == 1 ? TFT_CYAN : TFT_WHITE;
-                item(4, 99, content.selected_setting == 1 ? ">" : " ", stop_color);
-                item(20, 99, japanese ? "停止" : "STOP", stop_color);
-            }
-            if (log.error != LogError::None) text(4, 69, logErrorName(log.error), TFT_RED);
-            else if (data.message[0]) text(4, 69, data.message, TFT_YELLOW);
-            else {
-                if (log.saved) std::snprintf(line, sizeof(line), "LAST SAVE %luS", static_cast<unsigned long>((data.recording.now_ms-log.last_saved_ms)/1000));
-                else std::snprintf(line, sizeof(line), "LAST SAVE --");
-                text(4,69,line,TFT_LIGHTGREY);
-            }
+        const char* operation = state == RecordingState::Stopped ? (japanese ? "開始" : "START") :
+            state == RecordingState::Paused ? (japanese ? "再開" : "RESUME") : (japanese ? "停止" : "STOP");
+        const auto color = log.closing ? TFT_DARKGREY : TFT_CYAN;
+        item(4, 83, content.selected_setting == 0 ? ">" : " ", color);
+        item(20, 83, log.closing ? (japanese ? "保存中" : "SAVING...") : operation, color);
+        if (state == RecordingState::Paused) {
+            const auto stop_color = content.selected_setting == 1 ? TFT_CYAN : TFT_WHITE;
+            item(4, 99, content.selected_setting == 1 ? ">" : " ", stop_color);
+            item(20, 99, japanese ? "停止" : "STOP", stop_color);
         }
-        text(4, 124, model.confirming() ? "ESC CANCEL" : "ESC/DEL BACK"); text(164, 124, "ENTER OK");
+        if (log.error != LogError::None) text(4, 69, logErrorName(log.error), TFT_RED);
+        else if (data.message[0]) text(4, 69, data.message, TFT_YELLOW);
+        else {
+            if (log.saved) std::snprintf(line, sizeof(line), "LAST SAVE %luS", static_cast<unsigned long>((data.recording.now_ms-log.last_saved_ms)/1000));
+            else std::snprintf(line, sizeof(line), "LAST SAVE --");
+            text(4,69,line,TFT_LIGHTGREY);
+        }
+        text(4, 124, "ESC/DEL BACK"); text(164, 124, "ENTER OK");
     } else {
         const char* title = model.cardInfo() ? "CARD INFO" :
                             content.page == SettingsPage::Root ? "SETTINGS" :
@@ -290,15 +351,45 @@ void UiRenderer::draw(const UiModel& model) {
         std::snprintf(line, sizeof(line), "GPS:%s", gps_state);
         text(156, 7, line, data.gps.fix.valid ? TFT_GREEN : TFT_LIGHTGREY);
         text(4, 124, model.confirming() || model.editing() ? "ESC/DEL CANCEL" : "ESC/DEL BACK");
-        if (model.confirming()) {
-            const bool formatting = content.page == SettingsPage::Storage;
-            item(4, 27, label(formatting ? SettingsLabel::FormatQuestion : SettingsLabel::ResetQuestion), TFT_YELLOW);
-            item(4, 47, label(formatting ? SettingsLabel::FormatScope : SettingsLabel::KeepSd), TFT_YELLOW);
-            item(4, 67, model.confirmChoice() ? " " : ">", TFT_CYAN);
-            item(20, 67, label(SettingsLabel::Cancel), TFT_CYAN);
-            item(4, 87, model.confirmChoice() ? ">" : " ", TFT_YELLOW);
-            item(20, 87, label(SettingsLabel::Confirm), model.confirmChoice() ? TFT_YELLOW : TFT_WHITE);
-            text(164, 124, "ENTER OK");
+        if (content.page == SettingsPage::DatasetList || content.page == SettingsPage::DatasetDetail) {
+            const auto& view = data.datasets;
+            frame_.fillRect(0,0,240,22,TFT_BLACK);text(4,7,content.page==SettingsPage::DatasetList?"DATASETS":"DATASET DETAIL",TFT_WHITE);
+            if (view.loading || view.applying) {
+                item(4,27,view.applying?(japanese?"適用中です":"Applying..."):(japanese?"読込中です":"Loading..."),TFT_YELLOW);
+            } else if (view.error != DatasetError::None) {
+                char message_line[80];
+                for (unsigned row=0;row<3;++row) {
+                    datasetTextLines(datasetErrorText(view.error,japanese),japanese,row,message_line,sizeof(message_line));
+                    item(4,27+row*20,message_line,TFT_RED);
+                }
+                if (view.error == DatasetError::TooManyChunks) {
+                    std::snprintf(line,sizeof(line),"%llu / %u",static_cast<unsigned long long>(view.info.chunks),static_cast<unsigned>(config::MaxDatasetChunks));
+                    text(4,91,line,TFT_YELLOW);
+                }
+                if (datasetRecoverable(view.error)) text(140,124,"ENTER RETRY");
+            } else if (content.page == SettingsPage::DatasetList) {
+                if (!view.count) item(4,27,japanese?"候補がありません":"No datasets",TFT_YELLOW);
+                for (unsigned row=0;row<view.count;++row) {
+                    const int y=27+row*20;const auto color=row==content.selected_setting?TFT_CYAN:TFT_WHITE;
+                    item(4,y,row==content.selected_setting?">":" ",TFT_CYAN);
+                    std::snprintf(line,sizeof(line),"%02u",view.rows[row].number);
+                    font_.draw(frame_,20,y,line,TextRole::Ascii8x16,color);
+                    datasetSingleLine(view.rows[row].title,japanese,line,sizeof(line),24);item(44,y,line,color);
+                }
+                text(148,124,"ENTER OPEN");
+            } else {
+                const auto count=datasetDetailRows(view,japanese);
+                const unsigned first=SettingsLayout::firstVisible(content.selected_setting,count);
+                for (unsigned n=0;n<4 && first+n<count;++n) {
+                    const unsigned row=first+n;const int y=27+n*20;
+                    const auto color=row==content.selected_setting?TFT_CYAN:TFT_WHITE;
+                    item(4,y,row==content.selected_setting?">":" ",TFT_CYAN);
+                    const bool ascii=datasetDetailLine(view,row,japanese,line,sizeof(line));
+                    font_.draw(frame_,20,y,line,ascii?TextRole::Ascii8x16:item_role,color);
+                }
+                std::snprintf(line,sizeof(line),"%u/%u",content.selected_setting+1u,count);text(4,110,line);
+                text(140,124,model.editing()?"L/R CHANGE":content.selected_setting==count-2?"ENTER LANG":content.selected_setting==count-1?"ENTER APPLY":"UP/DOWN");
+            }
         } else if (model.cardInfo()) {
             if (data.storage.card_state == CardState::Mounted)
                 std::snprintf(line, sizeof(line), "FAT%u %s", data.storage.fat_type, settingsCardState(language, data.storage.card_state));
@@ -324,7 +415,7 @@ void UiRenderer::draw(const UiModel& model) {
                 const unsigned row = first + visible;
                 const int y = SettingsLayout::FirstRowY + visible * SettingsLayout::RowStep;
                 const bool selected = row == content.selected_setting;
-                const uint16_t color = !settingEditable(row) ? TFT_DARKGREY : selected ? TFT_CYAN : TFT_WHITE;
+                const uint16_t color = !settingEditable(row) && row != static_cast<unsigned>(SettingId::Dataset) ? TFT_DARKGREY : selected ? TFT_CYAN : TFT_WHITE;
                 item(4, y, selected ? ">" : " ", TFT_CYAN);
                 item(SettingsLayout::LabelX, y, settingsOperationLabel(language, row), color);
                 char value[24];
@@ -335,7 +426,7 @@ void UiRenderer::draw(const UiModel& model) {
             std::snprintf(line, sizeof(line), "%u/%u", content.selected_setting + 1u, SettingCount);
             text(4, LivePlaceLayout::LogY, line, TFT_WHITE);
             if (model.editing()) text(164, 124, "ENTER OK");
-            else text(148, 124, !settingEditable(content.selected_setting) ? "READ ONLY" : "ENTER EDIT");
+            else text(148, 124, content.selected_setting == static_cast<unsigned>(SettingId::Dataset) ? "ENTER OPEN" : !settingEditable(content.selected_setting) ? "READ ONLY" : "ENTER EDIT");
         } else if (content.page == SettingsPage::Storage) {
             for (unsigned row = 0; row < 4; ++row) {
                 const int y = SettingsLayout::FirstRowY + row * SettingsLayout::RowStep;
@@ -357,7 +448,7 @@ void UiRenderer::draw(const UiModel& model) {
             std::snprintf(line, sizeof(line), "%lu/%lu", static_cast<unsigned long>(model.licenseOffset() + 1), static_cast<unsigned long>(licenseLineCount()));
             text(136, 124, line, TFT_LIGHTGREY);
         }
-        if (!model.confirming() && content.page != SettingsPage::Licenses) {
+        if (!model.confirming() && content.page != SettingsPage::Licenses && content.page != SettingsPage::DatasetList && content.page != SettingsPage::DatasetDetail) {
             const bool settings_error = data.storage.settings_state == SettingsState::Failed ||
                                         data.storage.settings_state == SettingsState::Unavailable ||
                                         data.storage.settings_state == SettingsState::Invalid;
@@ -387,6 +478,8 @@ void UiRenderer::draw(const UiModel& model) {
         frame_.drawFastHLine(0, 118, 240, TFT_DARKGREY);
         text(4, 124, "ESC/DEL/ENTER CLOSE", TFT_LIGHTGREY);
     }
+    frame_.setDimmed(false);
+    if (model.confirming() && !model.datasetWarning()) drawDialog(model, language);
     frame_.pushSprite(0, 0);
 }
 
