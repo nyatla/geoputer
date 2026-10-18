@@ -97,9 +97,9 @@ void navigationAndEditing() {
     auto command = screen();
     ui.setScreen(command);
     for (unsigned i = 0; i < 10; ++i) ui.keyPressed(UiKey::Down, 10 + i);
-    check(ui.snapshot().selected_setting == 3, "Settings root has four entries");
+    check(ui.snapshot().selected_setting == SettingsRootCount-1, "Settings root has six entries");
     ui.keyPressed(UiKey::Enter, 30);
-    check(ui.snapshot().page == SettingsPage::Licenses, "fourth entry opens licenses");
+    check(ui.snapshot().page == SettingsPage::Licenses, "last root entry opens licenses");
     ui.keyPressed(UiKey::Down, 40);
     check(ui.licenseOffset() == 1, "license body scrolls locally");
     ui.keyPressed(UiKey::Escape, 50);
@@ -141,7 +141,8 @@ void destructiveConfirmationAndSleep() {
     UiModel ui;
     auto command = screen();
     ui.setScreen(command);
-    ui.keyPressed(UiKey::Down, 10); ui.keyPressed(UiKey::Enter, 20);
+    for(unsigned n=0;n<settingsRootIndex(SettingsRootItem::Storage);++n)ui.keyPressed(UiKey::Down,10+n);
+    ui.keyPressed(UiKey::Enter, 20);
     ui.keyPressed(UiKey::Enter, 21);
     check(ui.cardInfo() && ui.snapshot().action.kind == ActionKind::None,
           "card information opens a local details view without issuing an SD operation");
@@ -161,7 +162,8 @@ void destructiveConfirmationAndSleep() {
 
     UiModel reset;
     reset.setScreen(command);
-    reset.keyPressed(UiKey::Down, 10); reset.keyPressed(UiKey::Down, 20); reset.keyPressed(UiKey::Enter, 30);
+    for(unsigned n=0;n<settingsRootIndex(SettingsRootItem::Reset);++n)reset.keyPressed(UiKey::Down,10+n);
+    reset.keyPressed(UiKey::Enter, 30);
     reset.keyPressed(UiKey::Enter, 40); reset.keyPressed(UiKey::Escape, 50);
     check(!reset.confirming() && reset.snapshot().action.kind == ActionKind::None, "Escape cancels reset");
     reset.keyPressed(UiKey::Enter, 60); reset.keyPressed(UiKey::Right, 70); reset.keyPressed(UiKey::Enter, 80);

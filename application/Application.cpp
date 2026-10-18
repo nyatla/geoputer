@@ -1,17 +1,21 @@
+#include "utils/Console.h"
 #include "Application.h"
 #include "task/ui/PlacePresentation.h"
 #include <Arduino.h>
 #include <esp_system.h>
+#include <tusb.h>
 #include <cstdio>
 #include <cstring>
 
 namespace geoputer {
 
-bool Application::begin() {
+bool Application::begin(bool usb_mode) {
+    usb_mode_ = usb_mode;
     if (!notifications_.initialize() || !results_.initialize() || !ui_.initialize()) return false;
     if (!ui_.start("UI", 8192, 1)) return false;
     data_.settings = defaultSettings();
     data_.revision = 1;
+    if (usb_mode_) return beginUsb();
     data_.boot.set(BootItem::Display, BootCheckState::Passed, "240X135");
     data_.boot.set(BootItem::Tasks, BootCheckState::Checking, "STARTING");
     data_.boot.set(BootItem::GPS, BootCheckState::Checking, "UART INIT");
@@ -26,7 +30,7 @@ bool Application::begin() {
         data_.gps.reception = GpsReception::Unavailable;
         ++data_.revision;
         ui_data_dirty_ = true;
-        Serial.println("[APP] GPS initialization failed; UI remains available");
+        Console.println("[APP] GPS initialization failed; UI remains available");
         data_.boot.set(BootItem::GPS, BootCheckState::Failed, "UART ERR");
     } else {
         applyGpsSnapshot(data_.gps, result.gps);
@@ -51,7 +55,7 @@ bool Application::begin() {
     }
     data_.boot.set(BootItem::Tasks, gps_started && storage_started ? BootCheckState::Passed : BootCheckState::Failed,
                    gps_started && storage_started ? "4T/5Q" : "TASK ERR");
-    Serial.printf("[MEMORY] messages ui=%u gps=%u storage=%u notify=%u return=%u sd_files=%u frame_bpp=%u\n",
+    Console.printf("[MEMORY] messages ui=%u gps=%u storage=%u notify=%u return=%u sd_files=%u frame_bpp=%u\n",
                   static_cast<unsigned>(sizeof(UiRequest)), static_cast<unsigned>(sizeof(GpsRequest)),
                   static_cast<unsigned>(sizeof(StorageRequest)), static_cast<unsigned>(sizeof(AppNotification)),
                   static_cast<unsigned>(sizeof(ReturnMessage)), config::SdMaxOpenFiles, config::UiColorDepth);
@@ -66,14 +70,14 @@ bool Application::callUi(UiRequest& request, SyncReturn& result) {
 
 bool Application::awaitSyncResult(SyncSendResult sent, SyncReturn& result) {
     if (sent != SyncSendResult::AwaitingResult) {
-        Serial.printf("[APP] sync send failed: %u\n", static_cast<unsigned>(sent));
+        Console.printf("[APP] sync send failed: %u\n", static_cast<unsigned>(sent));
         return false;
     }
     for (;;) {
         const auto received = sync_.receiveSyncResult(result, pdMS_TO_TICKS(50));
         if (received == SyncReceiveResult::Returned) return true;
         if (received == SyncReceiveResult::ProtocolError) {
-            Serial.println("[APP] mismatched sync return; pending request retained");
+            Console.println("[APP] mismatched sync return; pending request retained");
         }
         // A timeout ends this receive call, not the accepted synchronous request.
         drainNotifications();
@@ -101,14 +105,17 @@ bool Application::setScreen(ScreenId target, uint32_t action_id, ActionResult ac
     if (target == ScreenId::LivePlace) refreshPlace();
     ui_data_dirty_ = data_.revision != sent_revision;
     if (action_id) last_processed_action_ = action_id;
-    Serial.printf("[APP] screen=%s generation=%lu action=%lu stack_free=%u\n",
-                  target == ScreenId::LivePlace ? "LivePlace" : target == ScreenId::Boot ? "Boot" : target==ScreenId::Logs?"Logs":target==ScreenId::LogDetail?"LogDetail":target==ScreenId::LogPoint?"LogPoint":target==ScreenId::GpsLogger?"GpsLogger":"Settings",
+    Console.printf("[APP] screen=%s generation=%lu action=%lu stack_free=%u\n",
+                  target == ScreenId::LivePlace ? "LivePlace" : target == ScreenId::Boot ? "Boot" : target==ScreenId::Logs?"Logs":target==ScreenId::LogDetail?"LogDetail":target==ScreenId::LogPoint?"LogPoint":target==ScreenId::GpsLogger?"GpsLogger":target==ScreenId::UsbStorage?"UsbStorage":"Settings",
                   static_cast<unsigned long>(generation_), static_cast<unsigned long>(action_id),
                   static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)));
     return true;
 }
 
 void Application::handleNotification(const AppNotification& event) {
+    if (event.source == TaskId::Storage && event.kind == MessageKind::UsbStorageChanged) {
+        applyStorage(event.payload.usb_storage); return;
+    }
     if (event.source == TaskId::UI && event.kind == MessageKind::UiContentChanged) ui_changed_ = true;
     if (event.source == TaskId::Storage &&
         (event.kind == MessageKind::RgCacheStateChanged || event.kind == MessageKind::SdAccessChanged)) {
@@ -155,14 +162,18 @@ void Application::handleNotification(const AppNotification& event) {
                 completePlacePresentation(data_, place);
                 ++data_.revision;
                 ui_data_dirty_ = true;
-                Serial.printf("[APP] place=%s / %s (%s)\n", data_.place[0], data_.place[1], placeStateName(place.state));
+                Console.printf("[APP] place=%s / %s (%s)\n", data_.place[0], data_.place[1], placeStateName(place.state));
             }
             return;
         }
         if (completed.operation_id == storage_operation_id_) storage_operation_id_ = 0;
         if (!completed.snapshot.operation_ok) {
-            message(completed.snapshot.operation == StorageOperation::SaveSettings || completed.operation_id == 0
+            if (completed.snapshot.operation == StorageOperation::EnterUsbMode || completed.snapshot.operation == StorageOperation::ExitUsbMode)
+                message("MODE SWITCH FAILED");
+            else message(completed.snapshot.operation == StorageOperation::SaveSettings || completed.operation_id == 0
                         ? "SETTINGS ERROR" : "SD OPERATION FAILED");
+        } else if (completed.snapshot.operation == StorageOperation::EnterUsbMode || completed.snapshot.operation == StorageOperation::ExitUsbMode) {
+            restart_pending_ = true;
         } else if (completed.snapshot.operation == StorageOperation::SaveSettings) message("SETTINGS SAVED");
         else if (completed.snapshot.operation == StorageOperation::Unmount) message("SAFE TO REMOVE SD");
         else if (completed.snapshot.operation == StorageOperation::Format) message("FAT32 FORMAT COMPLETE");
@@ -179,10 +190,10 @@ void Application::handleNotification(const AppNotification& event) {
         ui_data_dirty_ = true;
         // No nested synchronous UI request here, including during another task's result wait.
         if (data_.gps.fix.valid) {
-            Serial.printf("[GPS] FIX LAT=%.6f LON=%.6f sample=%lu\n", data_.gps.fix.latitude,
+            Console.printf("[GPS] FIX LAT=%.6f LON=%.6f sample=%lu\n", data_.gps.fix.latitude,
                           data_.gps.fix.longitude, static_cast<unsigned long>(data_.gps.sample_seq));
         } else if (old_state != data_.gps.reception) {
-            Serial.printf("[GPS] %s\n", gpsReceptionName(data_.gps.reception));
+            Console.printf("[GPS] %s\n", gpsReceptionName(data_.gps.reception));
         }
     }
 }
@@ -243,10 +254,24 @@ void Application::readUiContent() {
         if (!setScreen(ScreenId::LivePlace, action.action_id, ActionResult::Applied)) ui_changed_ = true;
         return;
     }
+    if(action.kind==ActionKind::UsbExport && screen_==ScreenId::UsbStorage && mode_==DisplayMode::View) {
+        const bool ok=operateUsbExport(action);
+        last_processed_action_=action.action_id;
+        if(!publishUiContent(action.action_id,ok?ActionResult::Applied:ActionResult::Rejected))ui_changed_=true;
+        return;
+    }
     if (action.kind == ActionKind::Sleep && mode_ == DisplayMode::View) {
         mode_ = DisplayMode::Background;
         last_processed_action_ = action.action_id;
         if (!publishUiContent(action.action_id, ActionResult::Applied)) ui_changed_ = true;
+        return;
+    }
+    if (action.kind == ActionKind::Storage && mode_ == DisplayMode::View &&
+        ((screen_ == ScreenId::UsbStorage && action.storage_operation == StorageOperation::ExitUsbMode) ||
+         (screen_ == ScreenId::Settings && content.page == SettingsPage::Root && content.selected_setting == SettingsModeRow && action.storage_operation == StorageOperation::EnterUsbMode))) {
+        const bool accepted = operateBootMode(action);
+        last_processed_action_ = action.action_id;
+        if (!publishUiContent(action.action_id,accepted?ActionResult::Applied:ActionResult::Rejected)) ui_changed_ = true;
         return;
     }
     if (screen_ == ScreenId::Settings && mode_ == DisplayMode::View &&
@@ -308,17 +333,23 @@ void Application::applyStorage(const StorageSnapshot& state) {
     if (!state.revision || (data_.storage.revision &&
         static_cast<int32_t>(state.revision - data_.storage.revision) <= 0)) return;
     const auto old_card = data_.storage.card_state;
+    const auto old_export=data_.storage.export_job.phase;
     const auto rg = data_.storage.rg;
     const auto sd = data_.storage.sd;
     const auto log = data_.storage.log;
     const auto log_result = data_.storage.log_result;
     data_.storage = state;
+    if(usb_mode_ && old_export!=ExportPhase::Selecting && state.export_job.phase==ExportPhase::Selecting) {
+        data_.browse={};data_.browse.loading=true;++data_.browse.revision;
+        browse_request_={};browse_request_.kind=LogReadKind::List;browse_request_.count=4;
+        browse_need_=true;browse_cancel_=false;
+    }
     // App can have accepted more RAM records since Storage constructed this notification.
     if (applyLogSnapshot(data_.storage.log, log) ||
         (log.revision && log.revision == data_.storage.log.revision)) data_.storage.log_result = log_result;
     applyActivity(data_.storage.rg, rg);
     applyActivity(data_.storage.sd, sd);
-    if (old_card != state.card_state && state.card_state == CardState::Mounted) { data_.dataset = {}; refreshPlace(); }
+    if (!usb_mode_ && old_card != state.card_state && state.card_state == CardState::Mounted) { data_.dataset = {}; refreshPlace(); }
     if (state.settings_state == SettingsState::Defaults || state.settings_state == SettingsState::Loaded ||
         state.settings_state == SettingsState::Saved) data_.settings = state.settings;
     ++data_.revision;
@@ -426,8 +457,8 @@ void Application::advanceBoot() {
         boot_completed_at_ = taskTimeMs();
         bootChanged();
         for (unsigned i = 0; i < BootStatus::Count; ++i)
-            Serial.printf("[BOOT] %s: %s\n", bootItemName(i), data_.boot.checks[i].detail);
-        Serial.println(data_.boot.hasIssues() ? "[BOOT] Ready with warnings" : "[BOOT] Ready");
+            Console.printf("[BOOT] %s: %s\n", bootItemName(i), data_.boot.checks[i].detail);
+        Console.println(data_.boot.hasIssues() ? "[BOOT] Ready with warnings" : "[BOOT] Ready");
     }
 }
 
@@ -547,7 +578,7 @@ void Application::processLog() {
     log_control_ = {};
     last_processed_action_ = action.action_id;
     if (!publishUiContent(action.action_id, ok ? ActionResult::Applied : ActionResult::Rejected)) ui_changed_ = true;
-    Serial.printf("[APP] logger state=%u accepted=%lu saved=%lu dropped=%lu\n", static_cast<unsigned>(data_.recording.state),
+    Console.printf("[APP] logger state=%u accepted=%lu saved=%lu dropped=%lu\n", static_cast<unsigned>(data_.recording.state),
                   static_cast<unsigned long>(data_.storage.log.accepted), static_cast<unsigned long>(data_.storage.log.saved),
                   static_cast<unsigned long>(data_.recording.dropped));
 }
@@ -557,8 +588,18 @@ void Application::runOnce() {
     if (restart_pending_) {
         message("RESTARTING...");
         publishUiContent();
+        // The next boot may advertise a different set of USB interfaces.
+        // Let the host observe removal before restarting the controller.
+        tud_disconnect();
         vTaskDelay(pdMS_TO_TICKS(150));
         ESP.restart();
+        return;
+    }
+    if (usb_mode_) {
+        processBrowser();
+        if (ui_changed_) readUiContent();
+        else if (ui_data_dirty_) publishUiContent();
+        else { AppNotification event{}; if (notifications_.receive(event,pdMS_TO_TICKS(50))) handleNotification(event); }
         return;
     }
     advanceBoot();

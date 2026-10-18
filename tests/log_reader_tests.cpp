@@ -43,6 +43,22 @@ void listTests(const std::string& dir) {
     check(previous.count==first.count && !previous.has_newer && std::memcmp(previous.data.names,first.data.names,sizeof(first.data.names))==0,"newer returns the immediately previous page");
     req.direction=LogListDirection::Older; std::strcpy(req.anchor,second.data.names[5]); auto last=run(reader,req);
     check(last.count==6 && !last.has_older && last.has_newer && std::strncmp(last.data.names[5],"undated_",8)==0,"undated files follow known dates and last page ends");
+    req={};req.kind=LogReadKind::List;req.count=4;
+    const auto usb_first=run(reader,req);
+    check(usb_first.count==4 && !usb_first.has_newer && usb_first.has_older,
+          "USB list uses four rows without changing the normal six-row default");
+    req.direction=LogListDirection::Older;std::strcpy(req.anchor,usb_first.data.names[3]);
+    const auto usb_second=run(reader,req);
+    check(usb_second.count==4 && std::strcmp(usb_second.data.names[0],"20261016_010012_0.gps.dat")==0,
+          "USB older page advances exactly four filenames");
+    req.direction=LogListDirection::Newer;std::strcpy(req.anchor,usb_second.data.names[0]);
+    const auto usb_previous=run(reader,req);
+    check(usb_previous.count==4 && !usb_previous.has_newer &&
+          std::memcmp(usb_first.data.names,usb_previous.data.names,sizeof(usb_first.data.names))==0,
+          "USB reverse paging returns the same four-row page");
+    req.direction=LogListDirection::Newest;req.count=7;
+    check(run(reader,req).error==LogReadError::Range,"oversized filename pages fail before scanning");
+    req.count=0;
     req.direction=LogListDirection::Newest; req.anchor[0]=0;
     check(reader.begin(req) && !reader.step(),"directory scanning yields after ten entries"); reader.cancel();
     check(reader.done() && reader.result().error==LogReadError::Cancelled,"cancel closes unfinished scan");

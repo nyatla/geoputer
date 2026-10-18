@@ -4,11 +4,13 @@
 #include "DatasetTypes.h"
 #include "../../../Settings.h"
 #include "../StorageActivity.h"
+#include "../galuchat/TextEncoding.h"
 
 namespace geoputer {
 struct DatasetMetadata {
     std::string map, wordbook, title, description, default_language, language;
     std::vector<std::string> languages; // IDs only; no tree of all translations.
+    PlaceDisplayFormat display;
     DatasetError error=DatasetError::None;
 };
 DatasetMetadata readDatasetMetadata(const std::string& directory,UiLanguage ui,const char* language="", StorageObserver* observer=nullptr);

@@ -18,6 +18,7 @@ private:
     void largeText(int x, int y, const char* value, uint16_t color = TFT_WHITE);
     void speedText(const char* value);
     void drawDialog(const UiModel& model, UiLanguage language);
+    void drawUsb(const UiModel& model);
     M5GFX& display_;
     UiCanvas frame_;
     PixelFont font_;

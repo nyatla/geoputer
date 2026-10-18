@@ -18,6 +18,10 @@ inline constexpr uint32_t PlaceSearchIntervalMs = 5000;
 inline constexpr size_t DatasetLineBytes = 256;  // 255 UTF-8 bytes plus NUL.
 inline constexpr size_t DatasetLanguageBytes = 32;
 inline constexpr unsigned DatasetPageRows = 4;
+inline constexpr unsigned PlaceLinePixels = 232; // 240px display, 4px margins.
+inline constexpr unsigned ExportRecordsPerStep = 10;
+inline constexpr size_t ExportWriteBufferBytes = 2048;
+inline constexpr uint32_t ExportProgressIntervalMs = 200;
 
 static_assert(MaxDatasetChunks > 0, "A dataset must allow at least one chunk");
 static_assert(UiColorDepth == 4 || UiColorDepth == 16, "Supported UI frame formats");
@@ -25,5 +29,7 @@ static_assert(SdMaxOpenFiles >= 2, "Map header validation opens two readers");
 static_assert(MapCacheSide > 0 && FileReadBufferBytes > 0, "Read buffers must be nonempty");
 static_assert(WordBookCacheEntries > 0 && WordBookCacheEntries <= UINT8_MAX,
               "WordBook cache indices are eight bits");
+static_assert(ExportRecordsPerStep > 0 && ExportRecordsPerStep <= 16, "Export read buffer holds sixteen records");
+static_assert(ExportWriteBufferBytes > 0, "Export write buffer must not be empty");
 
 }  // namespace geoputer::config

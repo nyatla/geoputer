@@ -1,6 +1,7 @@
 #include <cstring>
 #include <stdexcept>
 #include "Settings.h"
+#include "BuildInfo.h"
 #include "task/storage/SettingsStore.h"
 #include "task/ui/SettingsText.h"
 #include "task/ui/UiModel.h"
@@ -60,12 +61,39 @@ void testSettingsLanguage() {
     check(ui.data().settings.language == UiLanguage::English && ui.snapshot().selected_setting == 0 &&
           ui.snapshot().page == SettingsPage::Operation && ui.snapshot().action.kind == ActionKind::None,
           "App acknowledgement applies language immediately without losing selection or navigating away");
-    for (unsigned n=0;n<SettingCount;++n) ui.keyPressed(UiKey::Down, 10+n);
+    for (unsigned n=0;n<static_cast<unsigned>(SettingId::GpsMode);++n) ui.keyPressed(UiKey::Down, 10+n);
     ui.keyPressed(UiKey::Enter, 30);
     check(!ui.editing() && ui.snapshot().selected_setting == 6, "GPS remains read-only after adding Language");
     ui.keyPressed(UiKey::Up, 31); ui.keyPressed(UiKey::Enter, 32);
     check(!ui.editing(), "dataset remains read-only");
 
+    check(std::strcmp(settingsRootLabel(UiLanguage::Japanese,SettingsModeRow),"動作モード")==0 &&
+          std::strcmp(settingsRootLabel(UiLanguage::English,SettingsModeRow),"Operating mode")==0,
+          "mode is localized on the root menu");
+    check(OperationRowCount==SettingCount && std::strcmp(settingsOperationLabel(UiLanguage::English,OperationRowCount),"--")==0,
+          "operation settings contain only persisted setting fields");
+    check(std::strcmp(ProductName,"ReverseGeoputer")==0 && std::strlen(ApplicationVersion)>0,
+          "About identifies the application separately from OSS licenses");
+    for (auto language : {UiLanguage::Japanese,UiLanguage::English}) {
+        UiModel about;UiData info{};info.settings=defaultSettings();info.settings.language=language;
+        about.setScreen({ScreenId::Settings,DisplayMode::View,1,info,0,ActionResult::None});
+        for(unsigned n=0;n<settingsRootIndex(SettingsRootItem::About);++n)about.keyPressed(UiKey::Down,10+n);
+        about.keyPressed(UiKey::Enter,20);
+        check(about.snapshot().page==SettingsPage::About && about.snapshot().action.kind==ActionKind::None,
+              "About opens locally from its own root item in both languages");
+        for(auto key : {UiKey::Up,UiKey::Down,UiKey::Left,UiKey::Right,UiKey::F1,UiKey::DeleteLog})about.keyPressed(key,21);
+        info.revision=1;info.storage.busy=true;
+        about.updateContent({DisplayMode::View,1,info,0,ActionResult::None});
+        check(about.snapshot().page==SettingsPage::About && about.snapshot().action.kind==ActionKind::None && !about.editing(),
+              "About is read-only and survives asynchronous storage/GPS updates");
+        about.keyPressed(UiKey::Enter,22);
+        check(about.snapshot().page==SettingsPage::Root &&
+              about.snapshot().selected_setting==settingsRootIndex(SettingsRootItem::About),
+              "Enter returns to the About root item without issuing a task request");
+        about.keyPressed(UiKey::Enter,23);about.keyPressed(UiKey::Escape,24);
+        check(about.snapshot().page==SettingsPage::Root && about.snapshot().action.kind==ActionKind::None,
+              "Escape also closes About locally");
+    }
     char text[32];
     settingsValueText(UiLanguage::Japanese, 1, 2, text, sizeof(text));
     check(std::strcmp(text,"10秒") == 0, "Japanese intervals use localized units");
@@ -82,7 +110,7 @@ void testSettingsLanguage() {
           std::strcmp(settingsMessage(UiLanguage::English,"SETTINGS SAVED"),"SETTINGS SAVED") == 0,
           "settings completion messages follow the active language");
     // All Japanese menu/confirmation characters must exist in the current font.
-    for (unsigned group=0;group<4;++group) for (unsigned row=0;row<(group==1?SettingCount:group==3?14u:4u);++row) {
+    for (unsigned group=0;group<4;++group) for (unsigned row=0;row<(group==0?SettingsRootCount:group==1?OperationRowCount:group==3?14u:4u);++row) {
         const char* label = group==0?settingsRootLabel(UiLanguage::Japanese,row):
             group==1?settingsOperationLabel(UiLanguage::Japanese,row):
             group==2?settingsStorageLabel(UiLanguage::Japanese,row):settingsLabel(UiLanguage::Japanese,static_cast<SettingsLabel>(row));

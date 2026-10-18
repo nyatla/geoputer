@@ -21,4 +21,12 @@ inline UiKey mapPhysicalKey(char key, bool fn) {
     }
 }
 
+// The printed angle brackets (Shift+, / Shift+.) also browse software notices.
+// Use only in Licenses; plain period retains its Down binding.
+inline UiKey mapLicenseKey(char key, bool fn, bool shift) {
+    if (key == '<' || (shift && key == ',')) return UiKey::Left;
+    if (key == '>' || (shift && key == '.')) return UiKey::Right;
+    return mapPhysicalKey(key, fn);
+}
+
 }  // namespace geoputer

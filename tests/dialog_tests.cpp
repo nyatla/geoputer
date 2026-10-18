@@ -8,7 +8,7 @@ static void check(bool value, const char* message) {
 
 void testDialogs() {
     for (auto kind : {DialogKind::PauseLog, DialogKind::StopLog, DialogKind::DeleteLog,
-                      DialogKind::FormatSd, DialogKind::ResetSettings}) {
+                      DialogKind::FormatSd, DialogKind::ResetSettings, DialogKind::EnterUsbMode, DialogKind::ExitUsbMode}) {
         ChoiceDialog dialog;
         dialog.open(kind);
         check(dialog.active() && !dialog.selected(), "all dialogs default to Cancel");

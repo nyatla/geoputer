@@ -15,9 +15,12 @@ const char* at(UiLanguage language, const Translation (&table)[N], unsigned row)
 }
 
 const char* settingsRootLabel(UiLanguage language, unsigned row) {
-    static const Translation values[] = {{"動作設定", "Operation"}, {"ストレージ操作", "Storage"},
-        {"初期化", "Reset"}, {"ライセンス情報", "Licenses"}};
+    static const Translation values[] = {{"動作設定", "Operation"}, {"動作モード", "Operating mode"}, {"ストレージ操作", "Storage"},
+        {"初期化", "Reset"}, {"バージョン情報", "About"}, {"ライセンス情報", "Licenses"}};
     return at(language, values, row);
+}
+const char* settingsModeValue(UiLanguage language) {
+    return language == UiLanguage::Japanese ? "GPSロガー" : "GPS logger";
 }
 const char* settingsOperationLabel(UiLanguage language, unsigned row) {
     static const Translation values[] = {{"表示言語", "Language"}, {"記録間隔", "Log interval"},
@@ -54,7 +57,8 @@ const char* settingsMessage(UiLanguage language, const char* message) {
         {"設定を変更できません", "SETTING NOT AVAILABLE"}, {"先に記録を停止", "STOP LOGGER FIRST"},
         {"SD操作が不正です", "INVALID SD OPERATION"}, {"設定を保存できません", "SETTINGS SAVE REJECTED"},
         {"SD操作を開始できません", "SD OPERATION REJECTED"}, {"設定を保存中", "SAVING SETTINGS..."},
-        {"SD処理中", "SD WORKING..."}, {"ストレージ使用不可", "STORAGE UNAVAILABLE"}};
+        {"SD処理中", "SD WORKING..."}, {"ストレージ使用不可", "STORAGE UNAVAILABLE"},
+        {"動作モード変更失敗", "MODE SWITCH FAILED"}, {"動作モード切替不可", "MODE SWITCH REJECTED"}};
     for (const auto& value : values) if (std::strcmp(message, value.english) == 0) return value.japanese;
     return message;
 }

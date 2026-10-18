@@ -26,8 +26,11 @@ public:
     bool confirmChoice() const { return dialog_.selected(); }
     const ChoiceDialog& dialog() const { return dialog_; }
     uint32_t licenseOffset() const { return license_offset_; }
+    bool viewingLicenses() const { return screen_ == ScreenId::Settings && page_ == SettingsPage::Licenses; }
     bool cardInfo() const { return card_info_; }
-    bool datasetWarning() const { return dataset_warning_ && screen_ != ScreenId::Boot; }
+    UsbPage usbPage() const { return usb_page_; }
+    uint8_t usbFile() const { return usb_file_; }
+    bool datasetWarning() const { return dataset_warning_ && screen_ != ScreenId::Boot && screen_ != ScreenId::UsbStorage; }
     const DisplayClock& clock() const { return clock_; }
     static constexpr uint32_t AccessLampMinMs = 150;
     bool sdAccessLit() const {
@@ -49,6 +52,8 @@ private:
     void browseAction(BrowseAction kind,uint32_t index=0);
     void action(ActionKind kind, ScreenId target = ScreenId::LivePlace);
     void acceptDialog(DialogKind kind);
+    void usbKey(UiKey key);
+    void usbAction(UsbAction action);
 
     ScreenId screen_ = ScreenId::LivePlace;
     DisplayMode mode_ = DisplayMode::View;
@@ -67,6 +72,8 @@ private:
     char dataset_edit_original_[config::DatasetLanguageBytes]{};
     uint32_t license_offset_ = 0;
     bool card_info_ = false;
+    UsbPage usb_page_ = UsbPage::Menu, usb_return_page_ = UsbPage::Menu;
+    uint8_t usb_file_ = 0;
     bool dataset_warning_ = false;
     UiData data_{};
     BatteryStatus battery_{};

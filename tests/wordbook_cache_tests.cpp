@@ -9,17 +9,16 @@ using namespace geoputer;
 namespace {
 void check(bool value, const char* message) { if (!value) throw std::runtime_error(message); }
 
-void names(uint32_t code, char (&lines)[3][64]) {
+void names(uint32_t code, char (&lines)[2][64]) {
     std::memset(lines, 0, sizeof(lines));
     std::snprintf(lines[0], sizeof(lines[0]), "県%lu", static_cast<unsigned long>(code));
     std::snprintf(lines[1], sizeof(lines[1]), "市%lu", static_cast<unsigned long>(code));
-    std::snprintf(lines[2], sizeof(lines[2]), "町%lu", static_cast<unsigned long>(code));
 }
 }  // namespace
 
 void testWordBookCache() {
     WordBookCache cache;
-    char input[3][64], output[3][64]{};
+    char input[2][64], output[2][64]{};
     check(!cache.find(1, output) && cache.stats().entries == 0, "empty name cache misses");
     names(1, input);
     cache.remember(0, input);
@@ -60,7 +59,7 @@ void testWordBookCache() {
         check(cache.find(code, output) == expected, "name-cache eviction agrees with reference LRU");
         names(code, input);
         if (expected) {
-            check(std::memcmp(input, output, sizeof(input)) == 0, "mixed hits keep the correct complete name hierarchy");
+            check(std::memcmp(input, output, sizeof(input)) == 0, "mixed hits keep the correct complete two-row display");
             recent.erase(found);
         } else {
             cache.remember(code, input);

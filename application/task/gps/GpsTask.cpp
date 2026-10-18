@@ -1,3 +1,4 @@
+#include "../../utils/Console.h"
 #include "GpsTask.h"
 #include "../../utils/SyncClient.h"
 
@@ -20,7 +21,7 @@ void GpsTask::handle(const GpsRequest& request) {
             if (buffer_ready) serial_.begin(115200, SERIAL_8N1, 15, 13);
             ready_ = buffer_ready && static_cast<bool>(serial_);
             if (ready_) receiver_.begin(taskTimeMs());
-            Serial.printf("[GPS] UART %s RX=15 TX=13 baud=115200\n", ready_ ? "ready" : "failed");
+            Console.printf("[GPS] UART %s RX=15 TX=13 baud=115200\n", ready_ ? "ready" : "failed");
         }
         result.status = ready_ ? OperationStatus::Ok : OperationStatus::Unavailable;
     } else if (request.kind == MessageKind::GetGpsStatus) {
@@ -81,7 +82,7 @@ void GpsTask::run() {
             notify();
             if (now - diagnostic_at >= 5000) {
                 diagnostic_at = now;
-                Serial.printf("[GPS] RX=%lu NMEA=%lu rejected=%lu coalesced=%lu state=%s\n",
+                Console.printf("[GPS] RX=%lu NMEA=%lu rejected=%lu coalesced=%lu state=%s\n",
                               static_cast<unsigned long>(received_bytes),
                               static_cast<unsigned long>(receiver_.receivedSentences()),
                               static_cast<unsigned long>(receiver_.rejectedSentences()),

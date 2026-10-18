@@ -79,5 +79,10 @@
     "name": "Shinonome 16-dot Gothic (053b21e0)",
     "file": "shinonome.txt",
     "source": "third_party/shinonome/LICENSE; AUTHORS; native 16-dot font source"
+  },
+  {
+    "name": "TinyUSB 0.16.0 (Arduino-ESP32 2.0.17)",
+    "file": "tinyusb.txt",
+    "source": "Arduino-ESP32 2.0.17 tools/sdk/esp32s3/include/arduino_tinyusb/tinyusb/src/tusb.h (MIT notice; tusb_option.h declares 0.16.0)"
   }
 ]

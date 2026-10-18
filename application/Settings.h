@@ -9,6 +9,7 @@ namespace geoputer {
 enum class UiLanguage : uint8_t { Japanese, English };
 enum class SettingId : uint8_t { Language, LogInterval, FlushInterval, ScreenTimeout, Brightness, Dataset, GpsMode, Count };
 constexpr unsigned SettingCount = static_cast<unsigned>(SettingId::Count);
+constexpr unsigned OperationRowCount = SettingCount;
 constexpr bool settingEditable(unsigned index) { return index < static_cast<unsigned>(SettingId::Dataset); }
 
 struct Settings {

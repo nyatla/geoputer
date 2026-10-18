@@ -29,6 +29,7 @@ bool LogReader::begin(const LogReadRequest& request) {
     else if(request.kind!=LogReadKind::List && !validLogName(request.name)) fail(LogReadError::InvalidName);
     else if(request.kind==LogReadKind::List && request.direction!=LogListDirection::Newest && !validLogName(request.anchor))
         fail(LogReadError::InvalidName);
+    else if(request.kind==LogReadKind::List && request.count>LogListRows)fail(LogReadError::Range);
     else if(request.kind==LogReadKind::Records && (!request.session_id || !request.count || request.count>LogReadCount || request.limit>LogMaxRecords))
         fail(LogReadError::Range);
     return true;
@@ -44,9 +45,10 @@ void LogReader::cancel() {
 void LogReader::finishList(LogWriter* writer) {
     closedir(directory_handle_); directory_handle_=nullptr;
     const auto direction=result_.request.direction;
+    const auto rows=result_.request.count?result_.request.count:LogListRows;
     if(direction!=LogListDirection::FromAnchor)
-        result_.has_newer=direction==LogListDirection::Older || (direction==LogListDirection::Newer && eligible_>LogListRows);
-    result_.has_older=direction==LogListDirection::Newer || eligible_>LogListRows;
+        result_.has_newer=direction==LogListDirection::Older || (direction==LogListDirection::Newer && eligible_>rows);
+    result_.has_older=direction==LogListDirection::Newer || eligible_>rows;
     if(writer && writer->hasRetainedSession()) {
         for(unsigned n=0;n<result_.count;++n)
             if(directory_+"/"+result_.data.names[n]==writer->path()) result_.active_mask|=1u<<n;
@@ -57,6 +59,7 @@ bool LogReader::step(LogWriter* writer) {
     if(done_) return true;
     if(result_.request.kind==LogReadKind::Delete) { deleteTarget(writer); return true; }
     SdAccessScope access(observer_);
+    const auto rows=result_.request.count?result_.request.count:LogListRows;
     if(result_.request.kind!=LogReadKind::List) { readTarget(writer); return true; }
     if(!started_) {
         started_=true; errno=0; directory_handle_=opendir(directory_.c_str());
@@ -78,10 +81,10 @@ bool LogReader::step(LogWriter* writer) {
         ++eligible_;
         auto& count=result_.count;
         auto& names=result_.data.names;
-        if(count==LogListRows) {
+        if(count==rows) {
             if(direction==LogListDirection::Newer) {
                 if(order(entry->d_name,names[0])>=0) continue;
-                std::memmove(names[0],names[1],(LogListRows-1)*LogNameBytes);
+                std::memmove(names[0],names[1],(rows-1)*LogNameBytes);
             } else if(order(entry->d_name,names[count-1])<=0) continue;
             --count;
         }

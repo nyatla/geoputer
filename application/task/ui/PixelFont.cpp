@@ -1,5 +1,6 @@
 #include "PixelFont.h"
 #include "Shinonome.h"
+#include "../../PlaceText.h"
 #include <cstring>
 
 namespace geoputer {
@@ -19,7 +20,8 @@ int PixelFont::width(const char* text, TextRole role) {
         const int length = first < 0x80 ? 1 : first < 0xE0 ? 2 : first < 0xF0 ? 3 : 4;
         for (int i = 0; i < length; ++i)
             if (!text[i] || (i && (static_cast<unsigned char>(text[i]) & 0xC0) != 0x80)) return result;
-        result += role == TextRole::UI || (role == TextRole::Ascii8x16 && first < 0x80) ? 8 : 16;
+        result += role == TextRole::Place ? placeCharacterWidth(first) :
+            role == TextRole::UI || (role == TextRole::Ascii8x16 && first < 0x80) ? 8 : 16;
         text += length;
     }
     return result;
@@ -29,6 +31,7 @@ void PixelFont::draw(UiCanvas& target, int x, int y, const char* text,
                      TextRole role, uint16_t color) {
     while (*text) {
         const auto first = static_cast<unsigned char>(*text);
+        if (role == TextRole::Place && first == ' ') { x += 8; ++text; continue; }
         const bool ascii16 = role == TextRole::Ascii8x16 && first < 0x80;
         const int cell = role == TextRole::UI || ascii16 ? 8 : 16;
         const int height = role == TextRole::UI ? 8 : 16;

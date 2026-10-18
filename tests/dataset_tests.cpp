@@ -34,6 +34,23 @@ void metadata() {
     result=read(common+ja);
     check(result.error==DatasetError::None && result.language=="ja", "empty language resolves dataset default");
     check(readDatasetMetadata(directory,UiLanguage::English).title=="日本","missing UI translation falls back to dataset default");
+    check(!result.display.specified, "omitted display formats retain the compatibility layout");
+    write(common+ja+"display_line1=%0 %1%2%3\ndisplay_line2=%4%5\n"+en+
+          "display_line1=%2, %0 %%\ndisplay_line2=\n");
+    result=readDatasetMetadata(directory,UiLanguage::English,"ja");
+    check(result.error==DatasetError::None && result.title=="Japan" && result.display.specified &&
+          result.display.lines[0]=="%0 %1%2%3" && result.display.lines[1]=="%4%5",
+          "format follows Wordbook language independently of the translated UI title");
+    result=readDatasetMetadata(directory,UiLanguage::Japanese,"en");
+    check(result.display.lines[0]=="%2, %0 %%" && result.display.lines[1].empty(), "selected language supplies its own format");
+    result=read(common+ja+"display_line2=%0\n");
+    check(result.error==DatasetError::None && result.display.specified && result.display.lines[0].empty() && result.display.lines[1]=="%0",
+          "an omitted row is empty when the other format is explicit");
+    check(read(common+ja+"display_line1=\ndisplay_line2=\n").display.specified, "two explicit empty rows do not request the default layout");
+    check(read(common+ja+"display_line1=%A\n").error==DatasetError::Metadata, "unsupported placeholder rejected during dataset validation");
+    check(read(common+ja+en+"display_line2=end%\n").error==DatasetError::Metadata, "malformed unselected language format also rejected");
+    check(read(common+ja+"display_line1=%0\ndisplay_line1=%1\n").error==DatasetError::Metadata, "duplicate format key rejected");
+    write(common+ja);
     Observer observer;
     check(readDatasetMetadata(directory,UiLanguage::Japanese,"",&observer).error==DatasetError::None && observer.accesses && !observer.depth,"metadata observes file I/O and closes every access scope");
     check(read(common+ja+ja).error==DatasetError::Metadata,"duplicate section rejected");

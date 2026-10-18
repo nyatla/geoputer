@@ -44,7 +44,7 @@ void testFonts() {
     command.generation = 1;
     command.data.settings = defaultSettings();
     ui.setScreen(command);
-    for (unsigned i = 0; i < 3; ++i) ui.keyPressed(UiKey::Down, 1 + i);
+    for (unsigned i = 0; i < settingsRootIndex(SettingsRootItem::Licenses); ++i) ui.keyPressed(UiKey::Down, 1 + i);
     ui.keyPressed(UiKey::Enter, 4);
     for (size_t i = 0; i < licenseLineCount() + 10; ++i) ui.keyPressed(UiKey::Down, 5 + i);
     check(ui.licenseOffset() + SettingsLayout::LicenseRows == licenseLineCount(),

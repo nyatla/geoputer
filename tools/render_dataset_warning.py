@@ -56,7 +56,7 @@ def main():
         (work / "M5GFX.h").write_text(ADAPTER + "\n" + "\n".join(colors))
         (work / "scene.cpp").write_text(SCENE)
         sources = [ROOT / "application/task/ui" / f"{name}.cpp" for name in
-                   ("PixelFont", "UiRenderer", "UiModel", "LicenseText", "SettingsText", "Shinonome")]
+                   ("PixelFont", "UiRenderer", "UsbRenderer", "UiModel", "LicenseText", "SettingsText", "Shinonome")]
         executable = work / "render"
         subprocess.run(["g++", "-std=c++17", "-Wall", "-Wextra", "-Werror", "-pedantic",
                         "-fsanitize=undefined", "-fno-sanitize-recover=all", "-I", str(work),

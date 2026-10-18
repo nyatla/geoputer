@@ -26,6 +26,10 @@ int main(int argc,char** argv) {
     data.browse.summary={100,113376,1789309921000ull,1789321921000ull,3527,0};
     data.storage.log.session_id=100;data.storage.log.open=true;data.recording.state=RecordingState::Recording;
     auto screen=ScreenId::Logs;
+    const bool usb_mode=!std::strncmp(mode,"usb",3);
+    if(usb_mode){screen=ScreenId::UsbStorage;data.storage.usb.ready=true;}
+    if(!std::strcmp(mode,"usb-error")){data.storage.usb.ready=false;data.storage.usb.io_error=true;}
+    if(!std::strcmp(mode,"usb-ejected"))data.storage.usb.ejected=true;
     if(!std::strcmp(mode,"logger")||!std::strcmp(mode,"logger-paused")||!std::strcmp(mode,"logger-confirm"))screen=ScreenId::GpsLogger;
     if(!std::strcmp(mode,"logger-paused"))data.recording.state=RecordingState::Paused;
     if(!std::strcmp(mode,"pause-confirm"))screen=ScreenId::LivePlace;
@@ -61,6 +65,8 @@ int main(int argc,char** argv) {
     UiModel model;model.setScreen({screen,DisplayMode::View,1,data,0,ActionResult::None});
     if(!std::strcmp(mode,"logger-confirm"))model.keyPressed(UiKey::Enter,1);
     if(!std::strcmp(mode,"pause-confirm"))model.keyPressed(UiKey::F1,1);
+    if(usb_mode && (!std::strcmp(mode,"usb") || !std::strcmp(mode,"usb-selected")))model.keyPressed(UiKey::Escape,1);
+    if(!std::strcmp(mode,"usb-selected"))model.keyPressed(UiKey::Right,2);
     if(delete_confirm)model.keyPressed(UiKey::DeleteLog,1);
     if(!std::strcmp(mode,"delete-selected"))model.keyPressed(UiKey::Right,2);
     renderAndCheckDialog(renderer,model,display);
@@ -70,6 +76,10 @@ int main(int argc,char** argv) {
             if(display.pixels.at((y+row)*240+x+col)!=(ink?color:TFT_BLACK))throw std::runtime_error("menu item is not using native language font");
         }
     };
+    if(usb_mode && model.confirming()) {
+        glyph(56,84,english?'C':U'取',!std::strcmp(mode,"usb-selected")?TFT_WHITE:TFT_CYAN);
+        glyph(152,84,english?'E':U'終',!std::strcmp(mode,"usb-selected")?TFT_CYAN:TFT_WHITE);
+    }
     if(screen==ScreenId::LogDetail)glyph(20,101,english?'R':U'再',TFT_WHITE);
     if(!std::strcmp(mode,"logger"))glyph(20,83,english?'S':U'停',TFT_CYAN);
     if(!std::strcmp(mode,"logger-paused"))glyph(20,83,english?'R':U'再',TFT_CYAN);
@@ -109,10 +119,10 @@ def main():
     for name in sorted(set(re.findall(r'\bTFT_[A-Z]+\b',SCENE+renderer))):
         value=re.search(rf'\b{name}\s*=\s*(0x[0-9A-Fa-f]+)',enums)[1]
         colors.append(f'inline constexpr uint16_t {name}={value};')
-    modes=('logger','logger-paused','logger-confirm','pause-confirm','list','delete-confirm','delete-selected','delete-protected','delete-short','delete-longest','deleting','delete-error','detail','point','long-name','unknown','loading','crc-error','empty','sd-error','partial-tail','bounds')
+    modes=('usb','usb-screen','usb-selected','usb-error','usb-ejected','logger','logger-paused','logger-confirm','pause-confirm','list','delete-confirm','delete-selected','delete-protected','delete-short','delete-longest','deleting','delete-error','detail','point','long-name','unknown','loading','crc-error','empty','sd-error','partial-tail','bounds')
     with tempfile.TemporaryDirectory(prefix='geoputer-browser-') as directory:
         work=Path(directory);(work/'M5GFX.h').write_text(ADAPTER+'\n'+'\n'.join(colors));(work/'scene.cpp').write_text(SCENE)
-        sources=[ROOT/'application/task/ui'/f'{name}.cpp' for name in ('PixelFont','UiRenderer','UiModel','LicenseText','SettingsText','Shinonome')]
+        sources=[ROOT/'application/task/ui'/f'{name}.cpp' for name in ('PixelFont','UiRenderer','UsbRenderer','UiModel','LicenseText','SettingsText','Shinonome')]
         exe=work/'render'
         subprocess.run(['g++','-std=c++17','-Wall','-Wextra','-Werror','-pedantic','-fsanitize=undefined','-fno-sanitize-recover=all','-I',str(work),'-I',str(ROOT/'tools'),'-I',str(ROOT/'application'),'-I',str(ROOT/'tests/support'),'-I',str(M5GFX/'Fonts'),str(work/'scene.cpp'),*map(str,sources),str(ROOT/'application/Settings.cpp'),'-o',str(exe)],check=True,timeout=180)
         for language in ('ja','en'):
@@ -120,7 +130,8 @@ def main():
                 ppm=work/'screen.ppm'
                 with ppm.open('wb') as target:target.write(reference_frame(exe,mode,language))
                 with Image.open(ppm) as source: image=source.convert('RGB')
-                folder=ROOT/'doc/画面・操作'/('live-place' if mode=='pause-confirm' else 'gps-logger' if mode.startswith('logger') else 'logs' if mode in ('list','empty','sd-error','delete-confirm','delete-selected','delete-protected','delete-short','delete-longest','deleting','delete-error') else 'log-detail')
+                folder=ROOT/'doc/画面・操作'/('usb-storage' if mode.startswith('usb') else 'live-place' if mode=='pause-confirm' else 'gps-logger' if mode.startswith('logger') else 'logs' if mode in ('list','empty','sd-error','delete-confirm','delete-selected','delete-protected','delete-short','delete-longest','deleting','delete-error') else 'log-detail')
+                folder.mkdir(parents=True,exist_ok=True)
                 stem=f'log-browser-{mode}' if language=='ja' else f'log-browser-en-{mode}'
                 image.save(folder/f'{stem}.png')
                 image.resize((960,540),Image.Resampling.NEAREST).save(folder/f'{stem}-preview.png')

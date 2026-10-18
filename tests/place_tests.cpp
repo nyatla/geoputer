@@ -14,7 +14,7 @@ void check(bool value, const char* detail) { if (!value) throw std::runtime_erro
 void testPlace() {
     check(validUtf8("千葉県習志野市鷺沼二丁目") && validUtf8("髙﨑ｱA") && validUtf8("\xF0\x9F\x9A\x80"),
           "UTF-8 Japanese, compatibility characters, half-width kana, ASCII and supplementary characters");
-    char lines[3][64];
+    char lines[2][64];
     for (const auto& bad : {std::string("\x81"), std::string("\x90\xE7\x97\x74"),
                            std::string("\xC0\xAF"), std::string("\xED\xA0\x80"), std::string("\xE3\x81"),
                            std::string("\xF4\x90\x80\x80"), std::string("\xF0\x80\x80\x80"),
@@ -28,32 +28,53 @@ void testPlace() {
         }
     }
     formatPlaceLines({"千葉県", "", "習志野市", "", "鷺沼", "二丁目"}, lines);
-    check(std::strcmp(lines[0], "千葉県") == 0 && std::strcmp(lines[1], "習志野市") == 0 &&
-          std::strcmp(lines[2], "鷺沼二丁目") == 0, "Integrated six slots preserve empty hierarchy slots");
+    check(std::strcmp(lines[0], "千葉県 習志野市") == 0 && std::strcmp(lines[1], "鷺沼二丁目") == 0,
+          "default six-slot layout produces final two display rows");
     formatPlaceLines({"東京都", "", "", "千代田区", ""}, lines);
-    check(std::strcmp(lines[1], "千代田区") == 0 && !lines[2][0], "N03 five-slot hierarchy");
+    check(std::strcmp(lines[0], "東京都 千代田区") == 0 && !lines[1][0], "default N03 administrative layout");
     formatPlaceLines({"東京都", "あいうえおかきくけこさしすせそたちつてと"}, lines);
-    check(std::strcmp(lines[1], "あいうえおかきくけこさ...") == 0 && validUtf8(lines[1]), "long names truncate at 14 cells without splitting UTF-8");
-
-    char address[2][64];
-    formatLivePlaceLines(lines,address);
-    check(std::strcmp(address[0],"東京都 あいうえおかき...")==0 && validUtf8(address[0]),
-          "combined administrative line is truncated at a UTF-8 cell boundary");
-    formatPlaceLines({"千葉県","","習志野市","","鷺沼","2丁目1番1号"},lines);
-    formatLivePlaceLines(lines,address);
-    check(std::strcmp(address[0],"千葉県 習志野市")==0 && std::strcmp(address[1],"鷺沼2丁目1番1号")==0,
-          "three hierarchy rows become two display lines");
-    check(std::strcmp(lines[1],"習志野市")==0 && std::strcmp(lines[2],"鷺沼2丁目1番1号")==0,
-          "display formatting does not mutate Storage's hierarchy");
-    formatPlaceLines({"千葉県","","","習志野市",""},lines);
-    formatLivePlaceLines(lines,address);
-    check(std::strcmp(address[0],"千葉県 習志野市")==0 && !address[1][0],
-          "N03 has one administrative display line without an invented street address");
-    std::memset(lines,0,sizeof(lines)); std::strcpy(lines[1],"習志野市");
-    formatLivePlaceLines(lines,address);
-    check(std::strcmp(address[0],"習志野市")==0,"missing prefecture has no leading separator");
-    std::memset(lines,0,sizeof(lines)); formatLivePlaceLines(lines,address);
-    check(!address[0][0] && !address[1][0],"empty hierarchy clears both address lines");
+    check(std::strcmp(lines[0], "東京都 あいうえおかきく...") == 0 && validUtf8(lines[0]),
+          "ellipsis uses final pixel width with an eight-dot space");
+    formatPlaceLines({"", "習志野市"}, lines);
+    check(std::strcmp(lines[0], "習志野市") == 0, "missing prefecture has no invented separator");
+    formatPlaceLines({}, lines);
+    check(!lines[0][0] && !lines[1][0], "empty names clear both display lines");
+    PlaceDisplayFormat format{{"%0 %1%2%3", "%4%5"}, true};
+    formatPlaceLines({"千葉県", "", "習志野市", "", "鷺沼", "2丁目"}, lines, format);
+    check(std::strcmp(lines[0], "千葉県 習志野市") == 0 && std::strcmp(lines[1], "鷺沼2丁目") == 0,
+          "percent placeholders preserve empty slots and create two final rows");
+    format = {{"%2/%%/%0", "%9:%1"}, true};
+    formatPlaceLines({"%1", "", "市"}, lines, format);
+    check(!std::strcmp(lines[0], "市/%/%1") && !std::strcmp(lines[1], ":"),
+          "reordering, percent escape and missing slots work without recursively interpreting dictionary text");
+    format = {{"%1", "%0"}, true};
+    formatPlaceLines({"A", "B"}, lines, format);
+    check(!std::strcmp(lines[0], "B") && !std::strcmp(lines[1], "A"), "explicit rows are not joined again by App");
+    format = {{"%10", "%%%0"}, true};
+    formatPlaceLines({"A", "B"}, lines, format);
+    check(!std::strcmp(lines[0], "B0") && !std::strcmp(lines[1], "%A"), "indices are exactly one digit");
+    format = {{"", ""}, true};
+    formatPlaceLines({"unused"}, lines, format);
+    check(!lines[0][0] && !lines[1][0], "explicit empty formats can hide both rows");
+    for (const auto* bad : {"%", "%A", "%/", "abc%%def%"}) {
+        check(!validPlaceFormat(bad), "malformed placeholder is rejected");
+        format = {{bad, ""}, true}; bool rejected = false;
+        try { formatPlaceLines({"A"}, lines, format); } catch (const std::runtime_error&) { rejected = true; }
+        check(rejected, "runtime formatting also rejects malformed syntax");
+    }
+    format = {{"%0", "%0%0"}, true};
+    const std::string spaces(29, ' ');
+    formatPlaceLines({spaces}, lines, format);
+    check(std::string(lines[0]) == spaces && std::string(lines[1]) == std::string(23, ' ') + "...",
+          "space-only rows fit exactly 232 pixels, then truncate with a fitting ellipsis");
+    const std::string fourteen = "日日日日日日日日日日日日日日";
+    formatPlaceLines({fourteen + " "}, lines, format);
+    check(std::string(lines[0]) == fourteen + " ", "fourteen 16-dot glyphs plus an eight-dot space fit exactly");
+    formatPlaceLines({std::string(200000, 'x')}, lines, format);
+    check(!std::strcmp(lines[0], "xxxxxxxxxxx...") && validUtf8(lines[1]), "large expansions retain only a bounded prefix");
+    format = {{"%0", ""}, true}; bool rejected = false;
+    try { formatPlaceLines({"valid", "\xc0\x80"}, lines, format); } catch (const std::runtime_error&) { rejected = true; }
+    check(rejected, "unreferenced invalid UTF-8 cannot enter the name cache");
 
     PlaceSearchFlow flow;
     PlaceRequest request{7, 1, {35.68, 140.02, 0, true}};
@@ -90,10 +111,11 @@ void testPlace() {
     result.request = request;
     result.state = PlaceState::Ready;
     std::strcpy(result.lines[0], "東京都");
+    std::strcpy(result.lines[1], "千代田区");
     data.storage.sd = {2, 100, false};
     data.storage.rg = {1, 1, RgCacheState::Ready};
     completePlacePresentation(data, result);
-    check(std::strcmp(data.place[0], "東京都") == 0 && !data.place[1][0] &&
+    check(std::strcmp(data.place[0], "東京都") == 0 && !std::strcmp(data.place[1], "千代田区") &&
           data.place_fix.latitude == request.fix.latitude,
           "completion replaces all name rows and coordinates together independently of SD activity");
 

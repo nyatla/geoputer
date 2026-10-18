@@ -1,3 +1,4 @@
+#include "../../utils/Console.h"
 #include "UiTask.h"
 #include <M5Cardputer.h>
 #include "UiRenderer.h"
@@ -8,7 +9,7 @@ namespace geoputer {
 
 void UiTask::handle(const UiRequest& request, bool ready) {
     if (request.source != TaskId::Application || request.request_id == 0) {
-        Serial.println("[UI] invalid request envelope");
+        Console.println("[UI] invalid request envelope");
         return;
     }
     pending_return_ = {};
@@ -67,7 +68,7 @@ void UiTask::run() {
     M5Cardputer.begin(config, true);
     UiRenderer renderer(M5Cardputer.Display);
     const bool ready = renderer.begin();
-    Serial.println(ready ? "[UI] ready (240x135)" : "[UI] initialization failed");
+    Console.println(ready ? "[UI] ready (240x135)" : "[UI] initialization failed");
     bool was_one = false, was_settings = false, was_logs = false, was_escape = false, was_up = false, was_down = false;
     bool was_left = false, was_right = false, was_enter = false, was_any = false;
     bool was_delete = false;
@@ -91,7 +92,8 @@ void UiTask::run() {
         bool left = false, right = false;
         bool delete_log = false;
         for (const auto& position : M5Cardputer.Keyboard.keyList()) {
-            const auto key = mapPhysicalKey(M5Cardputer.Keyboard.getKeyValue(position).value_first, keys.fn);
+            const auto value = M5Cardputer.Keyboard.getKeyValue(position).value_first;
+            const auto key = model_.viewingLicenses() ? mapLicenseKey(value, keys.fn, keys.shift) : mapPhysicalKey(value, keys.fn);
             f1 |= key == UiKey::F1;
             gps |= key == UiKey::OpenGpsLogger;
             settings |= key == UiKey::OpenSettings;
@@ -134,7 +136,7 @@ void UiTask::run() {
             if (!clock_reported && model_.clock().known()) {
                 char clock_text[9];
                 model_.clock().format(clock_text, sizeof(clock_text));
-                Serial.printf("[UI] clock=%s JST (initial GPS time)\n", clock_text);
+                Console.printf("[UI] clock=%s JST (initial GPS time)\n", clock_text);
                 clock_reported = true;
             }
         }

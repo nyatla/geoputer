@@ -103,15 +103,14 @@ int main(int argc, char** argv) {
             const auto result = lookup.search(request);
             check(lookup.accessMode(request) == PlaceAccessMode::Cache, "same point announces cache access after a read");
             if (result.state != PlaceState::Ready) throw std::runtime_error(result.detail);
-            check(std::strcmp(result.lines[0], "千葉県") == 0 && std::strcmp(result.lines[1], "習志野市") == 0,
+            check(std::strcmp(result.lines[0], "千葉県 習志野市") == 0 && !result.lines[1][0],
                   "real UTF-8 dataset resolves Narashino City Hall");
             check(result.request.fix.longitude == request.fix.longitude && result.request.sample_seq == 31,
                   "result retains the coordinate snapshot");
             auto tokyo = request;
             tokyo.fix = {35.6852, 139.7528, 1000, true};
             const auto second = lookup.search(tokyo);
-            check(second.state == PlaceState::Ready && std::strcmp(second.lines[0], "東京都") == 0 &&
-                  std::strcmp(second.lines[1], "千代田区") == 0, "repeated seeks resolve another region");
+            check(second.state == PlaceState::Ready && std::strcmp(second.lines[0], "東京都 千代田区") == 0 && !second.lines[1][0], "repeated seeks resolve another region");
         }
         check(lookup.wordBookCacheStats().entries == 2 && lookup.wordBookCacheStats().misses == 2,
               "rectangle replacement preserves both region-name entries");

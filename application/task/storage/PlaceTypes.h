@@ -39,7 +39,7 @@ struct PlaceResult {
     PlaceRequest request;
     PlaceState state;
     int64_t region_code;
-    char lines[3][64];  // UTF-8, at most 14 fixed-width characters per line.
+    char lines[2][64];  // Final UTF-8 display rows, bounded by pixel width.
     char detail[80];   // Diagnostic copy, never a pointer into the SDK.
     DatasetInfo dataset;
 };

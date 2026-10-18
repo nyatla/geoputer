@@ -1,3 +1,4 @@
+#include "../../utils/Console.h"
 #include "StorageTask.h"
 #include <SD.h>
 #include <sd_diskio.h>
@@ -5,6 +6,7 @@
 #include <esp_heap_caps.h>
 #include <cstring>
 #include "../../utils/SyncClient.h"
+#include "../../BootMode.h"
 
 namespace geoputer {
 
@@ -132,8 +134,10 @@ void StorageTask::handle(const StorageRequest& request) {
     auto& result = pending_return_.payload.result;
     result.request_kind = request.kind;
     result.status = OperationStatus::InvalidRequest;
-    if (request.kind == MessageKind::DatasetOperation) {
-        if (initialized_ && !has_read_ && !has_job_ && !has_completion_) {
+    if(request.kind==MessageKind::UsbExportOperation) {
+        handleUsbExport(request,result);
+    } else if (request.kind == MessageKind::DatasetOperation) {
+        if (!usb_mode_ && initialized_ && !has_read_ && !has_job_ && !has_completion_) {
             dataset_request_ = request.payload.dataset;
             dataset_request_.language[sizeof(dataset_request_.language)-1] = 0;
             has_job_ = dataset_browser_job_ = true;
@@ -151,16 +155,24 @@ void StorageTask::handle(const StorageRequest& request) {
             place_lookup_.configure(DatasetCatalog{}.directory(state_.settings.dataset), state_.settings.wordbook_language);
             state_.settings_state = nvs_ready_ ? SettingsState::Defaults : SettingsState::Unavailable;
             state_.nvs_error = nvs_ready_ ? 0 : -20;
-            mountCard();
+            if (usb_mode_) {
+                state_.settings_state = settings_store_.load(state_.settings);
+                usb_.begin(spi_);
+                state_.usb = usb_.snapshot(); usb_dirty_ = true;
+                state_.card_state = CardState::Unmounted; // No FatFs mount while the card is published to the PC.
+                Console.printf("[USB] raw SD ready=%u; FATFS deferred; GPS/GIS disabled\n",state_.usb.ready);
+            } else mountCard();
             state_.revision = 1;
             initialized_ = true;
-            Serial.printf("[STORAGE] NVS=%s SD=%s\n", nvs_ready_ ? "ready" : "error", cardStateName(state_.card_state));
+            Console.printf("[STORAGE] NVS=%s SD=%s\n", nvs_ready_ ? "ready" : "error", cardStateName(state_.card_state));
         }
         result.status = OperationStatus::Ok;  // Individual backend outcomes are in the snapshot.
     } else if (request.kind == MessageKind::GetStorageStatus) {
         result.status = initialized_ ? OperationStatus::Ok : OperationStatus::Unavailable;
     } else if(request.kind==MessageKind::ListLogs || request.kind==MessageKind::ReadLogSummary || request.kind==MessageKind::ReadLogRecords || request.kind==MessageKind::DeleteLog) {
-        if(initialized_ && !has_read_ && !has_job_ && !has_completion_) {
+        if(initialized_ && !has_read_ && !has_job_ && !has_completion_ &&
+           (!usb_mode_ || (usb_.local() && state_.card_state==CardState::Mounted &&
+                           state_.export_job.phase==ExportPhase::Selecting && request.kind==MessageKind::ListLogs))) {
             auto read=request.payload.log_read;
             read.kind=request.kind==MessageKind::ListLogs?LogReadKind::List:request.kind==MessageKind::ReadLogSummary?LogReadKind::Summary:request.kind==MessageKind::DeleteLog?LogReadKind::Delete:LogReadKind::Records;
             if(log_reader_.begin(read)) {
@@ -191,7 +203,11 @@ void StorageTask::handle(const StorageRequest& request) {
         const bool sd_operation = request.kind == MessageKind::OperateStorage &&
                                   (command.operation == StorageOperation::Remount || command.operation == StorageOperation::Unmount ||
                                    (command.operation == StorageOperation::Format && command.confirmed));
-        if ((saving && nvs_ready_) || (sd_operation && !has_read_ && !log_writer_.hasRetainedSession())) {
+        const bool mode_operation = request.kind == MessageKind::OperateStorage && command.confirmed && nvs_ready_ &&
+            (command.operation == (usb_mode_ ? StorageOperation::ExitUsbMode : StorageOperation::EnterUsbMode));
+        if ((!usb_mode_ && saving && nvs_ready_) ||
+            (((!usb_mode_ && sd_operation) || mode_operation) && !has_read_ && !log_writer_.hasRetainedSession() &&
+              (!usb_mode_ || (usb_work_==UsbWork::None && state_.export_job.phase==ExportPhase::Idle)))) {
             job_ = command; job_request_id_ = request.request_id;
             has_job_ = true; load_job_ = false; search_job_ = false; dataset_job_ = false;
             state_.busy = true; state_.operation = command.operation;
@@ -261,6 +277,15 @@ void StorageTask::completeJob() {
             state_.sd_error = 0;
             ok = true; break;
         case StorageOperation::Format: ok = formatCard(); break;
+        case StorageOperation::EnterUsbMode:
+            ok = saveBootMode(BootMode::UsbStorage);
+            if (ok) { closeCard(); state_.card_state = CardState::Unmounted; }
+            else state_.nvs_error = state_.error = -21;
+            break;
+        case StorageOperation::ExitUsbMode:
+            ok = usb_.exitToLogger(); state_.usb = usb_.snapshot();
+            if (!ok) state_.error = -31;
+            break;
         default: break;
     }
     state_.busy = has_read_;
@@ -290,20 +315,20 @@ void StorageTask::completeJob() {
     if (search_job_ || dataset_job_) {
         const auto cache = place_lookup_.cacheStats();
         const auto wordbook = place_lookup_.wordBookCacheStats();
-        Serial.printf("[DATASET] chunks=%llu max=%lu state=%s\n",
+        Console.printf("[DATASET] chunks=%llu max=%lu state=%s\n",
                       static_cast<unsigned long long>(place.dataset.chunks), static_cast<unsigned long>(place.dataset.limit),
                       placeStateName(place.state));
-        Serial.printf("[GIS] %s code=%lld detail=%s stack_free=%u heap=%u min_heap=%u largest=%u\n",
+        Console.printf("[GIS] %s code=%lld detail=%s stack_free=%u heap=%u min_heap=%u largest=%u\n",
                                   placeStateName(place.state), static_cast<long long>(place.region_code), place.detail,
                                   static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)), ESP.getFreeHeap(),
                                   ESP.getMinFreeHeap(), static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT)));
-        if (search_job_) Serial.printf("[CACHE] %s bytes=%u hit=%lu miss=%lu fill=%lu valid=%u rect=%d,%d,%d,%d elapsed_us=%lu\n",
+        if (search_job_) Console.printf("[CACHE] %s bytes=%u hit=%lu miss=%lu fill=%lu valid=%u rect=%d,%d,%d,%d elapsed_us=%lu\n",
                                       cache.valid ? (cache.hits > cache_before.hits ? "HIT" : "MISS") : "INVALID",
                                       static_cast<unsigned>(cache.bytes), static_cast<unsigned long>(cache.hits),
                                       static_cast<unsigned long>(cache.misses), static_cast<unsigned long>(cache.fills),
                                       cache.valid, cache.bounds.x, cache.bounds.y, CachedMapReader::Side, CachedMapReader::Side,
                                       static_cast<unsigned long>(micros() - started_us));
-        if (search_job_) Serial.printf("[WORDBOOK] %s entries=%u/%u hit=%lu miss=%lu\n",
+        if (search_job_) Console.printf("[WORDBOOK] %s entries=%u/%u hit=%lu miss=%lu\n",
                                       place.state != PlaceState::Ready ? "NONE" :
                                       wordbook.hits != wordbook_before.hits ? "HIT" : "MISS",
                                       static_cast<unsigned>(wordbook.entries), static_cast<unsigned>(WordBookCache::Capacity),
@@ -311,11 +336,11 @@ void StorageTask::completeJob() {
                                       static_cast<unsigned long>(wordbook.misses));
         if (search_job_ && mounted_ && state_.card_state == CardState::Mounted) {
             const auto& time = place_lookup_.readTiming();
-            Serial.printf("[READ-TIME] total_us=%llu open_us=%llu map_us=%llu rect_us=%llu wordbook_us=%llu text_us=%llu\n",
+            Console.printf("[READ-TIME] total_us=%llu open_us=%llu map_us=%llu rect_us=%llu wordbook_us=%llu text_us=%llu\n",
                           static_cast<unsigned long long>(time.total_us), static_cast<unsigned long long>(time.open_us),
                           static_cast<unsigned long long>(time.map_us), static_cast<unsigned long long>(time.rect_us),
                           static_cast<unsigned long long>(time.wordbook_us), static_cast<unsigned long long>(time.text_us));
-            Serial.printf("[READ-IO] map_us=%llu map_bytes=%llu map_reads=%lu map_seeks=%lu map_opens=%lu map_closes=%lu book_us=%llu book_bytes=%llu book_reads=%lu book_seeks=%lu book_opens=%lu book_closes=%lu\n",
+            Console.printf("[READ-IO] map_us=%llu map_bytes=%llu map_reads=%lu map_seeks=%lu map_opens=%lu map_closes=%lu book_us=%llu book_bytes=%llu book_reads=%lu book_seeks=%lu book_opens=%lu book_closes=%lu\n",
                           static_cast<unsigned long long>(time.map_io.elapsed_us), static_cast<unsigned long long>(time.map_io.bytes),
                           static_cast<unsigned long>(time.map_io.reads), static_cast<unsigned long>(time.map_io.seeks),
                           static_cast<unsigned long>(time.map_io.opens), static_cast<unsigned long>(time.map_io.closes),
@@ -323,7 +348,7 @@ void StorageTask::completeJob() {
                           static_cast<unsigned long>(time.wordbook_io.reads), static_cast<unsigned long>(time.wordbook_io.seeks),
                           static_cast<unsigned long>(time.wordbook_io.opens), static_cast<unsigned long>(time.wordbook_io.closes));
             auto print_io_time = [](const char* name, const FileIoTiming& io) {
-                Serial.printf("[%s-IO-TIME] read_us=%llu seek_us=%llu open_us=%llu close_us=%llu stat_us=%llu\n", name,
+                Console.printf("[%s-IO-TIME] read_us=%llu seek_us=%llu open_us=%llu close_us=%llu stat_us=%llu\n", name,
                               static_cast<unsigned long long>(io.read_us), static_cast<unsigned long long>(io.seek_us),
                               static_cast<unsigned long long>(io.open_us), static_cast<unsigned long long>(io.close_us),
                               static_cast<unsigned long long>(io.stat_us));
@@ -331,7 +356,7 @@ void StorageTask::completeJob() {
             print_io_time("MAP", time.map_io);
             print_io_time("BOOK", time.wordbook_io);
         }
-    } else Serial.printf("[STORAGE] op=%u ok=%u NVS=%u SD=%s error=%ld stack_free=%u\n",
+    } else Console.printf("[STORAGE] op=%u ok=%u NVS=%u SD=%s error=%ld stack_free=%u\n",
                   static_cast<unsigned>(state_.operation), ok, static_cast<unsigned>(state_.settings_state),
                   cardStateName(state_.card_state), static_cast<long>(state_.error),
                   static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)));
@@ -393,7 +418,7 @@ void StorageTask::flushLog(bool force) {
     completion_.payload.storage_completion.snapshot = state_;
     completion_.payload.storage_completion.read_kind = StorageReadKind::Log;
     has_completion_ = true;
-    Serial.printf("[LOG] saved=%lu buffered=%u closing=%u error=%u\n",
+    Console.printf("[LOG] saved=%lu buffered=%u closing=%u error=%u\n",
                   static_cast<unsigned long>(state_.log.saved), state_.log.buffered,
                   state_.log.closing, static_cast<unsigned>(state_.log.error));
 }
@@ -419,7 +444,7 @@ void StorageTask::stepLogRead() {
     auto& result=completion_.payload.storage_completion;
     result.request_id=read_request_id_; result.snapshot=state_; result.read_kind=StorageReadKind::LogBrowse;
     result.logs=read; has_completion_=true;
-    Serial.printf("[BROWSE] kind=%u token=%lu error=%u count=%u records=%lu start=%lu stack_free=%u\n",
+    Console.printf("[BROWSE] kind=%u token=%lu error=%u count=%u records=%lu start=%lu stack_free=%u\n",
                   static_cast<unsigned>(read.request.kind),static_cast<unsigned long>(read.request.token),static_cast<unsigned>(read.error),
                   read.count,static_cast<unsigned long>(read.summary.records),static_cast<unsigned long>(read.request.start),
                   static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)));
@@ -435,8 +460,21 @@ void StorageTask::run() {
         if (!has_return_ && !has_job_ && !has_completion_ && inbox().receive(request)) { handle(request); sendReturn(); }
         // Display notifications never gate physical work. Only accepted job/results are retained.
         if (!has_return_ && has_job_) completeJob();
-        if (!has_return_ && !has_job_ && !has_completion_) flushLog();
-        if (!has_return_ && !has_job_ && !has_completion_ && has_read_) stepLogRead();
+        if (!usb_mode_ && !has_return_ && !has_job_ && !has_completion_) flushLog();
+        if (!has_return_ && !has_job_ && !has_completion_ && has_read_ && (!usb_mode_ || usb_.local())) {
+            if(usb_mode_ && usb_work_==UsbWork::PublishMenu) log_reader_.cancel();
+            stepLogRead();
+        }
+        if (usb_mode_) {
+            if(!has_return_ && !has_job_ && !has_read_ && !has_completion_) stepUsbExport();
+            const auto view = usb_.snapshot();
+            if (!(view == state_.usb)) { state_.usb = view; ++state_.revision; usb_dirty_ = true; }
+            if (usb_dirty_) {
+                AppNotification event{}; event.source = TaskId::Storage; event.kind = MessageKind::UsbStorageChanged;
+                event.payload.usb_storage = state_;
+                if (sendSpeculative(notifications_,event) == SpeculativeResult::Queued) usb_dirty_ = false;
+            }
+        }
         notifyActivity();
         notify();
         vTaskDelay(pdMS_TO_TICKS(5));

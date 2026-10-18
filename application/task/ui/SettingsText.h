@@ -11,6 +11,7 @@ enum class SettingsLabel {
 };
 
 const char* settingsRootLabel(UiLanguage language, unsigned row);
+const char* settingsModeValue(UiLanguage language);
 const char* settingsOperationLabel(UiLanguage language, unsigned row);
 const char* settingsStorageLabel(UiLanguage language, unsigned row);
 const char* settingsLabel(UiLanguage language, SettingsLabel label);

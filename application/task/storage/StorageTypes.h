@@ -7,12 +7,14 @@
 #include "log/LogTypes.h"
 #include "log/LogReadTypes.h"
 #include "dataset/DatasetTypes.h"
+#include "usb/UsbStorageTypes.h"
+#include "export/ExportTypes.h"
 
 namespace geoputer {
 
 enum class SettingsState : uint8_t { Unavailable, Defaults, Loaded, Invalid, Saving, Saved, Failed };
 enum class CardState : uint8_t { Unknown, NoCard, Mounted, Unmounted, Unsupported, Failed };
-enum class StorageOperation : uint8_t { None, SaveSettings, Remount, Unmount, Format };
+enum class StorageOperation : uint8_t { None, SaveSettings, Remount, Unmount, Format, EnterUsbMode, ExitUsbMode };
 enum class StorageReadKind : uint8_t { None, Settings, Place, Dataset, Log, LogBrowse, DatasetBrowser };
 
 struct StorageSnapshot {
@@ -34,6 +36,8 @@ struct StorageSnapshot {
     SdAccessSnapshot sd;
     LogSnapshot log;
     LogError log_result;
+    UsbStorageView usb;
+    ExportSnapshot export_job;
 };
 
 struct StorageCommand {

@@ -2,6 +2,9 @@
 from pathlib import Path
 import subprocess
 import tempfile
+import os
+import sys
+from check_export_files import check_exports
 
 root = Path(__file__).resolve().parents[1]
 with tempfile.TemporaryDirectory(prefix="geoputer-native-") as directory:
@@ -20,6 +23,10 @@ with tempfile.TemporaryDirectory(prefix="geoputer-native-") as directory:
         str(root / "tests/settings_tests.cpp"),
         str(root / "tests/settings_language_tests.cpp"),
         str(root / "tests/dialog_tests.cpp"),
+        str(root / "tests/usb_mode_tests.cpp"),
+        str(root / "tests/export_tests.cpp"),
+        str(root / "application/task/storage/export/LogExporter.cpp"),
+        str(root / "application/BootMode.cpp"),
         str(root / "tests/place_tests.cpp"),
         str(root / "tests/wordbook_cache_tests.cpp"),
         str(root / "tests/key_binding_tests.cpp"),
@@ -40,4 +47,16 @@ with tempfile.TemporaryDirectory(prefix="geoputer-native-") as directory:
         str(root / "application/task/gps/NmeaParser.cpp"),
         str(root / "application/task/gps/GpsReceiver.cpp"), "-o", str(binary),
     ], check=True, timeout=180)
-    subprocess.run([str(binary)], check=True, timeout=10)
+    export_folder=Path(directory)/'export-fixtures'
+    subprocess.run([str(binary)], check=True, timeout=15,
+                   env=dict(os.environ,GEOPUTER_EXPORT_FIXTURES=str(export_folder)))
+    check_exports(export_folder)
+    backend=Path(directory)/'usb-backend-tests'
+    subprocess.run(['g++','-std=c++17','-Wall','-Wextra','-Werror','-pedantic',
+                    '-fsanitize=undefined','-fno-sanitize-recover=all','-pthread',
+                    '-I',str(root/'tests/support/usb'),'-I',str(root/'tests/support'),'-I',str(root/'application'),
+                    str(root/'tests/usb_backend_tests.cpp'),str(root/'application/task/storage/usb/UsbStorage.cpp'),
+                    str(root/'application/BootMode.cpp'),'-o',str(backend)],check=True,timeout=60)
+    subprocess.run([str(backend)],check=True,timeout=15)
+
+subprocess.run([sys.executable, str(root / "tests/build_metadata_tests.py")], check=True, timeout=60)

@@ -60,6 +60,26 @@ void testDatasetFiles(const std::string& temporary,const std::string& map,const 
     check(catalog.read(request,UiLanguage::Japanese).error==DatasetError::Encoding &&
           lookup.search(point).state==PlaceState::Ready && lookup.cacheStats().fills==before.fills,
           "unsupported candidate language fails validation without disturbing the active UTF-8 caches");
+    lookup.close();
+    manifest(1,ini+"display_line1=%1%2%3%4\ndisplay_line2=%0 %%\n");
+    lookup.configure(dir.string(),"ja");
+    const auto defaults=lookup.search(point);
+    check(defaults.state==PlaceState::Ready && !std::strcmp(defaults.lines[0],"千葉県 習志野市"),
+          "unselected English format does not affect the selected Japanese Wordbook");
+    const auto ja_end=ini.find("[en]");
+    manifest(1,ini.substr(0,ja_end)+"display_line1=%1%2%3%4\ndisplay_line2=%0 %%\n"+ini.substr(ja_end));
+    lookup.configure(dir.string(),"ja");
+    const auto formatted=lookup.search(point);
+    check(formatted.state==PlaceState::Ready && !std::strcmp(formatted.lines[0],"習志野市") &&
+          !std::strcmp(formatted.lines[1],"千葉県 %"), "real dictionary fields expand into the configured final two rows");
+    auto cached=lookup.search(point);
+    check(!std::memcmp(cached.lines,formatted.lines,sizeof(cached.lines)) && lookup.wordBookCacheStats().hits==1,
+          "Wordbook cache returns the final formatted rows without re-expansion");
+    manifest(1,ini.substr(0,ja_end)+"display_line1=%0\ndisplay_line2=%A\n"+ini.substr(ja_end));
+    request.action=DatasetAction::Apply;std::strcpy(request.language,"ja");
+    check(catalog.read(request,UiLanguage::Japanese).error==DatasetError::Metadata &&
+          !std::memcmp(lookup.search(point).lines,formatted.lines,sizeof(formatted.lines)),
+          "malformed candidate format cannot replace a running formatted cache");
     fs::remove(dir/"dataset.ini");lookup.close();
     check(lookup.prepare().state==PlaceState::DatasetMissing,"reopen cannot fall back to legacy extension detection");
     manifest(1,ini);std::strcpy(request.language,"ja");

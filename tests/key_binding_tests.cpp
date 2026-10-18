@@ -16,6 +16,15 @@ void testKeyBindings() {
               mapPhysicalKey(',', fn) == UiKey::Left && mapPhysicalKey('/', fn) == UiKey::Right,
               "physical punctuation navigation is independent of Fn");
     }
+    for (bool fn : {false, true}) {
+        check(mapLicenseKey(',', fn, true) == UiKey::Left && mapLicenseKey('.', fn, true) == UiKey::Right,
+              "printed angle bracket keys jump software notices with or without Fn");
+        check(mapLicenseKey('<', fn, false) == UiKey::Left && mapLicenseKey('>', fn, false) == UiKey::Right,
+              "literal angle brackets map to software navigation");
+        check(mapLicenseKey('.', fn, false) == UiKey::Down && mapLicenseKey(';', fn, true) == UiKey::Up &&
+              mapLicenseKey('/', fn, false) == UiKey::Right,
+              "license aliases retain ordinary directional scrolling");
+    }
     check(mapPhysicalKey('1', false) == UiKey::OpenGpsLogger && mapPhysicalKey('1', true) == UiKey::F1,
           "plain 1 opens the logger; only Fn+1 pauses logging");
     check(mapPhysicalKey('`', false) == UiKey::Other && mapPhysicalKey('`', true) == UiKey::Escape,

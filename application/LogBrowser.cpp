@@ -88,7 +88,7 @@ void Application::processBrowser() {
         cancel.request_id=browse_waiting_; cancel.payload.log_read.token=browse_waiting_;
         if(sendSpeculative(storage_.inbox(),cancel)==SpeculativeResult::Queued) browse_cancel_=false;
     }
-    if(!browse_need_ || browse_waiting_ || !isLogBrowser(screen_) || mode_!=DisplayMode::View ||
+    if(!browse_need_ || browse_waiting_ || (!isLogBrowser(screen_) && !usbSelecting()) || mode_!=DisplayMode::View ||
        static_cast<int32_t>(taskTimeMs()-browse_retry_at_)<0) return;
     auto read=browse_request_;
     if(++browse_token_==0) ++browse_token_;
@@ -113,7 +113,7 @@ void Application::completeBrowser(const LogReadReply& reply) {
     if(reply.request.token!=browse_waiting_) return;
     const bool transitioning=browse_cancel_;
     browse_waiting_=0; browse_cancel_=false;
-    if(transitioning || reply.request.screen_generation!=generation_ || !isLogBrowser(screen_)) return;
+    if(transitioning || reply.request.screen_generation!=generation_ || (!isLogBrowser(screen_) && !usbSelecting())) return;
     auto& view=data_.browse;
     if(reply.request.kind==LogReadKind::Delete && screen_==ScreenId::Logs) {
         view.deleting=false; view.error=reply.error;
@@ -123,14 +123,16 @@ void Application::completeBrowser(const LogReadReply& reply) {
             std::snprintf(browse_request_.anchor,sizeof(browse_request_.anchor),"%s",view.names[0]);
             view.loading=browse_need_=true;
         } else view.loading=false;
-    } else if(reply.request.kind==LogReadKind::List && screen_==ScreenId::Logs) {
+    } else if(reply.request.kind==LogReadKind::List && (screen_==ScreenId::Logs || usbSelecting())) {
         if(reply.error==LogReadError::None && !reply.count && reply.request.direction==LogListDirection::FromAnchor) {
             if(reply.has_newer) {
                 browse_request_=reply.request; browse_request_.direction=LogListDirection::Newer; browse_need_=true;
                 return;
             }
         } else if(reply.error==LogReadError::None && !reply.count && reply.request.direction!=LogListDirection::Newest) {
-            browse_request_={}; browse_request_.kind=LogReadKind::List; browse_need_=true; return;
+            browse_request_={}; browse_request_.kind=LogReadKind::List;
+            if(usbSelecting())browse_request_.count=4;
+            browse_need_=true; return;
         }
         if(reply.request.direction==LogListDirection::Newest) view.page=0;
         else if(reply.request.direction==LogListDirection::Older) ++view.page;

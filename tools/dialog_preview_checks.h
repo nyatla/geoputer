@@ -14,7 +14,8 @@ inline void renderAndCheckDialog(geoputer::UiRenderer& renderer, geoputer::UiMod
     const auto original = display.pixels;
     renderer.draw(model);
     int top = 38, bottom = 102;
-    if (model.dialog().kind() == DialogKind::FormatSd || model.dialog().kind() == DialogKind::ResetSettings) {
+    if (model.dialog().kind() == DialogKind::FormatSd || model.dialog().kind() == DialogKind::ResetSettings ||
+        model.dialog().kind() == DialogKind::EnterUsbMode || model.dialog().kind() == DialogKind::ExitUsbMode) {
         top = 34; bottom = 106;
     } else if (model.dialog().kind() == DialogKind::DeleteLog &&
                std::strlen(model.data().browse.names[model.snapshot().selected_setting]) > 27) {

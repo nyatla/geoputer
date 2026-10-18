@@ -105,16 +105,23 @@ DatasetMetadata readDatasetMetadata(const std::string& directory,UiLanguage ui,c
                 if(bit && (common&bit)) return fail();
                 common|=bit;
             } else {
-                unsigned bit=key=="title"?1:key=="description"?2:key=="wordbook"?4:0;
+                unsigned bit=key=="title"?1:key=="description"?2:key=="wordbook"?4:
+                    key=="display_line1"?8:key=="display_line2"?16:0;
                 if(!pass) {
                     if(bit && (fields&bit)) return fail();
                     fields|=bit;
                     if((bit==1 && value.empty()) || (bit==4 && !filename(value,".giswordbook"))) return fail();
+                    if ((bit == 8 || bit == 16) && !validPlaceFormat(value)) return fail();
                 } else {
                     if(key=="wordbook" && !filename(value,".giswordbook")) return fail();
                     if(section==display_language && key=="title") result.title=value;
                     if(section==display_language && key=="description") result.description=value;
                     if(section==result.language && key=="wordbook") result.wordbook=value;
+                    if(section==result.language && (key=="display_line1" || key=="display_line2")) {
+                        if (!validPlaceFormat(value)) return fail();
+                        result.display.specified = true;
+                        result.display.lines[key=="display_line1"?0:1] = value;
+                    }
                 }
             }
         }

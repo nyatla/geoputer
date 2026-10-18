@@ -56,6 +56,7 @@ bool PlaceLookup::describe(DatasetDetail& result) const {
 void PlaceLookup::close() {
     const bool had_reader = wordbook_ || map_;
     wordbook_cache_.clear();
+    display_ = {};
     wordbook_.reset(); map_.reset();
     dataset_ = {};
     if (had_reader && observer_) observer_->cacheState(RgCacheState::Unprepared, true);
@@ -75,6 +76,7 @@ PlaceState PlaceLookup::open() {
         if (metadata.error != DatasetError::None)
             return metadata.error == DatasetError::Missing ? PlaceState::DatasetMissing : PlaceState::DataError;
         language_ = metadata.language;
+        display_ = metadata.display;
         mapPath = directory_ + "/" + metadata.map;
         wordbookPath = directory_ + "/" + metadata.wordbook;
         SdAccessScope access(observer_);
@@ -187,7 +189,7 @@ PlaceResult PlaceLookup::search(const PlaceRequest& request) {
         result.region_code = code;
         try {
             ElapsedTime elapsed(timing_.text_us);
-            formatPlaceLines(components, result.lines);
+            formatPlaceLines(components, result.lines, display_);
             wordbook_cache_.remember(static_cast<uint32_t>(code), result.lines);
         } catch (const std::bad_alloc&) {
             throw;

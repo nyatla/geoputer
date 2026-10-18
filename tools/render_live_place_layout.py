@@ -21,6 +21,7 @@ SCENE = r'''
 #include "task/ui/UiRenderer.h"
 #include "task/ui/PlacePresentation.h"
 #include "task/ui/Shinonome.h"
+#include "task/storage/galuchat/TextEncoding.h"
 #include <stdexcept>
 #include <limits>
 using namespace geoputer;
@@ -64,9 +65,13 @@ int main(int argc, char** argv) {
     data.place_state = unprepared ? PlaceState::Searching : PlaceState::Ready;
     if (!unprepared) {
         PlaceResult place{}; place.request.fix=data.gps.fix; place.state=PlaceState::Ready;
-        std::strcpy(place.lines[0],"千葉県"); std::strcpy(place.lines[1],"習志野市");
-        if (std::strcmp(mode,"n03")) std::strcpy(place.lines[2],"鷺沼2丁目1番1号");
-        if (!std::strcmp(mode,"long-address")) std::strcpy(place.lines[1],"あいうえおかきくけこさしすせ");
+        std::vector<std::string> parts{"千葉県","","習志野市","","鷺沼","2丁目1番1号"};
+        if (!std::strcmp(mode,"n03")) parts={"千葉県","","","習志野市",""};
+        if (!std::strcmp(mode,"long-address")) parts[2]="あいうえおかきくけこさしすせ";
+        if (!std::strcmp(mode,"space-width")) parts={"日 日"};
+        if (!std::strcmp(mode,"space-boundary")) parts={"日日日日日日日日日日日日日日 "};
+        if (!std::strcmp(mode,"empty-address")) formatPlaceLines(parts,place.lines,PlaceDisplayFormat{{"",""},true});
+        else formatPlaceLines(parts,place.lines);
         completePlacePresentation(data,place);
     }
     model.setScreen({ScreenId::LivePlace,DisplayMode::View,1,data,0,ActionResult::None});
@@ -84,6 +89,18 @@ int main(int argc, char** argv) {
             throw std::runtime_error(error);
         }
     };
+    if (PixelFont::width("日 日",TextRole::Place)!=40 || PixelFont::width("A A",TextRole::Place)!=40 ||
+        PixelFont::width("日　日",TextRole::Place)!=48 || PixelFont::width("A A",TextRole::UiLarge)!=48)
+        throw std::runtime_error("place space width must be eight; other 16-dot roles and full-width spaces stay unchanged");
+    if (!std::strcmp(mode,"space-width")) {
+        const auto* day=shinonomeGlyph(U'日');
+        for(int y=0;y<16;++y)for(int x=0;x<16;++x)
+            check_pixel(28+x,20+y,day[y] & (0x8000u>>x)?TFT_WHITE:TFT_BLACK);
+        for(int y=20;y<36;++y)for(int x=20;x<28;++x)check_pixel(x,y,TFT_BLACK);
+    }
+    if (!std::strcmp(mode,"empty-address"))
+        for(int y=20;y<56;++y)for(int x=4;x<236;++x)check_pixel(x,y,TFT_BLACK);
+    for(int y=20;y<56;++y)for(int x=236;x<240;++x)check_pixel(x,y,TFT_BLACK);
     // These independent region checks cover all scenes, including long numbers.
     for (int y=60;y<=106;++y) check_pixel(120,y,TFT_WHITE);
     for (int x=0;x<240;++x) { check_pixel(x,16,TFT_WHITE); check_pixel(x,60,TFT_WHITE); check_pixel(x,106,TFT_WHITE); check_pixel(x,120,TFT_WHITE); }
@@ -145,15 +162,17 @@ def main():
             "-I", str(M5GFX / "Fonts"), str(work / "scene.cpp"),
             str(ROOT / "application/task/ui/PixelFont.cpp"),
             str(ROOT / "application/task/ui/UiRenderer.cpp"),
+            str(ROOT / "application/task/ui/UsbRenderer.cpp"),
             str(ROOT / "application/task/ui/UiModel.cpp"),
             str(ROOT / "application/task/ui/LicenseText.cpp"),
             str(ROOT / "application/task/ui/SettingsText.cpp"),
             str(ROOT / "application/Settings.cpp"),
+            str(ROOT / "application/task/storage/galuchat/TextEncoding.cpp"),
             str(ROOT / "application/task/ui/Shinonome.cpp"),
             "-o", str(executable),
         ], check=True, timeout=180)
         image_modes = ("rec", "pause", "sd-error", "gps-error", "reload", "n03", "sd-write", "sd-read", "dictionary-read", "unprepared")
-        verification_modes = ("speed-long", "speed-metres", "speed-integer", "full-battery", "bounds", "missing", "heading-wrap", "overflow", "zero", "long-address")
+        verification_modes = ("speed-long", "speed-metres", "speed-integer", "full-battery", "bounds", "missing", "heading-wrap", "overflow", "zero", "long-address", "space-width", "space-boundary", "empty-address")
         for mode in image_modes + verification_modes:
             ppm = work / f"{mode}.ppm"
             with ppm.open("wb") as output:

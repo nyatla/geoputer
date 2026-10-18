@@ -21,6 +21,8 @@ void testWordBookCache();
 void testKeyBindings();
 void testSettingsLanguage();
 void testDialogs();
+void testUsbMode();
+void testExport();
 
 static void check(bool value, const char* detail) {
     if (!value) throw std::runtime_error(detail);
@@ -288,6 +290,8 @@ int main() {
         testSettings();
         testSettingsLanguage();
         testDialogs();
+        testUsbMode();
+        testExport();
         testPlace();
         testWordBookCache();
         testKeyBindings();

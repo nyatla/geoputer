@@ -6,9 +6,14 @@
 
 namespace geoputer {
 
+static bool switchingMode(const UiData& data) {
+    return data.storage.busy && (data.storage.operation == StorageOperation::EnterUsbMode ||
+                                 data.storage.operation == StorageOperation::ExitUsbMode);
+}
+
 OperationStatus UiModel::setScreen(const SetUiScreen& command) {
     if (command.screen != ScreenId::LivePlace && command.screen != ScreenId::Settings && command.screen != ScreenId::Boot &&
-        command.screen != ScreenId::GpsLogger && !isLogBrowser(command.screen)) {
+        command.screen != ScreenId::GpsLogger && command.screen != ScreenId::UsbStorage && !isLogBrowser(command.screen)) {
         return OperationStatus::InvalidRequest;
     }
     if (command.generation <= generation_) return OperationStatus::StaleContent;
@@ -22,6 +27,7 @@ OperationStatus UiModel::setScreen(const SetUiScreen& command) {
     screen_ = command.screen;
     mode_ = command.mode;
     generation_ = command.generation;
+    usb_page_=usb_return_page_=UsbPage::Menu;usb_file_=0;
     copyData(command.data);
     selection_ = command.screen==ScreenId::Logs ? command.data.browse.selected : 0;
     page_ = SettingsPage::Root;
@@ -56,6 +62,7 @@ void UiModel::copyData(const UiData& data) {
     }
     const auto old_browse=data_.browse.revision;
     const auto old_dataset_revision=data_.datasets.revision;
+    const auto old_export=data_.storage.export_job.phase;
     data_ = data;
     // Activity is global; an older job snapshot cannot roll it back.
     if (newerRevision(previous_sd.revision, data_.storage.sd.revision)) data_.storage.sd = previous_sd;
@@ -63,6 +70,25 @@ void UiModel::copyData(const UiData& data) {
     for (auto& line : data_.place) line[sizeof(line) - 1] = '\0';
     for(auto& name:data_.browse.names) name[LogNameBytes-1]='\0';
     data_.browse.name[LogNameBytes-1]='\0';
+    data_.storage.export_job.name[LogNameBytes-1]='\0';
+    if(screen_==ScreenId::UsbStorage) {
+        const auto phase=data_.storage.export_job.phase;
+        if(phase!=old_export) {
+            dialog_.close();
+            switch(phase) {
+                case ExportPhase::Idle:usb_page_=UsbPage::Menu;selection_=0;break;
+                case ExportPhase::WaitEject:usb_page_=UsbPage::WaitEject;break;
+                case ExportPhase::Selecting:usb_page_=UsbPage::Files;selection_=data_.browse.selected;break;
+                case ExportPhase::Running:usb_page_=UsbPage::Progress;break;
+                case ExportPhase::Complete:usb_page_=UsbPage::Complete;break;
+                case ExportPhase::Failed:usb_page_=UsbPage::Error;break;
+                default:usb_page_=UsbPage::Busy;break;
+            }
+        }
+        if(phase==ExportPhase::Selecting && !data_.browse.loading && old_browse!=data_.browse.revision) {
+            usb_page_=UsbPage::Files;selection_=data_.browse.selected;
+        }
+    }
     if(screen_==ScreenId::Logs && !data_.browse.loading && data_.browse.revision!=old_browse) {
         selection_=data_.browse.selected;
         dialog_.close(); // A refreshed list invalidates the previously shown target.
@@ -82,12 +108,14 @@ void UiModel::copyData(const UiData& data) {
     }
     if (dialog_.kind() == DialogKind::DeleteLog)
         dialog_.setActionEnabled(selection_ < data_.browse.count && !(data_.browse.active_mask & (1u << selection_)));
+    if (dialog_.kind() == DialogKind::EnterUsbMode) dialog_.setActionEnabled(usbEntryAllowed(data_));
     data_.message[sizeof(data_.message) - 1] = '\0';
 }
 
 void UiModel::acknowledge(uint32_t action_id, ActionResult result) {
     if (action_.kind != ActionKind::None && action_id == action_.action_id &&
         result != ActionResult::None) {
+        if(result==ActionResult::Rejected && action_.kind==ActionKind::UsbExport)usb_page_=usb_return_page_;
         action_ = {};
     }
 }
@@ -100,7 +128,7 @@ void UiModel::changed() {
 
 void UiModel::keyPressed(UiKey key, uint32_t now_ms) {
     last_input_ms_ = now_ms;
-    if (action_.kind != ActionKind::None || generation_ == 0) return;
+    if (action_.kind != ActionKind::None || generation_ == 0 || switchingMode(data_)) return;
     if (screen_ == ScreenId::Boot) {
         if (data_.boot.complete && !data_.boot.fatal_dataset && key == UiKey::Enter) action(ActionKind::ChangeScreen, ScreenId::LivePlace);
         return;
@@ -114,10 +142,15 @@ void UiModel::keyPressed(UiKey key, uint32_t now_ms) {
         const auto kind = dialog_.kind();
         if (kind == DialogKind::DeleteLog)
             dialog_.setActionEnabled(selection_ < data_.browse.count && !(data_.browse.active_mask & (1u << selection_)));
+        if (kind == DialogKind::EnterUsbMode) dialog_.setActionEnabled(usbEntryAllowed(data_));
         const auto result = dialog_.keyPressed(key);
         if (result == DialogInput::Accepted) acceptDialog(kind);
         else if (result != DialogInput::Ignored) changed();
         return; // A modal owns all keys, including screen shortcuts.
+    }
+    if (screen_ == ScreenId::UsbStorage) {
+        usbKey(key);
+        return;
     }
     if (screen_ == ScreenId::LivePlace) {
         if (key == UiKey::OpenGpsLogger) action(ActionKind::ChangeScreen, ScreenId::GpsLogger);
@@ -246,6 +279,12 @@ void UiModel::keyPressed(UiKey key, uint32_t now_ms) {
         }
         return;
     }
+    if (page_ == SettingsPage::About) {
+        if (key == UiKey::Escape || key == UiKey::Enter) {
+            page_ = SettingsPage::Root; selection_ = settingsRootIndex(SettingsRootItem::About); changed();
+        }
+        return;
+    }
     if (key == UiKey::Escape) {
         if (page_ == SettingsPage::Root) action(ActionKind::ChangeScreen, ScreenId::LivePlace);
         else { page_ = SettingsPage::Root; selection_ = 0; changed(); }
@@ -254,15 +293,37 @@ void UiModel::keyPressed(UiKey key, uint32_t now_ms) {
     if (page_ == SettingsPage::Licenses) {
         if (key == UiKey::Up && license_offset_ > 0) { --license_offset_; changed(); }
         if (key == UiKey::Down && license_offset_ + SettingsLayout::LicenseRows < licenseLineCount()) { ++license_offset_; changed(); }
+        if (key == UiKey::Right) {
+            for (size_t section = 0; section < licenseSectionCount(); ++section) {
+                const auto start = licenseSectionStart(section);
+                if (start > license_offset_) { license_offset_ = start; changed(); break; }
+            }
+        } else if (key == UiKey::Left && licenseSectionCount()) {
+            size_t current = 0;
+            while (current + 1 < licenseSectionCount() && licenseSectionStart(current + 1) <= license_offset_) ++current;
+            const auto target = license_offset_ < licenseSectionStart(0) ? 0 : licenseSectionStart(current ? current - 1 : 0);
+            if (target != license_offset_) { license_offset_ = target; changed(); }
+        }
         return;
     }
-    const unsigned count = page_ == SettingsPage::Operation ? SettingCount : page_ == SettingsPage::Reset ? 1 : 4;
+    const unsigned count = page_ == SettingsPage::Root ? SettingsRootCount : page_ == SettingsPage::Operation ? OperationRowCount : page_ == SettingsPage::Reset ? 1 : 4;
     if (key == UiKey::Up && selection_ > 0) { --selection_; changed(); }
     if (key == UiKey::Down && static_cast<unsigned>(selection_) + 1 < count) { ++selection_; changed(); }
     if (key != UiKey::Enter) return;
     if (page_ == SettingsPage::Root) {
-        page_ = static_cast<SettingsPage>(selection_ + 1);
-        selection_ = 0; license_offset_ = 0; changed();
+        if (selection_ == SettingsModeRow) dialog_.open(DialogKind::EnterUsbMode, usbEntryAllowed(data_));
+        else {
+            switch (static_cast<SettingsRootItem>(selection_)) {
+                case SettingsRootItem::Operation: page_ = SettingsPage::Operation; break;
+                case SettingsRootItem::Storage: page_ = SettingsPage::Storage; break;
+                case SettingsRootItem::Reset: page_ = SettingsPage::Reset; break;
+                case SettingsRootItem::Licenses: page_ = SettingsPage::Licenses; break;
+                case SettingsRootItem::About: page_ = SettingsPage::About; break;
+                default: return;
+            }
+            selection_ = 0; license_offset_ = 0;
+        }
+        changed();
     } else if (page_ == SettingsPage::Operation && selection_ == static_cast<unsigned>(SettingId::Dataset)) {
         page_ = SettingsPage::DatasetList; selection_ = 0;
         datasetAction(DatasetAction::Open);
@@ -281,6 +342,47 @@ void UiModel::keyPressed(UiKey key, uint32_t now_ms) {
     }
 }
 
+void UiModel::usbAction(UsbAction kind) {
+    usb_return_page_=usb_page_;
+    action(ActionKind::UsbExport);action_.usb_action=kind;
+    if(kind==UsbAction::Start) {
+        action_.browse_index=usb_file_;action_.browse_revision=data_.browse.revision;
+        action_.export_format=static_cast<ExportFormat>(selection_);
+    }
+    if(kind!=UsbAction::Older && kind!=UsbAction::Newer)usb_page_=UsbPage::Busy;
+}
+void UiModel::usbKey(UiKey key) {
+    if(usb_page_==UsbPage::Menu) {
+        if(key==UiKey::Up && selection_) {selection_=0;changed();}
+        else if(key==UiKey::Down && !selection_) {selection_=1;changed();}
+        else if(key==UiKey::Escape || (key==UiKey::Enter && selection_)) {
+            dialog_.open(DialogKind::ExitUsbMode);changed();
+        } else if(key==UiKey::Enter && data_.storage.usb.ready)usbAction(UsbAction::Begin);
+    } else if(usb_page_==UsbPage::WaitEject) {
+        if(key==UiKey::Escape || key==UiKey::Enter)usbAction(UsbAction::Publish);
+    } else if(usb_page_==UsbPage::Files) {
+        const auto& view=data_.browse;
+        if(key==UiKey::Escape) {usbAction(UsbAction::Publish);return;}
+        if(view.loading)return;
+        if(key==UiKey::Up) {
+            if(selection_) {--selection_;changed();}
+            else if(view.has_newer)usbAction(UsbAction::Newer);
+        } else if(key==UiKey::Down) {
+            if(selection_+1u<view.count) {++selection_;changed();}
+            else if(view.has_older)usbAction(UsbAction::Older);
+        } else if(key==UiKey::Enter && selection_<view.count && view.error==LogReadError::None) {
+            usb_file_=selection_;selection_=0;usb_page_=UsbPage::Format;changed();
+        }
+    } else if(usb_page_==UsbPage::Format) {
+        if(key==UiKey::Escape) {usb_page_=UsbPage::Files;selection_=usb_file_;changed();}
+        else if(key==UiKey::Up && selection_) {--selection_;changed();}
+        else if(key==UiKey::Down && selection_<2) {++selection_;changed();}
+        else if(key==UiKey::Enter)usbAction(UsbAction::Start);
+    } else if(usb_page_==UsbPage::Complete || usb_page_==UsbPage::Error) {
+        if(key==UiKey::Enter || key==UiKey::Escape)usbAction(UsbAction::Publish);
+    }
+}
+
 void UiModel::acceptDialog(DialogKind kind) {
     switch (kind) {
         case DialogKind::PauseLog: case DialogKind::StopLog:
@@ -295,6 +397,10 @@ void UiModel::acceptDialog(DialogKind kind) {
             break;
         case DialogKind::ResetSettings:
             action(ActionKind::ResetSettings); action_.settings = defaultSettings();
+            break;
+        case DialogKind::EnterUsbMode: case DialogKind::ExitUsbMode:
+            action(ActionKind::Storage);
+            action_.storage_operation = kind == DialogKind::EnterUsbMode ? StorageOperation::EnterUsbMode : StorageOperation::ExitUsbMode;
             break;
         case DialogKind::None: return;
     }
@@ -326,7 +432,7 @@ void UiModel::tick(uint32_t now_ms) {
     const bool was_lit = sdAccessLit();
     last_tick_ms_ = now_ms;
     if (sdAccessLit() != was_lit) redraw_ = true;
-    if (screen_ == ScreenId::Boot || datasetWarning() || data_.datasets.applying ||
+    if (screen_ == ScreenId::Boot || screen_ == ScreenId::UsbStorage || switchingMode(data_) || datasetWarning() || data_.datasets.applying ||
         (screen_==ScreenId::Logs && data_.browse.deleting)) return;
     if (data_.message[0] && now_ms - data_.message_at_ms >= 3000u) {
         data_.message[0] = '\0';

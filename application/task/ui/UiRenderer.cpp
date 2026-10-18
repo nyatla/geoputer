@@ -1,5 +1,6 @@
 #include "LogPresentation.h"
 #include "UiRenderer.h"
+#include "../../BuildInfo.h"
 #include "LicenseText.h"
 #include "SettingsLayout.h"
 #include "SettingsText.h"
@@ -95,6 +96,17 @@ void UiRenderer::drawDialog(const UiModel& model, UiLanguage language) {
             detail = settingsLabel(language, SettingsLabel::KeepSd);
             accept = settingsLabel(language, SettingsLabel::Confirm);
             break;
+        case DialogKind::EnterUsbMode:
+            title = dialog.actionEnabled() ? (japanese ? "USBモードへ？" : "Switch to USB mode?") :
+                (japanese ? "先に記録を停止" : "Stop logger first");
+            detail = japanese ? "再起動して切替" : "Restart to switch";
+            accept = japanese ? "切替" : "Switch";
+            break;
+        case DialogKind::ExitUsbMode:
+            title = japanese ? "USBモードを終了？" : "Exit USB mode?";
+            detail = japanese ? "PCの保存完了後に終了" : "Finish PC saves first";
+            accept = japanese ? "終了" : "Exit";
+            break;
         case DialogKind::None: return;
     }
     // Details are either a 16-dot scope message, or an ASCII filename wrapped
@@ -147,6 +159,12 @@ void UiRenderer::draw(const UiModel& model) {
     frame_.drawFastHLine(0, live ? 16 : SettingsLayout::HeaderBottom, 240, live ? TFT_WHITE : TFT_DARKGREY);
     frame_.drawFastHLine(0, live ? LivePlaceLayout::FooterTop : 118, 240, live ? TFT_WHITE : TFT_DARKGREY);
     char line[64];
+    if (content.screen == ScreenId::UsbStorage) {
+        drawUsb(model);
+        frame_.setDimmed(false);
+        if (model.confirming()) drawDialog(model,language);
+        frame_.pushSprite(0,0); return;
+    }
     if (content.screen == ScreenId::Boot && data.boot.fatal_dataset) {
         text(4,8,"STARTUP ERROR",TFT_RED);
         if (japanese) {
@@ -207,7 +225,7 @@ void UiRenderer::draw(const UiModel& model) {
             std::snprintf(line, sizeof(line), "%d%%", battery.percent);
         } else std::snprintf(line, sizeof(line), "--%%");
         text(204, 4, line, battery.percent >= 0 && battery.percent <= 20 ? battery_fill : TFT_WHITE);
-        if (hasPlace(data)) {
+        if (hasPlace(data) || data.place_state == PlaceState::Ready) {
             for (unsigned i = 0; i < 2; ++i)
                 font_.draw(frame_, LivePlaceLayout::AddressX, LivePlaceLayout::AddressY + i * LivePlaceLayout::AddressStep,
                            data.place[i], TextRole::Place, TFT_WHITE);
@@ -344,12 +362,14 @@ void UiRenderer::draw(const UiModel& model) {
                             content.page == SettingsPage::Root ? "SETTINGS" :
                             content.page == SettingsPage::Operation ? "OPERATION" :
                             content.page == SettingsPage::Storage ? "STORAGE" :
-                            content.page == SettingsPage::Reset ? "RESET" : "LICENSES";
+                            content.page == SettingsPage::Reset ? "RESET" :
+                            content.page == SettingsPage::About ? "ABOUT" : "LICENSES";
         auto label = [&](SettingsLabel id) { return settingsLabel(language, id); };
         text(4, 7, title, TFT_LIGHTGREY);
         const char* gps_state = data.gps.reception == GpsReception::Waiting ? "WAIT" : gpsReceptionName(data.gps.reception);
         std::snprintf(line, sizeof(line), "GPS:%s", gps_state);
-        text(156, 7, line, data.gps.fix.valid ? TFT_GREEN : TFT_LIGHTGREY);
+        if (content.page == SettingsPage::Licenses) text(140, 7, "< > SOFTWARE", TFT_LIGHTGREY);
+        else if (content.page != SettingsPage::About) text(156, 7, line, data.gps.fix.valid ? TFT_GREEN : TFT_LIGHTGREY);
         text(4, 124, model.confirming() || model.editing() ? "ESC/DEL CANCEL" : "ESC/DEL BACK");
         if (content.page == SettingsPage::DatasetList || content.page == SettingsPage::DatasetDetail) {
             const auto& view = data.datasets;
@@ -403,15 +423,24 @@ void UiRenderer::draw(const UiModel& model) {
             std::snprintf(line, sizeof(line), "%s %.1fG", label(SettingsLabel::Free), data.storage.free_bytes / GiB); item(4, 87, line);
             text(148, 124, "ENTER BACK");
         } else if (content.page == SettingsPage::Root) {
-            for (unsigned row = 0; row < 4; ++row) {
-                const int y = SettingsLayout::FirstRowY + row * SettingsLayout::RowStep;
+            const unsigned first = SettingsLayout::firstVisible(content.selected_setting, SettingsRootCount);
+            for (unsigned visible = 0; visible < SettingsLayout::VisibleRows && first + visible < SettingsRootCount; ++visible) {
+                const unsigned row = first + visible;
+                const int y = SettingsLayout::FirstRowY + visible * SettingsLayout::RowStep;
+                const auto color = row == content.selected_setting ? TFT_CYAN : TFT_WHITE;
                 item(4, y, row == content.selected_setting ? ">" : " ", TFT_CYAN);
-                item(20, y, settingsRootLabel(language, row), row == content.selected_setting ? TFT_CYAN : TFT_WHITE);
+                item(20, y, settingsRootLabel(language, row), color);
+                if (row == SettingsModeRow) {
+                    const char* value = settingsModeValue(language);
+                    font_.draw(frame_, SettingsLayout::ValueRight - PixelFont::width(value, item_role), y, value, item_role, color);
+                }
             }
+            std::snprintf(line, sizeof(line), "%u/%u", content.selected_setting + 1u, SettingsRootCount);
+            text(4, LivePlaceLayout::LogY, line);
             text(148, 124, "ENTER OPEN");
         } else if (content.page == SettingsPage::Operation) {
-            const unsigned first = SettingsLayout::firstVisible(content.selected_setting, SettingCount);
-            for (unsigned visible = 0; visible < SettingsLayout::VisibleRows && first + visible < SettingCount; ++visible) {
+            const unsigned first = SettingsLayout::firstVisible(content.selected_setting, OperationRowCount);
+            for (unsigned visible = 0; visible < SettingsLayout::VisibleRows && first + visible < OperationRowCount; ++visible) {
                 const unsigned row = first + visible;
                 const int y = SettingsLayout::FirstRowY + visible * SettingsLayout::RowStep;
                 const bool selected = row == content.selected_setting;
@@ -423,7 +452,7 @@ void UiRenderer::draw(const UiModel& model) {
                 const auto value_role = row == static_cast<unsigned>(SettingId::Language) ? TextRole::Ascii8x16 : item_role;
                 font_.draw(frame_, SettingsLayout::ValueRight - PixelFont::width(value, value_role), y, value, value_role, color);
             }
-            std::snprintf(line, sizeof(line), "%u/%u", content.selected_setting + 1u, SettingCount);
+            std::snprintf(line, sizeof(line), "%u/%u", content.selected_setting + 1u, OperationRowCount);
             text(4, LivePlaceLayout::LogY, line, TFT_WHITE);
             if (model.editing()) text(164, 124, "ENTER OK");
             else text(148, 124, content.selected_setting == static_cast<unsigned>(SettingId::Dataset) ? "ENTER OPEN" : !settingEditable(content.selected_setting) ? "READ ONLY" : "ENTER EDIT");
@@ -434,6 +463,15 @@ void UiRenderer::draw(const UiModel& model) {
                 item(20, y, settingsStorageLabel(language, row), row == content.selected_setting ? TFT_CYAN : TFT_WHITE);
             }
             text(164, 124, "ENTER OK");
+        } else if (content.page == SettingsPage::About) {
+            font_.draw(frame_, 4, 27, ProductName, TextRole::Ascii8x16, TFT_WHITE);
+            std::snprintf(line, sizeof(line), "VERSION %s", ApplicationVersion);
+            font_.draw(frame_, 4, 47, line, TextRole::Ascii8x16, TFT_CYAN);
+            std::snprintf(line, sizeof(line), "BUILD %s", BuildDate); text(4, 69, line);
+            std::snprintf(line, sizeof(line), "      %s", BuildTime); text(4, 79, line);
+            std::snprintf(line, sizeof(line), "GIT %s%s", BuildGitRevision, buildGitSuffix());
+            font_.draw(frame_, 4, 97, line, TextRole::Ascii8x16, TFT_LIGHTGREY);
+            text(148, 124, "ENTER BACK");
         } else if (content.page == SettingsPage::Reset) {
             item(4, 27, ">", TFT_CYAN);
             item(20, 27, label(SettingsLabel::ResetAction), TFT_CYAN);
@@ -448,7 +486,7 @@ void UiRenderer::draw(const UiModel& model) {
             std::snprintf(line, sizeof(line), "%lu/%lu", static_cast<unsigned long>(model.licenseOffset() + 1), static_cast<unsigned long>(licenseLineCount()));
             text(136, 124, line, TFT_LIGHTGREY);
         }
-        if (!model.confirming() && content.page != SettingsPage::Licenses && content.page != SettingsPage::DatasetList && content.page != SettingsPage::DatasetDetail) {
+        if (!model.confirming() && content.page != SettingsPage::About && content.page != SettingsPage::Licenses && content.page != SettingsPage::DatasetList && content.page != SettingsPage::DatasetDetail) {
             const bool settings_error = data.storage.settings_state == SettingsState::Failed ||
                                         data.storage.settings_state == SettingsState::Unavailable ||
                                         data.storage.settings_state == SettingsState::Invalid;

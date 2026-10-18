@@ -13,7 +13,7 @@ namespace geoputer {
 class Application {
 public:
     Application() : sync_(results_), ui_(notifications_, results_), gps_(notifications_, results_), storage_(notifications_, results_) {}
-    bool begin();
+    bool begin(bool usb_mode = false);
     void runOnce();
 
 private:
@@ -33,6 +33,10 @@ private:
     [[gnu::noinline]] bool readUiSnapshot(UiSnapshot& content);
     void applyStorage(const StorageSnapshot& state);
     bool operateStorage(const UiAction& action);
+    bool beginUsb();
+    bool operateBootMode(const UiAction& action);
+    bool operateUsbExport(const UiAction& action);
+    bool usbSelecting() const { return usb_mode_ && screen_==ScreenId::UsbStorage && data_.storage.export_job.phase==ExportPhase::Selecting; }
     void message(const char* value);
     void refreshPlace();
     bool canSearchPlace() const;
@@ -66,6 +70,7 @@ private:
     uint32_t last_processed_action_ = 0;
     UiData data_{};
     bool ui_changed_ = false;
+    bool usb_mode_ = false;
     bool ui_data_dirty_ = false;
     DisplayMode mode_ = DisplayMode::View;
     uint32_t storage_operation_id_ = 0;

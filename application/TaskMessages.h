@@ -40,6 +40,8 @@ enum class MessageKind : uint8_t {
     StorageOperationCompleted,
     StorageError,
     DatasetOperation,
+    UsbStorageChanged,
+    UsbExportOperation,
     SyncReturn,
 };
 enum class OperationStatus : uint8_t { Ok, InvalidRequest, StaleContent, Unavailable };
@@ -79,8 +81,10 @@ union StorageRequestPayload {
     LogCommand log;
     LogReadRequest log_read;
     DatasetRequest dataset;
+    ExportRequest export_request;
 };
 union AppNotificationPayload {
+    StorageSnapshot usb_storage;
     UiContentChanged changed;
     GpsSnapshot gps;
     StorageCompletion storage_completion;

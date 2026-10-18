@@ -6,6 +6,8 @@
 #include "log/LogWriter.h"
 #include "log/LogReader.h"
 #include "dataset/DatasetCatalog.h"
+#include "usb/UsbStorage.h"
+#include "export/LogExporter.h"
 #include "../../TaskMessages.h"
 #include "../../utils/Task.h"
 
@@ -17,6 +19,7 @@ public:
         : notifications_(notifications), results_(results), log_writer_("/sd/logs", this), log_reader_("/sd/logs",this) { place_lookup_.setObserver(this); }
     // Runs in the App caller; touches only the shared RAM ring, never SD or task queues.
     LogError tryAppendLog(const LogCommand& command, LogSnapshot& snapshot);
+    void setUsbMode(bool enabled) { usb_mode_ = enabled; } // Before starting the task.
 protected:
     void run() override;
 private:
@@ -29,6 +32,8 @@ private:
     void cacheState(RgCacheState state, bool new_dataset = false) override;
     void flushLog(bool force=false);
     void stepLogRead();
+    void handleUsbExport(const StorageRequest& request, SyncReturn& result);
+    void stepUsbExport();
     void notify();
     void mountCard();
     void closeCard();
@@ -39,6 +44,12 @@ private:
     Queue<AppNotification, 8>& notifications_;
     Queue<ReturnMessage, 1>& results_;
     SettingsStore settings_store_;
+    UsbStorage usb_;
+    LogExporter exporter_;
+    enum class UsbWork : uint8_t { None, Prepare, Convert, PublishMenu, PublishResult };
+    UsbWork usb_work_ = UsbWork::None;
+    bool export_started_ = false;
+    uint32_t export_progress_at_ = 0;
     PlaceLookup place_lookup_;
     LogWriter log_writer_;
     LogReader log_reader_;
@@ -60,6 +71,7 @@ private:
     bool nvs_ready_ = false;
     bool mounted_ = false;
     bool initialized_ = false;
+    bool usb_mode_ = false, usb_dirty_ = false;
     bool has_return_ = false;
     bool has_job_ = false;
     bool load_job_ = false;

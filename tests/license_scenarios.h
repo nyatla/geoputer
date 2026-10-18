@@ -26,11 +26,37 @@ void exerciseLicenses(UiModel& ui, Paint paint) {
     licenseCheck(ui.setScreen(command) == OperationStatus::Ok, "set Settings");
     auto key = [&](UiKey value) { now += 10; ui.keyPressed(value, now); ui.tick(now); };
     auto open = [&]() {
-        for (unsigned i = 0; i < 3; ++i) key(UiKey::Down);
+        for (unsigned i = 0; i < settingsRootIndex(SettingsRootItem::Licenses); ++i) key(UiKey::Down);
         key(UiKey::Enter);
         licenseCheck(ui.snapshot().page == SettingsPage::Licenses && ui.licenseOffset() == 0, "open licenses at the start");
     };
     open();
+    licenseCheck(licenseSectionCount() > 1, "software notices have generated section boundaries");
+    licenseCheck(licenseSectionStart(licenseSectionCount()) == licenseLineCount(), "section index bounds are checked");
+    for (size_t section = 0; section < licenseSectionCount(); ++section) {
+        const auto start = licenseSectionStart(section);
+        licenseCheck(start && start + SettingsLayout::LicenseRows <= licenseLineCount() &&
+                     std::strcmp(licenseLine(start-1), "-----------------------------") == 0 && *licenseLine(start),
+                     "each section begins on its software title and fits at the top");
+        if (section) licenseCheck(licenseSectionStart(section-1) < start, "section starts are strictly ordered");
+        key(UiKey::Right);
+        licenseCheck(ui.licenseOffset() == start && ui.snapshot().action.kind == ActionKind::None,
+                     "Right reaches every software title without issuing an App action");
+        paint(ui);
+    }
+    key(UiKey::Right);
+    licenseCheck(ui.licenseOffset() == licenseSectionStart(licenseSectionCount()-1), "next at final software does not wrap");
+    for (size_t section = licenseSectionCount()-1; section > 0; --section) {
+        key(UiKey::Left);
+        licenseCheck(ui.licenseOffset() == licenseSectionStart(section-1), "Left reaches the previous software title");
+    }
+    key(UiKey::Left);licenseCheck(ui.licenseOffset() == licenseSectionStart(0), "previous at first software stays at its title");
+    key(UiKey::Right);key(UiKey::Down);key(UiKey::Down);key(UiKey::Left);
+    licenseCheck(ui.licenseOffset() == licenseSectionStart(0), "previous from inside a notice skips to the previous software");
+    key(UiKey::Down);key(UiKey::Right);
+    licenseCheck(ui.licenseOffset() == licenseSectionStart(1), "next from inside a notice reaches the next software");
+    while (ui.licenseOffset()) key(UiKey::Up);
+    key(UiKey::Left);licenseCheck(!ui.licenseOffset(), "previous from the introduction stays at the beginning");
     const size_t last = licenseLineCount() - SettingsLayout::LicenseRows;
     UpdateUiContent update{DisplayMode::View, 1, command.data, 0, ActionResult::None};
     for (unsigned pass = 0; pass < 2; ++pass) {
@@ -51,7 +77,7 @@ void exerciseLicenses(UiModel& ui, Paint paint) {
                 --stale.data.revision;
                 licenseCheck(ui.updateContent(stale) == OperationStatus::StaleContent, "reject stale content while reading");
             }
-            for (const auto ignored : {UiKey::Left, UiKey::Right, UiKey::Enter, UiKey::OpenSettings}) key(ignored);
+            for (const auto ignored : {UiKey::Enter, UiKey::OpenSettings}) key(ignored);
             licenseCheck(ui.snapshot().action.kind == ActionKind::None && !ui.editing() && !ui.confirming(),
                          "license input cannot issue storage/settings operations");
             ui.notificationSent();  // App consumed the local content-change notice.

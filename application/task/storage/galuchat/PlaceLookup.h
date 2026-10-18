@@ -5,6 +5,7 @@
 #include <galuchat/gis_wordbook_reader.hpp>
 #include "CachedMapReader.h"
 #include "WordBookCache.h"
+#include "TextEncoding.h"
 #include "ReadTiming.h"
 #include "../PlaceTypes.h"
 #include "../dataset/DatasetTypes.h"
@@ -32,6 +33,7 @@ private:
     PlaceState open();
     std::string directory_;
     std::string language_;
+    PlaceDisplayFormat display_;
     bool manifest_ = false;
     PlaceReadTiming timing_{}; // Must outlive the Readers that refer to its I/O counters.
     std::unique_ptr<CachedMapReader> map_;
