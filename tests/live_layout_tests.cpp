@@ -7,7 +7,7 @@ namespace {
 void check(bool value,const char* message) { if (!value) throw std::runtime_error(message); }
 }
 void testLiveLayout() {
-    check(speedTextWidth("14.2") == 56 && speedTextWidth("123") == 48 && speedTextWidth("--") == 32,
+    check(speedTextWidth("1.00") == 56 && speedTextWidth("14.2") == 56 && speedTextWidth("123") == 48 && speedTextWidth("--") == 32,
           "three speed digits and a compact decimal fit without reducing digit size");
     GpsSnapshot gps{};
     gps.reception=GpsReception::Fix;
@@ -15,7 +15,7 @@ void testLiveLayout() {
     gps.fix.fields=GpsSpeed|GpsCourse|GpsAltitude|GpsSatellites|GpsHdop;
     gps.fix.speed_kmh=4.2; gps.fix.course_deg=140; gps.fix.altitude_m=12.3; gps.fix.satellites=12;
     auto text=formatLiveGps(gps,{});
-    check(std::strcmp(text.speed,"4.2")==0 && std::strcmp(text.heading,"140°")==0 &&
+    check(std::strcmp(text.speed,"4.20")==0 && std::strcmp(text.heading,"140°")==0 &&
           std::strcmp(text.altitude,"12.3m")==0 && std::strcmp(text.satellites,"12")==0,"live GPS values and units");
     GpsFix displayed={-90,-180,0,true};
     text=formatLiveGps(gps,displayed);
@@ -25,16 +25,17 @@ void testLiveLayout() {
     text=formatLiveGps(gps,{});
     check(std::strcmp(text.speed,"14.2")==0 && std::strcmp(text.altitude,"-12.3m")==0,
           "three speed digits retain their decimal; negative altitude is valid");
-    const struct { float speed; const char* value; const char* unit; } cases[] = {
-        {0.42f,"420","m/h"},{0.9994f,"999","m/h"},{0.9996f,"1.0","km/h"},
-        {1,"1.0","km/h"},{9.96f,"10.0","km/h"},{14.2f,"14.2","km/h"},
-        {99.94f,"99.9","km/h"},{99.96f,"100","km/h"},{100,"100","km/h"},
-        {123.4f,"123","km/h"},{999.4f,"999","km/h"},{999.6f,"OVR","km/h"}
+    const struct { float speed; const char* value; } cases[] = {
+        {0,"0"},{0.42f,"0"},{0.9994f,"0"},{0.9996f,"0"},
+        {1,"1.00"},{1.234f,"1.23"},{4.2f,"4.20"},
+        {9.96f,"9.96"},{9.994f,"9.99"},{9.996f,"10.0"},
+        {10,"10.0"},{14.2f,"14.2"},{99.94f,"99.9"},{99.96f,"100"},
+        {100,"100"},{123.4f,"123"},{999.4f,"999"},{999.6f,"OVR"}
     };
     for (const auto& example:cases) {
         gps.fix.speed_kmh=example.speed; text=formatLiveGps(gps,{});
-        check(std::strcmp(text.speed,example.value)==0 && std::strcmp(text.speed_unit,example.unit)==0,
-              "adaptive m/h and km/h rounding boundaries");
+        check(std::strcmp(text.speed,example.value)==0 && std::strcmp(text.speed_unit,"km/h")==0,
+              "fixed km/h unit, three-digit precision, and rounding boundaries");
         check(speedTextWidth(text.speed)<=56,"every speed stays within its native three-digit viewport");
     }
     gps.fix.speed_kmh=999.94f;
@@ -46,13 +47,16 @@ void testLiveLayout() {
           "speed rounding overflow and heading wrapping stay in their panels");
     gps.fix.speed_kmh=0; gps.fix.course_deg=0; gps.fix.altitude_m=0; gps.fix.satellites=0;
     text=formatLiveGps(gps,{});
-    check(std::strcmp(text.speed,"0")==0 && std::strcmp(text.speed_unit,"m/h")==0 && std::strcmp(text.heading,"0°")==0 && std::strcmp(text.altitude,"0.0m")==0 &&
+    check(std::strcmp(text.speed,"0")==0 && std::strcmp(text.speed_unit,"km/h")==0 && std::strcmp(text.heading,"0°")==0 && std::strcmp(text.altitude,"0.0m")==0 &&
           std::strcmp(text.satellites,"0")==0,"valid zeros must not be mistaken for missing values");
     gps.fix.fields=GpsHdop;
     text=formatLiveGps(gps,{});
     check(std::strcmp(text.speed,"--")==0 && std::strcmp(text.heading,"--°")==0 && std::strcmp(text.altitude,"--")==0 &&
           std::strcmp(text.satellites,"--")==0,"missing optional fields do not reuse old values or HDOP");
     gps.fix.fields=GpsSpeed|GpsCourse|GpsAltitude;
+    gps.fix.speed_kmh=-1;
+    text=formatLiveGps(gps,{});
+    check(std::strcmp(text.speed,"--")==0 && std::strcmp(text.speed_unit,"km/h")==0,"negative speed remains unavailable");
     gps.fix.speed_kmh=NAN; gps.fix.course_deg=-1; gps.fix.altitude_m=INFINITY;
     text=formatLiveGps(gps,{});
     check(std::strcmp(text.speed,"--")==0 && std::strcmp(text.heading,"--°")==0 && std::strcmp(text.altitude,"--")==0,

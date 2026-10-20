@@ -47,6 +47,16 @@ with tempfile.TemporaryDirectory(prefix="geoputer-native-") as directory:
         str(root / "application/task/gps/NmeaParser.cpp"),
         str(root / "application/task/gps/GpsReceiver.cpp"), "-o", str(binary),
     ], check=True, timeout=180)
+    # Exercise the hardware guard with GPIO adapters, independent of USB/GPS mode.
+    guard = Path(directory) / "lora-safety-tests"
+    subprocess.run(['g++', '-std=c++17', '-Wall', '-Wextra', '-Werror', '-pedantic',
+                    '-fsanitize=undefined', '-fno-sanitize-recover=all',
+                    '-I', str(root/'tests/support/lora'), '-I', str(root/'application'),
+                    str(root/'tests/lora_safety_tests.cpp'), str(root/'application/hardware/LoraSafety.cpp'),
+                    '-o', str(guard)], check=True, timeout=30)
+    subprocess.run([str(guard)], check=True, timeout=5)
+    setup_body = (root/'application/main.cpp').read_text().split('void setup() {', 1)[1].lstrip()
+    assert setup_body.startswith('geoputer::holdUnusedLoraInReset();'), "Guard must precede mode selection and peripheral initialization"
     export_folder=Path(directory)/'export-fixtures'
     subprocess.run([str(binary)], check=True, timeout=15,
                    env=dict(os.environ,GEOPUTER_EXPORT_FIXTURES=str(export_folder)))

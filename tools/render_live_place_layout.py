@@ -19,6 +19,7 @@ SCENE = r'''
 #include <cstdio>
 #include <cstring>
 #include "task/ui/UiRenderer.h"
+#include "task/ui/LivePlaceLayout.h"
 #include "task/ui/PlacePresentation.h"
 #include "task/ui/Shinonome.h"
 #include "task/storage/galuchat/TextEncoding.h"
@@ -52,8 +53,13 @@ int main(int argc, char** argv) {
     data.gps.fix = {35.681641,140.027194,19921000,true}; // JST 14:32:01.
     data.gps.fix.fields = GpsSpeed|GpsCourse|GpsAltitude|GpsSatellites|GpsHdop;
     data.gps.fix.speed_kmh = long_speed ? 99.9f : 4.2f;
-    if (!std::strcmp(mode,"speed-metres")) data.gps.fix.speed_kmh=0.42f;
+    if (!std::strcmp(mode,"speed-sub-one")) data.gps.fix.speed_kmh=0.42f;
     if (!std::strcmp(mode,"speed-integer")) data.gps.fix.speed_kmh=999;
+    if (!std::strcmp(mode,"speed-one")) data.gps.fix.speed_kmh=1;
+    if (!std::strcmp(mode,"speed-ten")) data.gps.fix.speed_kmh=10;
+    if (!std::strcmp(mode,"speed-hundred")) data.gps.fix.speed_kmh=100;
+    if (!std::strcmp(mode,"speed-round-ten")) data.gps.fix.speed_kmh=9.996f;
+    if (!std::strcmp(mode,"speed-round-hundred")) data.gps.fix.speed_kmh=99.96f;
     data.gps.fix.course_deg = 140; data.gps.fix.altitude_m = 12.3;
     data.gps.fix.satellites = 12; data.gps.fix.hdop = 0.8;
     if (missing) data.gps.fix.fields = 0;
@@ -122,8 +128,16 @@ int main(int argc, char** argv) {
     check_ascii(84,124,"1",TFT_CYAN); check_ascii(92,124,":GPS",TFT_LIGHTGREY);
     check_ascii(132,124,"2",TFT_CYAN); check_ascii(140,124,":SET",TFT_LIGHTGREY);
     check_ascii(180,124,"3",TFT_CYAN); check_ascii(188,124,":LOG",TFT_LIGHTGREY);
-    if (!std::strcmp(mode,"speed-metres")) check_ascii(84,73,"m/h");
-    if (long_speed || !std::strcmp(mode,"speed-integer")) check_ascii(84,73,"km/h");
+    check_ascii(84,73,"km/h");
+    const auto speed_detail=formatLiveGps(model.data().gps,model.data().place_fix);
+    if(speedTextWidth(speed_detail.speed)>56) throw std::runtime_error("speed exceeded its three-digit viewport");
+    const int speed_left=84-speedTextWidth(speed_detail.speed);
+    if(speed_left<28) throw std::runtime_error("speed overlaps the SPD label");
+    // All digits use native 16-dot glyphs; only the decimal point has an 8-dot advance.
+    if(!std::strcmp(mode,"speed-one") && std::strcmp(speed_detail.speed,"1.00")) throw std::runtime_error("one km/h precision");
+    if(!std::strcmp(mode,"speed-ten") && std::strcmp(speed_detail.speed,"10.0")) throw std::runtime_error("ten km/h precision");
+    if(!std::strcmp(mode,"speed-hundred") && std::strcmp(speed_detail.speed,"100")) throw std::runtime_error("hundred km/h precision");
+    if(!std::strcmp(mode,"speed-sub-one") && std::strcmp(speed_detail.speed,"0")) throw std::runtime_error("sub-one km/h display");
     if (!std::strcmp(mode,"n03"))
         for(int y=40;y<56;++y) for(int x=4;x<228;++x) check_pixel(x,y,TFT_BLACK);
     if (full_battery)
@@ -172,7 +186,7 @@ def main():
             "-o", str(executable),
         ], check=True, timeout=180)
         image_modes = ("rec", "pause", "sd-error", "gps-error", "reload", "n03", "sd-write", "sd-read", "dictionary-read", "unprepared")
-        verification_modes = ("speed-long", "speed-metres", "speed-integer", "full-battery", "bounds", "missing", "heading-wrap", "overflow", "zero", "long-address", "space-width", "space-boundary", "empty-address")
+        verification_modes = ("speed-long", "speed-sub-one", "speed-integer", "speed-one", "speed-ten", "speed-hundred", "speed-round-ten", "speed-round-hundred", "full-battery", "bounds", "missing", "heading-wrap", "overflow", "zero", "long-address", "space-width", "space-boundary", "empty-address")
         for mode in image_modes + verification_modes:
             ppm = work / f"{mode}.ppm"
             with ppm.open("wb") as output:

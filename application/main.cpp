@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include "Application.h"
 #include "BootMode.h"
+#include "hardware/LoraSafety.h"
 #include "utils/Console.h"
 #include "task/storage/usb/UsbStorage.h"
 #include <USB.h>
@@ -14,6 +15,7 @@ bool usb_boot = false, console_reported = false;
 }
 
 void setup() {
+    geoputer::holdUnusedLoraInReset(); // Before NVS, USB, UI, GPS or SD initialization.
     geoputer::BootMode mode;
     const bool valid_mode = geoputer::loadBootMode(mode);
     geoputer::Console.begin(115200);

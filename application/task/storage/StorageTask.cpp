@@ -7,6 +7,7 @@
 #include <cstring>
 #include "../../utils/SyncClient.h"
 #include "../../BootMode.h"
+#include "../../hardware/LoraSafety.h"
 
 namespace geoputer {
 
@@ -147,9 +148,13 @@ void StorageTask::handle(const StorageRequest& request) {
         } else result.status = OperationStatus::Unavailable;
     } else if (request.kind == MessageKind::InitializeStorage) {
         if (!initialized_) {
-            pinMode(5, OUTPUT); digitalWrite(5, HIGH);  // Keep unused LoRa SPI deselected.
+            digitalWrite(config::LoraSelectPin, HIGH);  // Keep the radio deselected until the controlled SLEEP transition.
+            pinMode(config::LoraSelectPin, OUTPUT);
             pinMode(12, OUTPUT); digitalWrite(12, HIGH);
             spi_.begin(40, 39, 14, 12);
+            uint8_t lora_status = 0xff;
+            const bool lora_sleep = sleepUnusedLora(spi_, &lora_status);
+            Console.printf("[LORA] %s status=0x%02X (TX/RX disabled)\n", lora_sleep ? "SLEEP" : "RESET HELD", lora_status);
             nvs_ready_ = settings_store_.begin();
             state_.settings = defaultSettings();
             place_lookup_.configure(DatasetCatalog{}.directory(state_.settings.dataset), state_.settings.wordbook_language);

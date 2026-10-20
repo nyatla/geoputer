@@ -88,7 +88,7 @@ pio run -e cardputer-adv
 - 測位前は`NO FIX`、有効NMEAが3秒以上届かない場合は`NO GPS`とし、座標を`--`にする。受信が続いていても有効座標が3秒以上更新されなければ`NO FIX`に戻す。
 - GPS受信はSettings表示中も継続する。Live Placeの表示中は有効FixからSD上の選択済みデータセットを検索し、地名を16×16ドットで表示する。起動時のログはSTOPPED。記録中は画面消灯・Settings表示を経ても新しいFixの採用と保存を継続する。
 
-接続は[Mesh Kitの標準接続](https://docs.m5stack.com/en/arduino/projects/cap/cap_lora868)を使用し、UART1のRX=G15、TX=G13、115200 bps・8N1とする。受信バッファは2048バイトとし、5ms周期で最大1024バイトを取り出す。GPIOと通信速度は現在の実装では固定であり、設定画面から変更しない。LoRaは初期化しない。
+接続は[Mesh Kitの標準接続](https://docs.m5stack.com/en/arduino/projects/cap/cap_lora868)を使用し、UART1のRX=G15、TX=G13、115200 bps・8N1とする。受信バッファは2048バイトとし、5ms周期で最大1024バイトを取り出す。GPIOと通信速度は現在の実装では固定であり、設定画面から変更しない。LoRaの送受信は初期化しない。GPS・USBの両モードでsetupの先頭からNRST=G3をLOWに保持し、StorageのSPI初期化後にGetStatusとSetSleep(0)だけを送って内部のcold SLEEPへ移す。成功時はNSS=G5とNRST=G3をHIGHに保持して不用意な復帰を防ぎ、失敗時はリセット保持へ戻す。起動ログは`[LORA] SLEEP`または`[LORA] RESET HELD`とする。個別電源断ではなく、GPSの給電・受信は継続する。
 
 Live Placeのヘッダーには現在時刻を8×8のASCIIでHH:MM:SS表示する。GPSから最初の有効FixとUTC時刻を得た時点でUIの表示時計を合わせ、日本時間（UTC+9）へ変換する。以降はUIタスクの単調増加時刻で進め、GPS受信断・Fix喪失・Settings表示・消灯を経ても継続する。未取得時は--:--:--とし、再起動後は改めてGPS時刻を待つ。この段階は初回の時刻合わせだけを行い、GPSの各受信で時計を再設定しない。ログ用の測位UTCとは独立した表示時計とする。
 

@@ -5,6 +5,13 @@
 
 namespace geoputer::config {
 
+// Cardputer ADV EXT pins reserved for disabling the unused Mesh Kit radio.
+inline constexpr uint8_t LoraResetPin = 3;
+inline constexpr uint8_t LoraSelectPin = 5;
+inline constexpr uint8_t LoraBusyPin = 6;
+inline constexpr uint32_t LoraBusyTimeoutMs = 100;
+inline constexpr uint32_t LoraSpiHz = 1000000;
+
 inline constexpr uint8_t UiColorDepth = 4;       // 16-color palette; 16 selects the RGB565 reference path.
 inline constexpr uint8_t SdMaxOpenFiles = 3;     // GIS initialization needs two simultaneous VFS readers.
 

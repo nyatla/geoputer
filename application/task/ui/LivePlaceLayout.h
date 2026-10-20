@@ -43,14 +43,15 @@ inline LiveGpsText formatLiveGps(const GpsSnapshot& gps, const GpsFix& place_fix
     if (std::isfinite(coordinate.longitude) && std::abs(coordinate.longitude) <= 180)
         std::snprintf(text.longitude, sizeof(text.longitude), "%+.6f", coordinate.longitude);
     if ((fix.fields & GpsSpeed) && std::isfinite(fix.speed_kmh) && fix.speed_kmh >= 0) {
-        // Promote a rounded boundary before formatting: never emit 1000m/h
-        // or 100.0km/h in the three-digit speed field.
+        // Keep km/h and at most three digits. Discard sub-1 km/h movement;
+        // promote rounded boundaries before selecting the decimal precision.
         const double kmh = fix.speed_kmh;
-        const double metres = std::round(kmh * 1000);
+        const double hundredths = std::round(kmh * 100) / 100;
         const double tenths = std::round(kmh * 10) / 10;
-        if (metres < 1000) {
-            std::snprintf(text.speed_unit, sizeof(text.speed_unit), "m/h");
-            std::snprintf(text.speed, sizeof(text.speed), "%.0f", metres);
+        if (kmh < 1) {
+            std::snprintf(text.speed, sizeof(text.speed), "0");
+        } else if (hundredths < 10) {
+            std::snprintf(text.speed, sizeof(text.speed), "%.2f", hundredths);
         } else if (tenths < 100) {
             std::snprintf(text.speed, sizeof(text.speed), "%.1f", tenths);
         } else if (std::round(kmh) <= 999) {
