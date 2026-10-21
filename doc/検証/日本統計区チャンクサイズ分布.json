@@ -1,0 +1,109 @@
+{
+  "source": "/mnt/d/project.private/galuchat-serieas/dataset/maps/e-stat_go_jp.A002005212020/build/estat-r2ka-jgd2011-2020-grid-8192-10000.remap.wgsmapset.glc",
+  "source_sha256": "e22a9cac7fb0b7376ca0134576093878bc1cdf484a3d72ed96e7478feb9e4cb4",
+  "file_bytes": 23800183,
+  "prefix_bytes": 1613,
+  "gi01_stored_bytes": 23798570,
+  "chunks": 162,
+  "blocks": 23679,
+  "unit_inv_x": 10000,
+  "unit_inv_y": 10000,
+  "size_definition": "GI01 tag + length field + complete payload; bytes as stored in GLC",
+  "min_bytes": 23,
+  "median_bytes": 62908.5,
+  "mean_bytes": 146904.75308641975,
+  "max_bytes": 1226091,
+  "full_8192_square_chunks": 53,
+  "bins": [
+    {
+      "label": "4KiB未満",
+      "count": 33,
+      "count_percent": 20.37037037037037,
+      "stored_bytes": 32576,
+      "stored_percent": 0.13688217401297642
+    },
+    {
+      "label": "4〜8KiB未満",
+      "count": 12,
+      "count_percent": 7.407407407407407,
+      "stored_bytes": 69324,
+      "stored_percent": 0.29129481309171096
+    },
+    {
+      "label": "8〜16KiB未満",
+      "count": 8,
+      "count_percent": 4.938271604938271,
+      "stored_bytes": 95262,
+      "stored_percent": 0.40028455491233295
+    },
+    {
+      "label": "16〜32KiB未満",
+      "count": 12,
+      "count_percent": 7.407407407407407,
+      "stored_bytes": 292365,
+      "stored_percent": 1.228498182874013
+    },
+    {
+      "label": "32〜64KiB未満",
+      "count": 19,
+      "count_percent": 11.728395061728396,
+      "stored_bytes": 931343,
+      "stored_percent": 3.9134410176745913
+    },
+    {
+      "label": "64〜128KiB未満",
+      "count": 19,
+      "count_percent": 11.728395061728396,
+      "stored_bytes": 1835239,
+      "stored_percent": 7.711551576418247
+    },
+    {
+      "label": "128〜256KiB未満",
+      "count": 21,
+      "count_percent": 12.962962962962964,
+      "stored_bytes": 4343471,
+      "stored_percent": 18.250974743440466
+    },
+    {
+      "label": "256〜512KiB未満",
+      "count": 32,
+      "count_percent": 19.753086419753085,
+      "stored_bytes": 11578743,
+      "stored_percent": 48.65310394700186
+    },
+    {
+      "label": "512KiB〜1MiB未満",
+      "count": 4,
+      "count_percent": 2.4691358024691357,
+      "stored_bytes": 2225330,
+      "stored_percent": 9.350687877464907
+    },
+    {
+      "label": "1MiB以上",
+      "count": 2,
+      "count_percent": 1.2345679012345678,
+      "stored_bytes": 2394917,
+      "stored_percent": 10.063281113108896
+    }
+  ],
+  "below_thresholds": [
+    {
+      "threshold": 4096,
+      "count": 33,
+      "count_percent": 20.37037037037037,
+      "stored_bytes": 32576
+    },
+    {
+      "threshold": 8192,
+      "count": 45,
+      "count_percent": 27.77777777777778,
+      "stored_bytes": 101900
+    },
+    {
+      "threshold": 16384,
+      "count": 53,
+      "count_percent": 32.71604938271605,
+      "stored_bytes": 197162
+    }
+  ]
+}

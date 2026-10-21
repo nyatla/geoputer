@@ -129,11 +129,24 @@ WordBookの地名検索はアプリ側のWordBookCacheで包む。32bit区域コ
 
 地名キャッシュは矩形の再構築・GPS喪失・画面切替では保持し、PlaceLookupのclose、SD媒体操作、Reader再オープンで消去する。矩形と地名がともにヒットした検索ではSDを読まない。RGは従来どおり矩形の状態、SDはログ等も含めた実I/Oを表示する。実装と検証は[WordBook地名キャッシュ検証](../doc/検証/WordBook地名キャッシュ検証.md)を参照する。
 
-区域コードの取得は`CachedMapReader`で包み、最初の点検索時に128×128の`uint32_t`画像1枚（64KiB）を確保する。経度・緯度はSDKと同じ解像度と丸め方で整数座標へ変換する。範囲内は画像の値を返し、初回または範囲外では取得点をセル(64,64)とする矩形を`readWgsRect()`で読み直す。原点は`(ix-64, iy-64)`、幅・高さは128、範囲の上端は含まない。区域なしのコード0も有効なキャッシュ値とする。
+区域コードの取得は`CachedMapReader`で包み、最初の点検索時に128×128の`uint32_t`画像1枚（64KiB）を確保する。経度・緯度はSDKと同じ解像度と丸め方で整数座標へ変換する。範囲内は画像の値を返し、初回または範囲外では取得点をセル(64,64)とする矩形を索引Readerの`readWgsRectWithoutTail()`で読み直す。原点は`(ix-64, iy-64)`、幅・高さは128、範囲の上端は含まない。区域なしのコード0も有効なキャッシュ値とする。
+
+アプリはSDKの`GaluchatWGSMapSet3IndexedReader`を明示的に選択し、`MaxDatasetChunks`（1500）を指定する。従来の`GaluchatWGSMapSet3Reader`は順次走査のまま維持され、索引を標準動作にはしない。矩形取得では最後に必要なブロックの処理を完了した時点で停止し、後続ブロックの走査とGI01全体長の一致の検証を省く。必要ブロック内の復号・バイト境界整列・RAWS/LZSSの終端検証は維持する。チャンクごとに独立したReaderを閉じるため、次のチャンクに備えた末尾への移動は行わない。既存のチャンク索引と画像キャッシュを使用し、ブロック索引や追加画像は作らない。
 
 読出し先のアダプターは32bitの範囲を検証し、複数地図が重なる場合は先に取得した非ゼロ値を保持する。これによりSDKの点検索の優先順を維持する。SDKの矩形読出しは通常後の非ゼロ値で上書きするため、標準のRasterViewをそのまま使わず、このアダプターへ直接書き込む。64bitの中間画像は作らない。
 
 再構成開始時にキャッシュを無効化し、矩形全体の読出し成功後に原点と有効状態を確定する。途中の読込・確保・コード値域エラーは検索失敗として返し、部分的な画像を参照しない。同じReaderの範囲内では画面復帰後も再利用する。SD再マウント・取り外し・フォーマットおよびReaderの閉鎖時は画像を解放し、別のデータセットへ持ち越さない。BootのCheckDatasetでは画像を確保しない。
+
+矩形キャッシュとSDK切替のホスト試験は次で実行する。実際の`CachedMapReader.cpp`を使用し、末尾の不要読出し、ヒット時のI/O、部分失敗と回復、重なりの優先順位、1500/1501チャンクの境界を検証する。実データのGLCパスを追加引数に渡すと、SDKの点取得との一致とキャッシュヒット時のI/Oなしも確認する。
+
+```bash
+g++ -O2 -std=c++17 -Wall -Wextra -Werror -pedantic \
+  -I. -Ithird_party/galuchat/include \
+  tests/cached_map_reader_test.cpp \
+  application/task/storage/galuchat/CachedMapReader.cpp \
+  -o /tmp/reversegeoputer-cached-map-test
+/tmp/reversegeoputer-cached-map-test
+```
 
 Appは`SearchPlace`通知に要求ID・画面世代・Fixのコピーを付ける。Storageは結果を`ReadCompleted` / `ReadFailed`で返す。結果は`StorageReadKind::Place`で設定読出しと区別し、通知キュー満杯時も保持する。新しい検索は未完了要求がない場合だけ行い、通常は新しいGPSサンプルに対して最短5秒間隔とする。Settings表示中と画面消灯中は新しい検索を開始しない。
 

@@ -3,7 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
-#include <galuchat/wgsmap3_reader.hpp>
+#include <galuchat/wgsmapset3_indexed_reader.hpp>
 #include "../StorageActivity.h"
 #include "../../../Config.h"
 
@@ -45,7 +45,7 @@ private:
     bool contains(int x, int y) const;
     void rebuild(int x, int y);
 
-    galuchat::GaluchatWGSMapSet3Reader reader_;
+    galuchat::GaluchatWGSMapSet3IndexedReader reader_;
     std::unique_ptr<uint32_t[]> pixels_;
     MapCacheStats stats_{};
     StorageObserver* observer_;

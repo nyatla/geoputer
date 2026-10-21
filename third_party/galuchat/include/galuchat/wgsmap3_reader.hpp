@@ -907,13 +907,47 @@ public:
         return raster;
     }
 
+    // Consumes all blocks and validates the declared GI01 payload length.
     template <class Raster>
     void readRect(int x, int y, Raster& dest) {
+        readRectImpl(x, y, dest, TailMode::Consume);
+    }
+
+    // Stops after the last intersecting block (or the header if none).
+    // The source is byte aligned; reaching the next GI01 is not guaranteed.
+    // This reader is still single-use; call skipToEnd() explicitly if needed.
+    template <class Raster>
+    void readRectWithoutTail(int x, int y, Raster& dest) {
+        readRectImpl(x, y, dest, TailMode::Leave);
+    }
+
+    void skipToEnd() {
+        reader_->skipToByte();
+        reader_->skipInByte(payload_reader_->remaining());
+        consumed_ = true;
+    }
+
+private:
+    enum class TailMode { Consume, Leave };
+
+    template <class Raster>
+    void readRectImpl(int x, int y, Raster& dest, TailMode tail) {
         if (consumed_) throw std::runtime_error("GI01 reader has already been consumed");
         consumed_ = true;
         Rect target{x, y, dest.width, dest.height};
         BlockReader block(*this);
         int count = hus * vus;
+        if (tail == TailMode::Leave) {
+            // Match the existing padded block grid, including partial edge blocks.
+            Rect crossed{};
+            Rect grid{0, 0, hus * square_unit, vus * square_unit};
+            count = 0;
+            if (detail::crossRect(grid, target, crossed)) {
+                int last_x = (crossed.x + crossed.width - 1) / square_unit;
+                int last_y = (crossed.y + crossed.height - 1) / square_unit;
+                count = last_y * hus + last_x + 1;
+            }
+        }
         for (int index = 0; index < count; index++) {
             Rect source{(index % hus) * square_unit, (index / hus) * square_unit, square_unit, square_unit};
             Rect crossed{};
@@ -928,18 +962,11 @@ public:
                 crossed.y - target.y);
         }
         reader_->skipToByte();
-        if (!payload_reader_->atEnd()) {
+        if (tail == TailMode::Consume && !payload_reader_->atEnd()) {
             throw std::runtime_error("GI01 chunk size does not match decoded blocks");
         }
     }
 
-    void skipToEnd() {
-        reader_->skipToByte();
-        reader_->skipInByte(payload_reader_->remaining());
-        consumed_ = true;
-    }
-
-private:
     struct SinglePixelRaster {
         int width = 1;
         int height = 1;
@@ -1553,30 +1580,18 @@ private:
     size_t gi01_offset_ = 0;
 };
 
-// The caller can reject oversized datasets before allocating the chunk index.
-class MapCountLimitExceeded : public std::runtime_error {
-public:
-    MapCountLimitExceeded(size_t count, size_t limit)
-        : std::runtime_error("WGSMapSet map count exceeds configured limit"), count(count), limit(limit) {}
-    const size_t count;
-    const size_t limit;
-};
-
 class GaluchatWGSMapSet3Reader {
 public:
-    explicit GaluchatWGSMapSet3Reader(const std::vector<uint8_t>& bytes,
-                                     size_t max_maps = std::numeric_limits<size_t>::max())
+    explicit GaluchatWGSMapSet3Reader(const std::vector<uint8_t>& bytes)
         : GaluchatWGSMapSet3Reader(
-            std::make_shared<BufferReaderFactory>(bytes), max_maps) {}
+            std::make_shared<BufferReaderFactory>(bytes)) {}
 
-    GaluchatWGSMapSet3Reader(const uint8_t* bytes, size_t size,
-                           size_t max_maps = std::numeric_limits<size_t>::max())
+    GaluchatWGSMapSet3Reader(const uint8_t* bytes, size_t size)
         : GaluchatWGSMapSet3Reader(
-            std::make_shared<BufferReaderFactory>(bytes, size), max_maps) {}
+            std::make_shared<BufferReaderFactory>(bytes, size)) {}
 
     explicit GaluchatWGSMapSet3Reader(
-        std::shared_ptr<const ReaderFactory> factory,
-        size_t max_maps = std::numeric_limits<size_t>::max())
+        std::shared_ptr<const ReaderFactory> factory)
         : factory_(std::move(factory)) {
         std::unique_ptr<ByteReader> reader = factory_->create();
         if (detail::readAscii(*reader, 4) != "GLCH") {
@@ -1607,9 +1622,6 @@ public:
             throw std::runtime_error("WGSMapSet map count exceeds header size");
         }
 
-        if (map_count > max_maps) {
-            throw MapCountLimitExceeded(map_count, max_maps);
-        }
         origins_.reserve(map_count);
         for (size_t i = 0; i < map_count; i++) {
             origins_.push_back({
@@ -1639,11 +1651,8 @@ public:
         int south = origins_[0].south;
         int east = west;
         int north = south;
-        for (Origin& origin : origins_) {
-            origin.offset = detail::addSize(chunk_offset_, chunks->pos(), "WGSMapSet chunk offset");
+        for (const Origin& origin : origins_) {
             GaluchatImageDataChunk01Reader chunk(*chunks);
-            origin.width = chunk.width;
-            origin.height = chunk.height;
             west = origin.west < west ? origin.west : west;
             south = origin.south < south ? origin.south : south;
             int chunk_east = detail::addInt(origin.west, chunk.width, "WGSMapSet east");
@@ -1716,12 +1725,15 @@ public:
         validateRasterTarget(target, dest);
         detail::fillRect(dest, 0, 0, dest.width, dest.height, 0);
 
+        std::unique_ptr<ByteReader> reader = factory_->create(chunk_offset_);
         for (const Origin& origin : origins_) {
-            Rect map_area{origin.west, origin.south, origin.width, origin.height};
-            Rect crossed{};
-            if (!detail::crossRect(map_area, target, crossed)) continue;
-            std::unique_ptr<ByteReader> reader = factory_->create(origin.offset);
             GaluchatImageDataChunk01Reader chunk(*reader);
+            Rect map_area{origin.west, origin.south, chunk.width, chunk.height};
+            Rect crossed{};
+            if (!detail::crossRect(map_area, target, crossed)) {
+                chunk.skipToEnd();
+                continue;
+            }
             ZeroFilteredRasterView<Raster> filtered(
                 dest,
                 crossed.x - target.x,
@@ -1781,9 +1793,6 @@ private:
     struct Origin {
         int west;
         int south;
-        int width = 0;
-        int height = 0;
-        size_t offset = 0;
     };
 
     template <class Raster>

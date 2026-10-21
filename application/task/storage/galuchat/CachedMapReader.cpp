@@ -44,7 +44,7 @@ void CachedMapReader::rebuild(int x, int y) {
         PointPriorityRaster destination{Side, Side, pixels_.get()};
         {
             ElapsedTime elapsed(stats_.last_rect_us);
-            reader_.readWgsRect(target, destination);
+            reader_.readWgsRectWithoutTail(target, destination);
         }
         stats_.bounds = target;
         stats_.valid = true;
