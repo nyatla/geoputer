@@ -123,7 +123,7 @@ SDカード直下/
 
 Wordbookと`dataset.ini`、タスク間メッセージ、UIの文字列はUTF-8に統一する。Wordbook内部の`token_encoding`を優先し、未指定または空の場合は`text_encoding`を参照する。値は大文字・小文字を区別せず`utf8`または`utf-8`だけを受け付ける。文字コードの未指定・未対応や不正なUTF-8は`ENCODING ERROR`とし、端末内で文字コード変換は行わない。SJIS（CP932）版やUTF-16版のWordbookは使用できない。既存のSDカードでは、同じGLCに対応するUTF-8版Wordbookへ置き換え、INIの`wordbook`をそのファイル名へ変更する。ファイル名やメタデータだけの変更では文字コードを変換できない。[UTF-8統一の検証結果](../doc/検証/UTF-8統一検証.md)に実ファイル試験と容量を記録する。
 
-Storageがマウント済みの`/sd`をSDK互換の`ObservedFileReaderFactory`から読む。実際のopen・seek・バッファ補充・closeだけをSDアクセスとして観測し、バッファ内の1バイト参照は対象外にする。各読出しセッションのバッファは4KiB、WordBookのトークンキャッシュは無効とし、データ全体のRAM展開は行わない。SDKのReaderは[third_party/galuchat](../third_party/galuchat/README.md)に無改変で取り込み、C++17と例外処理を有効にする。
+Storageがマウント済みの`/sd`をSDK互換の`ObservedFileReaderFactory`から読む。実際のopen・seek・バッファ補充・closeだけをSDアクセスとして観測し、バッファ内の1バイト参照は対象外にする。各読出しセッションのバッファは4KiB、WordBookのトークンキャッシュは無効とし、データ全体のRAM展開は行わない。スキップがバッファ内なら位置だけを進め、バッファ外に残る距離が`FileReadThroughSkipBytes`以下なら通常のバッファ補充で読み流す。初期値は4096バイトで、0は従来どおりバッファ外を常にfseekする。長い距離はfseekを維持し、読み流した後の先読み余剰は次の読出しに再利用する。追加バッファは確保せず、地図とWordbookの両方に適用する。読み流しでは実際のfreadを観測し、RAM上のスキップはI/Oとして数えない。SDKのReaderは[third_party/galuchat](../third_party/galuchat/README.md)に無改変で取り込み、C++17と例外処理を有効にする。
 
 WordBookの地名検索はアプリ側のWordBookCacheで包む。32bit区域コードとUTF-8検証・書式展開済みの地名2行（各64バイト）を16件まで固定長で保持する。利用順だけを16バイトのインデックス配列で管理するLRUとし、時刻・内部Tickは使わない。ヒット時は辞書読出しとUTF-8検証・整形を省き、ミス時に成功した結果だけを登録する。今回の座標・時刻・要求世代は毎回の要求から結果へ設定する。
 
@@ -146,6 +146,15 @@ g++ -O2 -std=c++17 -Wall -Wextra -Werror -pedantic \
   application/task/storage/galuchat/CachedMapReader.cpp \
   -o /tmp/reversegeoputer-cached-map-test
 /tmp/reversegeoputer-cached-map-test
+```
+
+ファイルReader単体の試験では、短距離・長距離・閾値境界、先読み保持、ビット単位の読出しとの混在、EOF・読込失敗、SDアクセス通知の整合を確認する。
+
+```bash
+g++ -O2 -std=c++17 -Wall -Wextra -Werror -pedantic \
+  -I. -Ithird_party/galuchat/include \
+  tests/observed_file_reader_test.cpp -o /tmp/reversegeoputer-observed-reader-test
+/tmp/reversegeoputer-observed-reader-test
 ```
 
 Appは`SearchPlace`通知に要求ID・画面世代・Fixのコピーを付ける。Storageは結果を`ReadCompleted` / `ReadFailed`で返す。結果は`StorageReadKind::Place`で設定読出しと区別し、通知キュー満杯時も保持する。新しい検索は未完了要求がない場合だけ行い、通常は新しいGPSサンプルに対して最短5秒間隔とする。Settings表示中と画面消灯中は新しい検索を開始しない。
@@ -235,7 +244,7 @@ Live Placeで`2`、MENUで下へ2回（`.`）、EnterでLOGSを開く。ファ�
 
 ## Galuchatのリソース設定とチャンク索引
 
-ビルド時のGIS設定は`application/Config.h`へ集約する。`MaxDatasetChunks`は1500（上限を含む）、`MapCacheSide`は128、`FileReadBufferBytes`は4096、`WordBookCacheEntries`は16、`PlaceSearchIntervalMs`は5000とする。利用者が画面から変更する設定の候補・初期値は引き続き`Settings.h` / `Settings.cpp`で管理する。
+ビルド時のGIS設定は`application/Config.h`へ集約する。`MaxDatasetChunks`は1500（上限を含む）、`MapCacheSide`は128、`FileReadBufferBytes`と`FileReadThroughSkipBytes`は4096、`WordBookCacheEntries`は16、`PlaceSearchIntervalMs`は5000とする。利用者が画面から変更する設定の候補・初期値は引き続き`Settings.h` / `Settings.cpp`で管理する。
 
 地図初期化時にRAMへチャンクの座標・寸法・ファイル位置を保持し、矩形検索時は交差するチャンクだけを開く。起動時・Reader再オープン時にチャンク数を確認し、1501以上は索引確保・Origin列と地図本文の走査へ進まず利用不可とする。逐次探索へ戻さない。上限超過とメモリ確保失敗はGPS更新によって再試行せず、Readerの明示的な閉鎖・SD再マウント後に再確認する。GPS受信とログ記録は継続する。
 

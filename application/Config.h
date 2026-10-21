@@ -20,6 +20,7 @@ inline constexpr uint8_t SdMaxOpenFiles = 3;     // GIS initialization needs two
 inline constexpr size_t MaxDatasetChunks = 1500;  // Inclusive; never fall back to sequential scanning.
 inline constexpr int MapCacheSide = 128;          // uint32 pixels; 128 * 128 * 4 = 64 KiB.
 inline constexpr size_t FileReadBufferBytes = 4096;
+inline constexpr size_t FileReadThroughSkipBytes = FileReadBufferBytes; // Inclusive gap beyond buffered data; 0 disables.
 inline constexpr size_t WordBookCacheEntries = 16;
 inline constexpr uint32_t PlaceSearchIntervalMs = 5000;
 inline constexpr size_t DatasetLineBytes = 256;  // 255 UTF-8 bytes plus NUL.

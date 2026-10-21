@@ -54,17 +54,7 @@ public:
 protected:
     uint8_t nextByte() override {
         if (pos_ >= length_) throw std::runtime_error("unexpected end of file");
-        if (buffer_pos_ == buffer_end_) {
-            SdAccessScope access(observer_);
-            {
-                FileIoTime elapsed(timing_, &FileIoTiming::read_us);
-                if (timing_) ++timing_->reads;
-                buffer_end_ = std::fread(buffer_.data(), 1, std::min(buffer_.size(), length_ - pos_), file_);
-                if (timing_) timing_->bytes += buffer_end_;
-            }
-            buffer_pos_ = 0;
-            if (!buffer_end_) throw std::runtime_error("SD read failed");
-        }
+        if (buffer_pos_ == buffer_end_) refillBuffer();
         ++pos_;
         return buffer_[buffer_pos_++];
     }
@@ -72,7 +62,21 @@ protected:
         if (length > length_ - pos_) throw std::runtime_error("unexpected end of file");
         const auto buffered = buffer_end_ - buffer_pos_;
         if (length <= buffered) { buffer_pos_ += length; pos_ += length; return; }
-        const auto seek = length - buffered;
+        auto seek = length - buffered;
+        if (seek <= config::FileReadThroughSkipBytes) {
+            // Consume the existing tail, then discard whole buffered ranges.
+            // Keep any read-ahead past the target for subsequent reads.
+            buffer_pos_ = buffer_end_;
+            pos_ += buffered;
+            while (seek) {
+                refillBuffer();
+                const auto consumed = std::min(seek, buffer_end_);
+                buffer_pos_ += consumed;
+                pos_ += consumed;
+                seek -= consumed;
+            }
+            return;
+        }
         SdAccessScope access(observer_);
         int seek_result;
         {
@@ -84,6 +88,17 @@ protected:
         pos_ += length; buffer_pos_ = buffer_end_ = 0;
     }
 private:
+    void refillBuffer() {
+        SdAccessScope access(observer_);
+        {
+            FileIoTime elapsed(timing_, &FileIoTiming::read_us);
+            if (timing_) ++timing_->reads;
+            buffer_end_ = std::fread(buffer_.data(), 1, std::min(buffer_.size(), length_ - pos_), file_);
+            if (timing_) timing_->bytes += buffer_end_;
+        }
+        buffer_pos_ = 0;
+        if (!buffer_end_) throw std::runtime_error("SD read failed");
+    }
     StorageObserver* observer_;
     FileIoTiming* timing_;
     std::FILE* file_ = nullptr;
