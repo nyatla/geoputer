@@ -13,12 +13,12 @@ enum class DisplayMode : uint8_t { Background, View };
 enum class LogAction : uint8_t { Start, Pause, Resume, Stop };
 struct BatteryStatus { int8_t percent = -1; bool charging = false; bool charge_known = false; };
 
-enum class ActionKind : uint8_t { None, ChangeScreen, SaveSettings, ResetSettings, Storage, Sleep, Wake, Logging, Browse, Dataset, UsbExport };
+enum class ActionKind : uint8_t { None, ChangeScreen, SaveSettings, ResetSettings, Storage, Sleep, Wake, Logging, Browse, Dataset, UsbExport, Maintenance, RestartLogger };
 enum class UsbPage : uint8_t { Menu, WaitEject, Files, Format, Progress, Complete, Error, Busy };
 enum class UsbAction : uint8_t { Begin, Start, Publish, Older, Newer };
 enum class BrowseAction : uint8_t { OpenFile, Older, Newer, Points, Reload, Point, Delete };
 enum class ActionResult : uint8_t { None, Applied, Rejected };
-enum class UiKey : uint8_t { OpenGpsLogger, OpenSettings, OpenLogs, DeleteLog, Escape, Up, Down, Left, Right, Enter, Other, F1 };
+enum class UiKey : uint8_t { OpenGpsLogger, OpenSettings, OpenLogs, DeleteLog, Escape, Up, Down, Left, Right, Enter, Other, F1, PauseLog };
 enum class SettingsPage : uint8_t { Root, Operation, Storage, Reset, Licenses, DatasetList, DatasetDetail, About };
 // Menu commands are separate from persisted settings and page identifiers.
 enum class SettingsRootItem : uint8_t { Operation, OperatingMode, Storage, Reset, About, Licenses, Count };
@@ -61,8 +61,7 @@ struct UiData {
 };
 
 inline bool usbEntryAllowed(const UiData& data) {
-    return data.recording.state == RecordingState::Stopped && !data.recording.pending &&
-        !data.storage.log.open && !data.storage.log.closing && !data.storage.log.buffered;
+    return loggerStopped(data.recording, data.storage.log);
 }
 
 struct UiSnapshot {

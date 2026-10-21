@@ -64,7 +64,7 @@ int main(int argc,char** argv) {
     }
     UiModel model;model.setScreen({screen,DisplayMode::View,1,data,0,ActionResult::None});
     if(!std::strcmp(mode,"logger-confirm"))model.keyPressed(UiKey::Enter,1);
-    if(!std::strcmp(mode,"pause-confirm"))model.keyPressed(UiKey::F1,1);
+    if(!std::strcmp(mode,"pause-confirm"))model.keyPressed(UiKey::PauseLog,1);
     if(usb_mode && (!std::strcmp(mode,"usb") || !std::strcmp(mode,"usb-selected")))model.keyPressed(UiKey::Escape,1);
     if(!std::strcmp(mode,"usb-selected"))model.keyPressed(UiKey::Right,2);
     if(delete_confirm)model.keyPressed(UiKey::DeleteLog,1);

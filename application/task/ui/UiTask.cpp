@@ -12,15 +12,8 @@ void UiTask::handle(const UiRequest& request, bool ready) {
         Console.println("[UI] invalid request envelope");
         return;
     }
-    pending_return_ = {};
-    pending_return_.kind = MessageKind::SyncReturn;
-    pending_return_.source = TaskId::UI;
-    pending_return_.request_id = request.request_id;
-    pending_return_.sequence = ++sequence_;
-    pending_return_.sent_at_ms = taskTimeMs();
-    pending_return_.payload.result = {
-        request.kind, ready ? OperationStatus::InvalidRequest : OperationStatus::Unavailable, {}, {}, {}
-    };
+    prepareSyncReturn(pending_return_, TaskId::UI, request, ++sequence_,
+                      ready ? OperationStatus::InvalidRequest : OperationStatus::Unavailable);
     auto& result = pending_return_.payload.result;
     if (ready) {
         switch (request.kind) {
@@ -71,7 +64,7 @@ void UiTask::run() {
     Console.println(ready ? "[UI] ready (240x135)" : "[UI] initialization failed");
     bool was_one = false, was_settings = false, was_logs = false, was_escape = false, was_up = false, was_down = false;
     bool was_left = false, was_right = false, was_enter = false, was_any = false;
-    bool was_delete = false;
+    bool was_delete = false, was_pause = false;
     uint32_t repeat_at = 0;
     bool clock_reported = false;
     uint32_t battery_at = 0;
@@ -90,11 +83,12 @@ void UiTask::run() {
         // Physical Del/Backspace and Fn+` share one Back/Cancel press edge.
         bool f1 = false, gps = false, settings = false, logs = false, escape = keys.del, up = false, down = false;
         bool left = false, right = false;
-        bool delete_log = false;
+        bool delete_log = false, pause_log = false;
         for (const auto& position : M5Cardputer.Keyboard.keyList()) {
             const auto value = M5Cardputer.Keyboard.getKeyValue(position).value_first;
             const auto key = model_.viewingLicenses() ? mapLicenseKey(value, keys.fn, keys.shift) : mapPhysicalKey(value, keys.fn);
             f1 |= key == UiKey::F1;
+            pause_log |= key == UiKey::PauseLog;
             gps |= key == UiKey::OpenGpsLogger;
             settings |= key == UiKey::OpenSettings;
             logs |= key == UiKey::OpenLogs;
@@ -117,6 +111,7 @@ void UiTask::run() {
                 battery_sampled = true; battery_at = now;
             }
             if (one && !was_one) model_.keyPressed(f1 ? UiKey::F1 : UiKey::OpenGpsLogger, now);
+            if (pause_log && !was_pause) model_.keyPressed(UiKey::PauseLog, now);
             if (settings && !was_settings) model_.keyPressed(UiKey::OpenSettings, now);
             if (logs && !was_logs) model_.keyPressed(UiKey::OpenLogs, now);
             if (delete_log && !was_delete) model_.keyPressed(UiKey::DeleteLog, now);
@@ -126,7 +121,7 @@ void UiTask::run() {
             if (left && !was_left) model_.keyPressed(UiKey::Left, now);
             if (right && !was_right) model_.keyPressed(UiKey::Right, now);
             if (enter && !was_enter) model_.keyPressed(UiKey::Enter, now);
-            if (any && !was_any && !one && !settings && !logs && !delete_log && !escape && !up && !down && !left && !right && !enter) model_.keyPressed(UiKey::Other, now);
+            if (any && !was_any && !one && !pause_log && !settings && !logs && !delete_log && !escape && !up && !down && !left && !right && !enter) model_.keyPressed(UiKey::Other, now);
             if ((up && !was_up) || (down && !was_down)) repeat_at = now + 400;
             else if ((up || down) && repeat_at && static_cast<int32_t>(now - repeat_at) >= 0) {
                 model_.keyPressed(up ? UiKey::Up : UiKey::Down, now);
@@ -141,6 +136,7 @@ void UiTask::run() {
             }
         }
         was_one = one;
+        was_pause = pause_log;
         was_settings = settings;
         was_logs = logs;
         was_delete = delete_log;

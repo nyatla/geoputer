@@ -9,6 +9,7 @@ void check(bool value, const char* message) { if (!value) throw std::runtime_err
 
 void testKeyBindings() {
     for (bool fn : {false, true}) {
+        check(mapPhysicalKey('0', fn) == UiKey::PauseLog, "physical 0 pauses independently of Fn");
         check(mapPhysicalKey('2', fn) == UiKey::OpenSettings && mapPhysicalKey('3', fn) == UiKey::OpenLogs,
               "physical 2 and 3 open Settings and Logs with or without Fn");
         check(mapPhysicalKey('d', fn) == UiKey::DeleteLog, "physical D is separate from the Del/Back key");
@@ -26,7 +27,7 @@ void testKeyBindings() {
               "license aliases retain ordinary directional scrolling");
     }
     check(mapPhysicalKey('1', false) == UiKey::OpenGpsLogger && mapPhysicalKey('1', true) == UiKey::F1,
-          "plain 1 opens the logger; only Fn+1 pauses logging");
+          "plain 1 opens the logger; Fn+1 is reserved for boot maintenance");
     check(mapPhysicalKey('`', false) == UiKey::Other && mapPhysicalKey('`', true) == UiKey::Escape,
           "Escape retains its Fn modifier");
     check(mapPhysicalKey('a', false) == UiKey::Other, "ordinary keys remain unrelated to navigation");
@@ -81,8 +82,10 @@ void testKeyBindings() {
     }
     UiModel pause;
     pause.setScreen({ScreenId::LivePlace, DisplayMode::View, 1, data, 0, ActionResult::None});
-    pause.keyPressed(mapPhysicalKey('1', true), 10);
-    check(pause.confirming() && pause.snapshot().action.kind == ActionKind::None, "Fn+1 retains pause confirmation");
+    pause.keyPressed(mapPhysicalKey('1', true), 9);
+    check(!pause.confirming() && pause.snapshot().action.kind == ActionKind::None, "F1 no longer pauses recording");
+    pause.keyPressed(mapPhysicalKey('0', false), 10);
+    check(pause.confirming() && pause.snapshot().action.kind == ActionKind::None, "0 opens pause confirmation");
     for (const char key : {'1', '2', '3'}) pause.keyPressed(mapPhysicalKey(key, false), 20);
     check(pause.confirming() && pause.snapshot().action.kind == ActionKind::None, "shortcuts cannot bypass pause confirmation");
     for (const bool fn : {false, true}) {

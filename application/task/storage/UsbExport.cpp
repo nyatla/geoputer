@@ -4,7 +4,7 @@
 
 namespace geoputer {
 void StorageTask::handleUsbExport(const StorageRequest& request, SyncReturn& result) {
-    if(!usb_mode_ || !initialized_ || has_job_)return;
+    if(!usb_mode_ || !initialized_ || hasJob())return;
     const auto& command=request.payload.export_request;
     auto& job=state_.export_job;
     if(command.operation==ExportOperation::Begin) {

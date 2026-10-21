@@ -14,6 +14,19 @@ inline uint32_t taskTimeMs() {
     return static_cast<uint32_t>(xTaskGetTickCount() * portTICK_PERIOD_MS);
 }
 
+// Initialize the task-owned reply in place; do not allocate another return frame.
+inline void prepareSyncReturn(ReturnMessage& reply, TaskId source, const MessageHeader& request,
+                              uint32_t sequence, OperationStatus status = OperationStatus::InvalidRequest) {
+    reply = {};
+    reply.kind = MessageKind::SyncReturn;
+    reply.source = source;
+    reply.request_id = request.request_id;
+    reply.sequence = sequence;
+    reply.sent_at_ms = taskTimeMs();
+    reply.payload.result.request_kind = request.kind;
+    reply.payload.result.status = status;
+}
+
 // Only the Application task uses this object. There is exactly one pending request.
 class SyncClient {
 public:

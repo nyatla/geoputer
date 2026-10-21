@@ -4,7 +4,7 @@
 
 namespace geoputer {
 
-enum class DialogKind : uint8_t { None, PauseLog, StopLog, DeleteLog, FormatSd, ResetSettings, EnterUsbMode, ExitUsbMode };
+enum class DialogKind : uint8_t { None, PauseLog, StopLog, DeleteLog, FormatSd, ResetSettings, EnterUsbMode, ExitUsbMode, RestartLogger };
 enum class DialogInput : uint8_t { Ignored, Changed, Cancelled, Accepted };
 
 // UI-owned two-choice modal. Opening always selects Cancel; only an explicit

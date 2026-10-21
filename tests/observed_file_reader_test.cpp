@@ -2,6 +2,7 @@
 #include <cstdio>
 #include <cstdint>
 #include <iostream>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -147,6 +148,83 @@ void outsideBounds(const File& file) {
     require(reader.readByte() == file.bytes[1], "invalid skip discarded the buffer");
 }
 
+void readProfiles(const File& file) {
+    geoputer::FileIoTiming io{};
+    Observer observer;
+    {
+        geoputer::ObservedFileReaderFactory factory(file.path, &observer, &io, {4096,4096});
+        auto small = factory.create();
+        factory.setReadOptions({8192,4096});
+        auto medium = factory.create();
+        factory.setReadOptions({16384,4096});
+        auto large = factory.create();
+        for (const auto& sample : {std::make_pair(small.get(),4096u),std::make_pair(medium.get(),8192u),std::make_pair(large.get(),16384u)}) {
+            io={};
+            require(sample.first->readByte()==file.bytes[0], "profile initial byte");
+            require(io.reads==1 && io.bytes==sample.second, "factory changed an existing Reader's buffer");
+        }
+        io={}; small->skipInByte(4095);
+        require(small->readByte()==file.bytes[4096] && io.bytes==4096, "small Reader was resized by later profiles");
+        bool invalid=false;
+        try { factory.setReadOptions({0,4096}); } catch (const std::invalid_argument&) { invalid=true; }
+        require(invalid,"zero buffer accepted");
+        auto unchanged=factory.create();io={};(void)unchanged->readByte();
+        require(io.bytes==16384,"invalid profile replaced the valid factory options");
+    }
+    observer.balanced();
+    for (const size_t bytes : {4096u,8192u,16384u}) {
+        for (const size_t gap : {4096u,4097u}) {
+            geoputer::ObservedFileReader reader(file.path,file.bytes.size(),0,nullptr,&io,{bytes,4096});
+            (void)reader.readByte();io={};
+            reader.skipInByte(bytes-1+gap);
+            require(io.seeks==(gap>4096?1u:0u) && io.reads==(gap<=4096?1u:0u),
+                    "read-through threshold changed with buffer capacity");
+            require(reader.readByte()==file.bytes[bytes+gap],"profile threshold position");
+        }
+        geoputer::ObservedFileReader seek_only(file.path,file.bytes.size(),0,nullptr,&io,{bytes,0});
+        (void)seek_only.readByte();io={};seek_only.skipInByte(bytes);
+        require(io.seeks==1 && io.reads==0,"zero threshold did not disable read-through for a profile");
+    }
+    io={};
+    bool invalid=false;
+    try { geoputer::ObservedFileReader bad(file.path,file.bytes.size(),0,&observer,&io,{0,4096}); }
+    catch (const std::invalid_argument&) {invalid=true;}
+    require(invalid && io.opens==0,"zero buffer opened a file or was accepted");
+    observer.balanced();
+}
+
+void boundedRanges(const File& file) {
+    geoputer::FileIoTiming io{};
+    Observer observer;
+    geoputer::ObservedFileReaderFactory factory(file.path,&observer,&io,{16384,4096});
+    for (const size_t length : {1u,2u,123u,4095u,4096u,4097u,16383u,16384u,16385u}) {
+        io={};
+        auto reader=factory.createRange(73,length);
+        require(reader->readByte()==file.bytes[73],"range origin");
+        require(io.bytes==std::min<size_t>(16384,length),"range over-read or wrong refill size");
+        reader->skipInByte(length-1);
+        require(reader->atEnd() && reader->pos()==length && io.bytes==length,"range refill exceeded its end");
+        const auto reads=io.reads;expectThrow([&]{reader->readByte();});expectThrow([&]{reader->skipInByte(1);});
+        require(io.reads==reads,"range end attempted I/O");
+    }
+    {
+        const size_t length=32768+37;
+        auto reader=factory.createRange(73,length);io={};
+        (void)reader->readByte();reader->skipInByte(length-2);
+        require(reader->readByte()==file.bytes[73+length-1] && reader->atEnd() && io.reads==2 && io.bytes==16385 && io.seeks==1,
+                "long range seek or final bounded refill");
+    }
+    io={};
+    auto empty=factory.createRange(file.bytes.size(),0);
+    require(empty->atEnd() && io.opens==0 && io.reads==0,"empty file range allocated/opened storage");
+    expectThrow([&]{empty->readByte();});
+    expectThrow([&]{factory.createRange(file.bytes.size(),1);});
+    expectThrow([&]{factory.createRange(file.bytes.size()+1,0);});
+    expectThrow([&]{factory.createRange(1,std::numeric_limits<size_t>::max());});
+    require(io.opens==0 && io.reads==0,"invalid file range attempted I/O");
+    observer.balanced();
+}
+
 void mixedBitsAndSkips(const File& file) {
     uint32_t random = 0x12345678;
     auto next = [&] { random ^= random << 13; random ^= random >> 17; random ^= random << 5; return random; };
@@ -189,5 +267,7 @@ int main() {
     endAndTruncation();
     outsideBounds(file);
     mixedBitsAndSkips(file);
-    std::cout << "ObservedFileReader: buffer/threshold boundaries, read-ahead, seeks, EOF/errors, activity, bit-stream equivalence OK\n";
+    readProfiles(file);
+    boundedRanges(file);
+    std::cout << "ObservedFileReader: buffer/threshold boundaries, read-ahead, seeks, EOF/errors, activity, bit-stream equivalence, per-Reader profiles, independent thresholds and bounded file I/O OK\n";
 }

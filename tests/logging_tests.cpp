@@ -87,18 +87,18 @@ void fileTests(const std::string& directory) {
 void uiTests() {
     UiModel ui; UiData data{}; data.settings=defaultSettings();
     ui.setScreen({ScreenId::LivePlace,DisplayMode::View,1,data,0,ActionResult::None});
-    ui.keyPressed(UiKey::F1,100);
-    check(!ui.confirming() && ui.snapshot().action.kind==ActionKind::None,"F1 cannot start a stopped logger");
+    ui.keyPressed(UiKey::PauseLog,100);
+    check(!ui.confirming() && ui.snapshot().action.kind==ActionKind::None,"0 cannot start a stopped logger");
     data.recording.state=RecordingState::Recording;
     ui.updateContent({DisplayMode::View,1,data,0,ActionResult::None});
-    ui.keyPressed(UiKey::F1,101); ui.keyPressed(UiKey::Up,102);
+    ui.keyPressed(UiKey::PauseLog,101); ui.keyPressed(UiKey::Up,102);
     check(ui.confirming() && !ui.confirmChoice(),"pause confirmation defaults to cancel; Up is ignored");
     ui.keyPressed(UiKey::Right,103); ui.keyPressed(UiKey::Enter,104);
     auto action=ui.snapshot().action;
-    check(action.kind==ActionKind::Logging && action.log_action==LogAction::Pause && action.confirmed,"F1 confirms pause only");
+    check(action.kind==ActionKind::Logging && action.log_action==LogAction::Pause && action.confirmed,"0 confirms pause only");
     data.recording.state=RecordingState::Paused;
     ui.updateContent({DisplayMode::View,1,data,action.action_id,ActionResult::Applied});
-    ui.keyPressed(UiKey::F1,105); check(ui.snapshot().action.kind==ActionKind::None,"F1 cannot resume");
+    ui.keyPressed(UiKey::PauseLog,105); check(ui.snapshot().action.kind==ActionKind::None,"0 cannot resume");
     ui.setScreen({ScreenId::GpsLogger,DisplayMode::View,2,data,0,ActionResult::None});
     ui.keyPressed(UiKey::Enter,106); action=ui.snapshot().action;
     check(action.log_action==LogAction::Resume,"GPS Logger resumes recording");

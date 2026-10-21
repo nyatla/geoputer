@@ -3,6 +3,7 @@
 #include <cstdio>
 #include <cstring>
 #include <memory>
+#include <cerrno>
 
 namespace geoputer {
 namespace {
@@ -58,7 +59,7 @@ DatasetMetadata readDatasetMetadata(const std::string& directory,UiLanguage ui,c
     struct Close {StorageObserver* observer;void operator()(FILE* file) const {SdAccessScope access(observer);std::fclose(file);}};
     auto open=[&](){SdAccessScope access(observer);return std::fopen((directory+"/dataset.ini").c_str(),"rb");};
     std::unique_ptr<FILE,Close> file(open(),Close{observer});
-    if(!file) {result.error=DatasetError::Missing;return result;}
+    if(!file) {result.error=(errno==ENOENT || errno==ENOTDIR)?DatasetError::Missing:DatasetError::Data;return result;}
     char buffer[config::DatasetLineBytes];
     std::string section; unsigned common=0,fields=0; bool common_seen=false;
     auto fail=[&](DatasetError e=DatasetError::Metadata) {result.error=e;return result;};

@@ -24,13 +24,15 @@ public:
     bool describe(DatasetDetail& result) const;
     const std::string& selectedLanguage() const { return language_; }
     PlaceResult prepare();  // Validate file pair/headers/encoding without requiring GPS.
-    void close();
+    void close(); // Explicit revalidation boundary; clears a latched failure.
+    DatasetInfo datasetInfo() const { return dataset_; }
     MapCacheStats cacheStats() const { return map_ ? map_->stats() : MapCacheStats{}; }
     WordBookCacheStats wordBookCacheStats() const { return wordbook_cache_.stats(); }
-    PlaceAccessMode accessMode(const PlaceRequest& request) const;
     const PlaceReadTiming& readTiming() const { return timing_; }
 private:
     PlaceState open();
+    void releaseReaders();
+    PlaceState reject(PlaceState state);
     std::string directory_;
     std::string language_;
     PlaceDisplayFormat display_;

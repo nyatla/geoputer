@@ -23,6 +23,8 @@ public:
 protected:
     void run() override;
 private:
+    enum class JobKind : uint8_t { None, LoadSettings, SearchPlace, CheckDataset, BrowseDatasets, Operation };
+    bool hasJob() const { return job_kind_ != JobKind::None; }
     void handle(const StorageRequest& request);
     void sendReturn();
     void completeJob();
@@ -73,12 +75,8 @@ private:
     bool initialized_ = false;
     bool usb_mode_ = false, usb_dirty_ = false;
     bool has_return_ = false;
-    bool has_job_ = false;
-    bool load_job_ = false;
-    bool search_job_ = false;
-    bool dataset_job_ = false;
+    JobKind job_kind_ = JobKind::None;
     bool has_completion_ = false;
-    bool dataset_browser_job_ = false;
     DatasetRequest dataset_request_{};
 };
 

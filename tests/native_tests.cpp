@@ -30,11 +30,7 @@ static void check(bool value, const char* detail) {
 
 static ReturnMessage terminal(const UiRequest& request, OperationStatus status = OperationStatus::Ok) {
     ReturnMessage result{};
-    result.kind = MessageKind::SyncReturn;
-    result.source = TaskId::UI;
-    result.request_id = request.request_id;
-    result.payload.result.request_kind = request.kind;
-    result.payload.result.status = status;
+    prepareSyncReturn(result, TaskId::UI, request, 1, status);
     return result;
 }
 
@@ -150,6 +146,23 @@ static void testDirectionalPayloadCopies() {
     check(returns.send(reply), "full notification queue does not block a Storage return");
     reply = {}; returns.receive(reply);
     check(reply.payload.result.storage.log.saved == 12345, "Storage return snapshot survives the compact return queue");
+    // Task-owned replies are reused across commands; no previous operation's
+    // UI/GPS/storage payload may survive initialization of a new result.
+    reply.payload.result.content.action.kind = ActionKind::Logging;
+    reply.payload.result.gps.fix.valid = true;
+    for (auto source : {TaskId::UI, TaskId::GPS, TaskId::Storage}) {
+        prepareSyncReturn(reply, source, request, 17, OperationStatus::Unavailable);
+        check(reply.kind == MessageKind::SyncReturn && reply.source == source &&
+              reply.request_id == request.request_id && reply.sequence == 17 && reply.sent_at_ms == taskTimeMs() &&
+              reply.payload.result.request_kind == request.kind && reply.payload.result.status == OperationStatus::Unavailable,
+              "each subtask returns the current request identity and terminal status");
+        check(reply.payload.result.content.action.kind == ActionKind::None && !reply.payload.result.gps.fix.valid &&
+              reply.payload.result.storage.log.saved == 0,
+              "a reused reply cannot leak a previous operation's snapshots");
+        reply.payload.result.content.action.kind = ActionKind::Logging;
+        reply.payload.result.gps.fix.valid = true;
+        reply.payload.result.storage.log.saved = 12345;
+    }
     while (notifications.receive(event)) {
         const auto& copied = event.payload.storage_completion.logs;
         check(copied.request.session_id == request.payload.log_read.session_id && copied.count == LogReadCount,

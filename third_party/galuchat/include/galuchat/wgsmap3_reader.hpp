@@ -1,4 +1,5 @@
 #pragma once
+// ReverseGeoputer local prototype, 2026-10-21: optional bounded ReaderFactory API.
 
 #include <array>
 #include <cmath>
@@ -323,12 +324,44 @@ private:
     size_t pos_ = 0;
 };
 
+// Own the source so factories implementing only create(offset) remain usable.
+// This bounds logical access; a file factory can additionally bound physical I/O.
+class OwnedRangeReader final : public ByteReader {
+public:
+    OwnedRangeReader(std::unique_ptr<ByteReader> source, size_t length)
+        : source_(std::move(source)), length_(length) {
+        if (!source_) throw std::runtime_error("range reader has no source");
+    }
+    size_t pos() const override { return pos_; }
+    bool atEnd() const override { return pos_ == length_; }
+protected:
+    uint8_t nextByte() override {
+        if (atEnd()) throw std::runtime_error("declared byte range exceeded");
+        const auto value = source_->readByte();
+        ++pos_;
+        return value;
+    }
+    void skipByte(size_t length) override {
+        if (length > length_ - pos_) throw std::runtime_error("declared byte range exceeded");
+        source_->skipInByte(length);
+        pos_ += length;
+    }
+private:
+    std::unique_ptr<ByteReader> source_;
+    size_t length_, pos_ = 0;
+};
+
 } // namespace detail
 
 class ReaderFactory {
 public:
     virtual ~ReaderFactory() = default;
     virtual std::unique_ptr<ByteReader> create(size_t offset = 0) const = 0;
+    // Explicit opt-in byte range. Existing factories need not override this.
+    virtual std::unique_ptr<ByteReader> createRange(size_t offset, size_t length) const {
+        detail::addSize(offset, length, "reader range end");
+        return std::make_unique<detail::OwnedRangeReader>(create(offset), length);
+    }
 };
 
 class BufferReaderFactory final : public ReaderFactory {
@@ -340,6 +373,10 @@ public:
     std::unique_ptr<ByteReader> create(size_t offset = 0) const override {
         if (offset > size_) throw std::runtime_error("invalid reader offset");
         return std::make_unique<BufferReader>(data_ + offset, size_ - offset);
+    }
+    std::unique_ptr<ByteReader> createRange(size_t offset, size_t length) const override {
+        if (offset > size_ || length > size_ - offset) throw std::runtime_error("invalid reader range");
+        return std::make_unique<BufferReader>(offset ? data_ + offset : data_, length);
     }
 
 private:

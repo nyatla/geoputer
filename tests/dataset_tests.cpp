@@ -113,10 +113,12 @@ void navigationAndGate() {
     check(model.snapshot().action.dataset_action==DatasetAction::Apply,"last detail row requests validated apply/restart");
     data.datasets.loading=data.datasets.applying=true;publish();model.keyPressed(UiKey::Escape,45);model.tick(100000);
     check(model.snapshot().page==SettingsPage::DatasetDetail && model.snapshot().action.kind==ActionKind::None,"committed apply cannot be cancelled or put to sleep");
-    UiModel boot;UiData fatal{};fatal.settings=defaultSettings();fatal.boot.complete=true;fatal.boot.fatal_dataset=true;
-    boot.setScreen({ScreenId::Boot,DisplayMode::View,1,fatal,0,ActionResult::None});
-    for(auto key:{UiKey::Enter,UiKey::Escape,UiKey::OpenSettings,UiKey::Up,UiKey::Other}) {boot.keyPressed(key,1000);boot.tick(100000);}
-    check(boot.snapshot().action.kind==ActionKind::None && boot.mode()==DisplayMode::View,"fatal missing-dataset screen never exits or sleeps");
+    UiModel boot;UiData missing{};missing.settings=defaultSettings();missing.boot.complete=true;
+    missing.boot.dataset(PlaceState::DatasetMissing);
+    boot.setScreen({ScreenId::Boot,DisplayMode::View,1,missing,0,ActionResult::None});
+    boot.keyPressed(UiKey::Enter,1000);
+    check(boot.snapshot().action.kind==ActionKind::ChangeScreen && boot.snapshot().action.target==ScreenId::LivePlace,
+          "missing-dataset startup proceeds to normal Live Place");
 }
 }
 void testDatasets() {metadata();savedSelection();navigationAndGate();}

@@ -37,19 +37,6 @@ void UiRenderer::speedText(const char* value) {
     }
 }
 
-static const char* mainError(const UiData& data) {
-    if (data.storage.log.error != LogError::None) return logErrorName(data.storage.log.error);
-    if (data.storage.log_result == LogError::Io || data.storage.log_result == LogError::BufferFull || data.storage.log_result == LogError::Capacity)
-        return logErrorName(data.storage.log_result);
-    if (data.storage.card_state != CardState::Mounted) return "SD NOT READY";
-    if (datasetUnavailable(data.dataset.state)) return placeStateName(data.dataset.state);
-    if (data.gps.reception == GpsReception::Unavailable) return "GPS UNAVAILABLE";
-    if (data.gps.reception == GpsReception::NoData) return "GPS SIGNAL LOST";
-    if (!data.gps.fix.valid) return "GPS WAITING FOR FIX";
-    if (data.place_state == PlaceState::DatasetMissing) return "RG DATASET MISSING";
-    if ((data.place_state == PlaceState::DataError || data.place_state == PlaceState::EncodingError || data.place_state == PlaceState::AmbiguousFiles)) return "RG LOOKUP FAILED";
-    return nullptr;
-}
 static const char* recordingName(RecordingState state) {
     switch (state) {
         case RecordingState::Stopped: return "STOP";
@@ -69,6 +56,10 @@ void UiRenderer::drawDialog(const UiModel& model, UiLanguage language) {
     const char* accept = "";
     auto detail_role = role;
     switch (dialog.kind()) {
+        case DialogKind::RestartLogger:
+            title = japanese ? "通常起動へ戻る？" : "Restart logger?";
+            accept = japanese ? "再起動" : "Restart";
+            break;
         case DialogKind::PauseLog:
             title = japanese ? "記録を一時停止？" : "Pause logging?";
             accept = japanese ? "一時停止" : "Pause";
@@ -153,7 +144,7 @@ void UiRenderer::draw(const UiModel& model) {
     auto item = [&](int x, int y, const char* value, uint16_t color = TFT_WHITE) {
         font_.draw(frame_, x, y, value, item_role, color);
     };
-    frame_.setDimmed(model.confirming() && !model.datasetWarning());
+    frame_.setDimmed(model.confirming());
     frame_.fillSprite(TFT_BLACK);
     const bool live = content.screen == ScreenId::LivePlace;
     frame_.drawFastHLine(0, live ? 16 : SettingsLayout::HeaderBottom, 240, live ? TFT_WHITE : TFT_DARKGREY);
@@ -164,16 +155,6 @@ void UiRenderer::draw(const UiModel& model) {
         frame_.setDimmed(false);
         if (model.confirming()) drawDialog(model,language);
         frame_.pushSprite(0,0); return;
-    }
-    if (content.screen == ScreenId::Boot && data.boot.fatal_dataset) {
-        text(4,8,"STARTUP ERROR",TFT_RED);
-        if (japanese) {
-            item(4,35,"データセットが",TFT_RED);item(4,55,"見つかりません",TFT_RED);
-        } else item(4,35,"Dataset not found",TFT_RED);
-        std::snprintf(line,sizeof(line),"DATASET %02u",settings.dataset);text(4,84,line);
-        std::snprintf(line,sizeof(line),"LANG %.24s",settings.wordbook_language[0]?settings.wordbook_language:"DEFAULT");text(4,98,line);
-        text(4,124,"RESTORE SD AND RESTART",TFT_YELLOW);
-        frame_.pushSprite(0,0);return;
     }
     if (content.screen == ScreenId::Boot) {
         text(4, 8, "GEOPUTER", TFT_CYAN);
@@ -192,11 +173,9 @@ void UiRenderer::draw(const UiModel& model) {
         }
         std::snprintf(line,sizeof(line),"GPS:MESH  DATASET:%02u",settings.dataset);
         text(4,110,line,TFT_LIGHTGREY);
-        if (!data.boot.complete) text(4, 124, "CHECKING...", TFT_CYAN);
-        else {
-            text(4, 124, data.boot.hasIssues() ? "WITH WARNINGS" : "READY", data.boot.hasIssues() ? TFT_YELLOW : TFT_GREEN);
-            text(132, 124, "ENTER START");
-        }
+        text(4, 124, "F1 MAINT", TFT_CYAN);
+        text(132, 124, data.boot.maintenance ? "ENTERING..." : data.boot.complete ? "ENTER START" : "CHECKING...",
+             data.boot.complete ? TFT_WHITE : TFT_CYAN);
     } else if (content.screen == ScreenId::LivePlace) {
         const auto& gps = data.gps;
         const char* error = mainError(data);
@@ -225,7 +204,13 @@ void UiRenderer::draw(const UiModel& model) {
             std::snprintf(line, sizeof(line), "%d%%", battery.percent);
         } else std::snprintf(line, sizeof(line), "--%%");
         text(204, 4, line, battery.percent >= 0 && battery.percent <= 20 ? battery_fill : TFT_WHITE);
-        if (hasPlace(data) || data.place_state == PlaceState::Ready) {
+        const auto issue = placeIssue(data);
+        if (datasetUnavailable(issue)) {
+            const auto message = datasetIssueText(issue, japanese);
+            for (unsigned i = 0; i < 2; ++i)
+                font_.draw(frame_, LivePlaceLayout::AddressX, LivePlaceLayout::AddressY + i * LivePlaceLayout::AddressStep,
+                           i ? message.second : message.first, TextRole::Place, TFT_WHITE);
+        } else if (hasPlace(data) || data.place_state == PlaceState::Ready) {
             for (unsigned i = 0; i < 2; ++i)
                 font_.draw(frame_, LivePlaceLayout::AddressX, LivePlaceLayout::AddressY + i * LivePlaceLayout::AddressStep,
                            data.place[i], TextRole::Place, TFT_WHITE);
@@ -236,7 +221,7 @@ void UiRenderer::draw(const UiModel& model) {
                         LivePlaceLayout::InfoBottom - LivePlaceLayout::AddressBottom + 1, TFT_WHITE);
         frame_.drawFastHLine(0, LivePlaceLayout::SpeedBottom, LivePlaceLayout::DividerX, TFT_WHITE);
         frame_.drawFastHLine(0, LivePlaceLayout::InfoBottom, 240, TFT_WHITE);
-        const auto detail = formatLiveGps(gps, data.place_fix);
+        const auto detail = formatLiveGps(gps, datasetUnavailable(issue) ? GpsFix{} : data.place_fix);
         text(4, 62, "SPD");
         speedText(detail.speed);
         text(LivePlaceLayout::SpeedUnitX, LivePlaceLayout::SpeedUnitY, detail.speed_unit);
@@ -262,7 +247,8 @@ void UiRenderer::draw(const UiModel& model) {
             text(4, LivePlaceLayout::LogY, line, TFT_WHITE);
             std::snprintf(line, sizeof(line), "BUF %02u/64", data.storage.log.buffered); text(156, LivePlaceLayout::LogY, line, TFT_WHITE);
         }
-        text(4, 124, "F1 PAUSE", rec == RecordingState::Recording ? TFT_WHITE : TFT_DARKGREY);
+        const bool recovery = placeIssue(data) != PlaceState::Ready && loggerStopped(data.recording, data.storage.log);
+        text(4, 124, recovery ? "F1 MAINT" : "0 PAUSE", recovery ? TFT_CYAN : rec == RecordingState::Recording ? TFT_WHITE : TFT_DARKGREY);
         text(84, 124, "1", TFT_CYAN); text(92, 124, ":GPS", TFT_LIGHTGREY);
         text(132, 124, "2", TFT_CYAN); text(140, 124, ":SET", TFT_LIGHTGREY);
         text(180, 124, "3", TFT_CYAN); text(188, 124, ":LOG", TFT_LIGHTGREY);
@@ -359,7 +345,7 @@ void UiRenderer::draw(const UiModel& model) {
         text(4, 124, "ESC/DEL BACK"); text(164, 124, "ENTER OK");
     } else {
         const char* title = model.cardInfo() ? "CARD INFO" :
-                            content.page == SettingsPage::Root ? "SETTINGS" :
+                            content.page == SettingsPage::Root ? (data.boot.maintenance ? "MAINTENANCE" : "SETTINGS") :
                             content.page == SettingsPage::Operation ? "OPERATION" :
                             content.page == SettingsPage::Storage ? "STORAGE" :
                             content.page == SettingsPage::Reset ? "RESET" :
@@ -370,7 +356,7 @@ void UiRenderer::draw(const UiModel& model) {
         std::snprintf(line, sizeof(line), "GPS:%s", gps_state);
         if (content.page == SettingsPage::Licenses) text(140, 7, "< > SOFTWARE", TFT_LIGHTGREY);
         else if (content.page != SettingsPage::About) text(156, 7, line, data.gps.fix.valid ? TFT_GREEN : TFT_LIGHTGREY);
-        text(4, 124, model.confirming() || model.editing() ? "ESC/DEL CANCEL" : "ESC/DEL BACK");
+        text(4, 124, model.confirming() || model.editing() ? "ESC/DEL CANCEL" : data.boot.maintenance && content.page == SettingsPage::Root ? "ESC RESTART" : "ESC/DEL BACK");
         if (content.page == SettingsPage::DatasetList || content.page == SettingsPage::DatasetDetail) {
             const auto& view = data.datasets;
             frame_.fillRect(0,0,240,22,TFT_BLACK);text(4,7,content.page==SettingsPage::DatasetList?"DATASETS":"DATASET DETAIL",TFT_WHITE);
@@ -500,24 +486,8 @@ void UiRenderer::draw(const UiModel& model) {
         frame_.fillRect(0, 119, 120, 16, TFT_BLACK);
         text(4, 124, "WAIT...", TFT_CYAN);
     }
-    if (model.datasetWarning()) {
-        frame_.fillSprite(TFT_BLACK);
-        text(4, 5, "GALUCHAT DATASET", TFT_YELLOW);
-        frame_.drawFastHLine(0, 18, 240, TFT_DARKGREY);
-        item(4, 28, japanese ? "使用できません" : "Dataset unavailable", TFT_YELLOW);
-        if (data.dataset.state == PlaceState::TooManyChunks) {
-            item(4, 56, japanese ? "チャンク数" : "Chunks");
-            std::snprintf(line, sizeof(line), "%llu", static_cast<unsigned long long>(data.dataset.chunks));
-            text(236 - PixelFont::width(line, TextRole::UI), 60, line);
-            item(4, 80, japanese ? "上限" : "Max");
-            std::snprintf(line, sizeof(line), "%lu", static_cast<unsigned long>(data.dataset.limit));
-            text(236 - PixelFont::width(line, TextRole::UI), 84, line);
-        } else item(4, 60, japanese ? "メモリ不足" : "Not enough memory");
-        frame_.drawFastHLine(0, 118, 240, TFT_DARKGREY);
-        text(4, 124, "ESC/DEL/ENTER CLOSE", TFT_LIGHTGREY);
-    }
     frame_.setDimmed(false);
-    if (model.confirming() && !model.datasetWarning()) drawDialog(model, language);
+    if (model.confirming()) drawDialog(model, language);
     frame_.pushSprite(0, 0);
 }
 

@@ -8,6 +8,7 @@ namespace geoputer {
 // Del and Enter are supplied separately by the keyboard driver's state flags.
 inline UiKey mapPhysicalKey(char key, bool fn) {
     switch (key) {
+        case '0': return UiKey::PauseLog;
         case '1': return fn ? UiKey::F1 : UiKey::OpenGpsLogger;
         case '2': return UiKey::OpenSettings;
         case '3': return UiKey::OpenLogs;

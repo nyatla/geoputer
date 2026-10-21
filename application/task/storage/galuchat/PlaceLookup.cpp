@@ -5,20 +5,12 @@
 #include <cctype>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 #include <dirent.h>
 #include <sys/stat.h>
 
 namespace geoputer {
 
-PlaceAccessMode PlaceLookup::accessMode(const PlaceRequest& request) const {
-    try {
-        if (map_ && request.fix.valid && map_->isCached(request.fix.longitude, request.fix.latitude))
-            return PlaceAccessMode::Cache;
-    } catch (const std::exception&) {
-        // Invalid coordinates are diagnosed by search(), never by the indicator.
-    }
-    return PlaceAccessMode::Reload;
-}
 namespace {
 bool endsWith(const std::string& name, const char* suffix) {
     const std::string end(suffix);
@@ -53,13 +45,25 @@ bool PlaceLookup::describe(DatasetDetail& result) const {
     return true;
 }
 
-void PlaceLookup::close() {
+void PlaceLookup::releaseReaders() {
     const bool had_reader = wordbook_ || map_;
     wordbook_cache_.clear();
     display_ = {};
     wordbook_.reset(); map_.reset();
-    dataset_ = {};
     if (had_reader && observer_) observer_->cacheState(RgCacheState::Unprepared, true);
+}
+
+void PlaceLookup::close() {
+    releaseReaders();
+    auto generation = dataset_.generation + 1;
+    if (!generation) ++generation;
+    dataset_ = {PlaceState::Waiting, 0, config::MaxDatasetChunks, generation};
+}
+
+PlaceState PlaceLookup::reject(PlaceState state) {
+    releaseReaders();
+    dataset_.state = state;
+    return state;
 }
 
 PlaceState PlaceLookup::open() {
@@ -67,14 +71,19 @@ PlaceState PlaceLookup::open() {
     // A rejected dataset stays rejected until an explicit close/re-open (e.g.
     // SD remount). GPS samples must not repeatedly scan an unusable file.
     if (datasetUnavailable(dataset_.state)) return dataset_.state;
-    close();
     dataset_.limit = config::MaxDatasetChunks;
     std::string mapPath, wordbookPath;
     unsigned maps = 0, books = 0;
     if (manifest_) {
         const auto metadata = readDatasetMetadata(directory_, UiLanguage::Japanese, language_.c_str(), observer_);
-        if (metadata.error != DatasetError::None)
-            return metadata.error == DatasetError::Missing ? PlaceState::DatasetMissing : PlaceState::DataError;
+        if (metadata.error != DatasetError::None) {
+            switch (metadata.error) {
+                case DatasetError::Missing: return PlaceState::DatasetMissing;
+                case DatasetError::Version: return PlaceState::VersionError;
+                case DatasetError::Data: return PlaceState::DataError;
+                default: return PlaceState::MetadataError;
+            }
+        }
         language_ = metadata.language;
         display_ = metadata.display;
         mapPath = directory_ + "/" + metadata.map;
@@ -107,15 +116,21 @@ PlaceState PlaceLookup::open() {
     // exposes the already-mounted FatFs volume at /sd; do not mount SD twice.
     std::unique_ptr<CachedMapReader> map;
     try {
-        map = std::make_unique<CachedMapReader>(
-            std::make_shared<ObservedFileReaderFactory>(mapPath, observer_, &timing_.map_io), observer_);
+        auto factory = std::make_shared<ObservedFileReaderFactory>(
+            mapPath, observer_, &timing_.map_io,
+            FileReadOptions{config::MapInitReadBufferBytes, config::FileReadThroughSkipBytes});
+        map = std::make_unique<CachedMapReader>(factory, observer_);
+        // Index construction has released its Readers. Only future rectangle
+        // Readers use this profile; no live buffer is resized.
+        factory->setReadOptions({config::MapRectReadBufferBytes, config::FileReadThroughSkipBytes});
     } catch (const galuchat::MapCountLimitExceeded& error) {
         dataset_.chunks = error.count;
         return dataset_.state = PlaceState::TooManyChunks;
     }
     dataset_.chunks = map->chunkCount();
     auto book = std::make_unique<galuchat::GaluchatGisWordBookReader>(
-        std::make_shared<ObservedFileReaderFactory>(wordbookPath, observer_, &timing_.wordbook_io), 0);
+        std::make_shared<ObservedFileReaderFactory>(wordbookPath, observer_, &timing_.wordbook_io,
+            FileReadOptions{config::WordBookReadBufferBytes, config::FileReadThroughSkipBytes}), 0);
     auto encoding = metadataString(book->metadata(), "token_encoding");
     if (encoding.empty()) encoding = metadataString(book->metadata(), "text_encoding");
     for (auto& c : encoding) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
@@ -128,17 +143,12 @@ PlaceState PlaceLookup::open() {
 PlaceResult PlaceLookup::prepare() {
     PlaceResult result{};
     try { result.state = open(); }
-    catch (const std::bad_alloc&) {
-        const auto info = dataset_;
-        close();
-        dataset_ = info;
-        result.state = dataset_.state = PlaceState::OutOfMemory;
-    }
+    catch (const std::bad_alloc&) { result.state = PlaceState::OutOfMemory; }
     catch (const std::exception& error) {
-        close();
         result.state = PlaceState::DataError;
         std::snprintf(result.detail, sizeof(result.detail), "%s", error.what());
     }
+    if (datasetUnavailable(result.state)) reject(result.state);
     result.dataset = dataset_;
     if (result.state == PlaceState::TooManyChunks)
         std::snprintf(result.detail, sizeof(result.detail), "Chunks: %llu / Max: %lu",
@@ -151,18 +161,21 @@ PlaceResult PlaceLookup::search(const PlaceRequest& request) {
     ElapsedTime total(timing_.total_us);
     PlaceResult result{};
     result.request = request;
+    result.dataset = dataset_;
+    if (datasetUnavailable(dataset_.state)) { result.state = dataset_.state; return result; }
     if (!request.fix.valid || !std::isfinite(request.fix.latitude) || !std::isfinite(request.fix.longitude) ||
         std::abs(request.fix.latitude) > 90 || std::abs(request.fix.longitude) > 180) {
         result.state = PlaceState::NoFix;
         return result;
     }
+    bool formatting = false;
     try {
         {
             ElapsedTime elapsed(timing_.open_us);
             result.state = open();
         }
         result.dataset = dataset_;
-        if (result.state != PlaceState::Ready) return result;
+        if (result.state != PlaceState::Ready) { reject(result.state); result.dataset = dataset_; return result; }
         uint32_t code;
         const auto misses = map_->stats().misses;
         try {
@@ -187,27 +200,24 @@ PlaceResult PlaceLookup::search(const PlaceRequest& request) {
             if (!wordbook_->readStringSetByCode(code, components)) throw std::runtime_error("invalid region code");
         }
         result.region_code = code;
-        try {
+        formatting = true;
+        {
             ElapsedTime elapsed(timing_.text_us);
             formatPlaceLines(components, result.lines, display_);
             wordbook_cache_.remember(static_cast<uint32_t>(code), result.lines);
-        } catch (const std::bad_alloc&) {
-            throw;
-        } catch (const std::exception& error) {
-            result.state = PlaceState::EncodingError;
-            std::snprintf(result.detail, sizeof(result.detail), "%s", error.what());
         }
     } catch (const std::bad_alloc&) {
-        const auto info = dataset_;
-        close();
-        dataset_ = info;
-        result.state = dataset_.state = PlaceState::OutOfMemory;
-        result.dataset = dataset_;
+        result.state = PlaceState::OutOfMemory;
     } catch (const std::exception& error) {
-        close();
-        result.state = PlaceState::DataError;
+        result.state = formatting ? PlaceState::EncodingError : PlaceState::DataError;
         std::snprintf(result.detail, sizeof(result.detail), "%s", error.what());
     }
+    if (datasetUnavailable(result.state)) {
+        reject(result.state);
+        result.region_code = 0;
+        std::memset(result.lines, 0, sizeof(result.lines));
+    }
+    result.dataset = dataset_;
     return result;
 }
 

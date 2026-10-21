@@ -20,7 +20,7 @@ void testFonts() {
           "ASCII and Japanese use original Shinonome 16-dot bitmaps rather than scaled 8-dot glyphs");
     check(std::memcmp(shinonomeGlyph('A'), shinonomeGlyph(U'Ａ'), sizeof(native_a)) == 0,
           "ASCII selects the native full-width letter at the same weight as Japanese");
-    for (const auto character : U"動作設定ストレージ操作初期化ライセンス情報カード再マウント安全な取り外しでフォーマット千葉県習志野市鷺沼使用できませんチャンク数上限メモリ不足") {
+    for (const auto character : U"動作設定ストレージ操作初期化ライセンス情報カード再マウント安全な取り外しでフォーマット千葉県習志野市鷺沼使用できませんチャンク数上限メモリ不足構成不正形式未対応地図読込用文字コード見つかりません") {
         if (character) check(shinonomeGlyph(character) != shinonomeGlyph(U'□'), "required menu/place glyph is available");
     }
     check(shinonomeGlyph(U'°') != shinonomeGlyph(U'□'), "native degree glyph exists for large HDG");

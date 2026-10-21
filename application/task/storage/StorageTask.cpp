@@ -114,35 +114,24 @@ void StorageTask::handle(const StorageRequest& request) {
     }
     if (request.kind == MessageKind::LoadSettings || request.kind == MessageKind::SearchPlace ||
         request.kind == MessageKind::CheckDataset) {
-        if (!has_job_ && !has_completion_) {
-            has_job_ = true;
-            load_job_ = request.kind == MessageKind::LoadSettings;
-            search_job_ = request.kind == MessageKind::SearchPlace;
-            dataset_job_ = request.kind == MessageKind::CheckDataset;
-            place_request_ = search_job_ ? request.payload.place_request : PlaceRequest{};
+        if (!hasJob() && !has_completion_) {
+            job_kind_ = request.kind == MessageKind::LoadSettings ? JobKind::LoadSettings :
+                        request.kind == MessageKind::SearchPlace ? JobKind::SearchPlace : JobKind::CheckDataset;
+            place_request_ = request.kind == MessageKind::SearchPlace ? request.payload.place_request : PlaceRequest{};
             job_ = {}; job_request_id_ = request.request_id;
             state_.busy = true;
         }
         return;
     }
-    pending_return_ = {};
-    pending_return_.kind = MessageKind::SyncReturn;
-    pending_return_.source = TaskId::Storage;
-    pending_return_.request_id = request.request_id;
-    pending_return_.sequence = ++sequence_;
-    pending_return_.sent_at_ms = taskTimeMs();
-    pending_return_.payload.result = {};
+    prepareSyncReturn(pending_return_, TaskId::Storage, request, ++sequence_);
     auto& result = pending_return_.payload.result;
-    result.request_kind = request.kind;
-    result.status = OperationStatus::InvalidRequest;
     if(request.kind==MessageKind::UsbExportOperation) {
         handleUsbExport(request,result);
     } else if (request.kind == MessageKind::DatasetOperation) {
-        if (!usb_mode_ && initialized_ && !has_read_ && !has_job_ && !has_completion_) {
+        if (!usb_mode_ && initialized_ && !has_read_ && !hasJob() && !has_completion_) {
             dataset_request_ = request.payload.dataset;
             dataset_request_.language[sizeof(dataset_request_.language)-1] = 0;
-            has_job_ = dataset_browser_job_ = true;
-            load_job_ = search_job_ = dataset_job_ = false;
+            job_kind_ = JobKind::BrowseDatasets;
             job_ = {}; job_request_id_ = request.request_id;
             state_.busy = true; ++state_.revision; result.status = OperationStatus::Ok;
         } else result.status = OperationStatus::Unavailable;
@@ -175,7 +164,7 @@ void StorageTask::handle(const StorageRequest& request) {
     } else if (request.kind == MessageKind::GetStorageStatus) {
         result.status = initialized_ ? OperationStatus::Ok : OperationStatus::Unavailable;
     } else if(request.kind==MessageKind::ListLogs || request.kind==MessageKind::ReadLogSummary || request.kind==MessageKind::ReadLogRecords || request.kind==MessageKind::DeleteLog) {
-        if(initialized_ && !has_read_ && !has_job_ && !has_completion_ &&
+        if(initialized_ && !has_read_ && !hasJob() && !has_completion_ &&
            (!usb_mode_ || (usb_.local() && state_.card_state==CardState::Mounted &&
                            state_.export_job.phase==ExportPhase::Selecting && request.kind==MessageKind::ListLogs))) {
             auto read=request.payload.log_read;
@@ -200,7 +189,7 @@ void StorageTask::handle(const StorageRequest& request) {
         state_.log_result = error;
         ++state_.revision;
         result.status = error == LogError::None ? OperationStatus::Ok : OperationStatus::Unavailable;
-    } else if (initialized_ && !has_job_ && !has_completion_ &&
+    } else if (initialized_ && !hasJob() && !has_completion_ &&
                (request.kind == MessageKind::SaveSettings || request.kind == MessageKind::OperateStorage)) {
         const auto command = request.payload.storage_command;
         const bool saving = request.kind == MessageKind::SaveSettings &&
@@ -214,7 +203,7 @@ void StorageTask::handle(const StorageRequest& request) {
             (((!usb_mode_ && sd_operation) || mode_operation) && !has_read_ && !log_writer_.hasRetainedSession() &&
               (!usb_mode_ || (usb_work_==UsbWork::None && state_.export_job.phase==ExportPhase::Idle)))) {
             job_ = command; job_request_id_ = request.request_id;
-            has_job_ = true; load_job_ = false; search_job_ = false; dataset_job_ = false;
+            job_kind_ = JobKind::Operation;
             state_.busy = true; state_.operation = command.operation;
             if (saving) state_.settings_state = SettingsState::Saving;
             ++state_.revision;
@@ -231,7 +220,11 @@ void StorageTask::sendReturn() {
 }
 
 void StorageTask::completeJob() {
-    if (dataset_browser_job_) {
+    const bool load_job = job_kind_ == JobKind::LoadSettings;
+    const bool search_job = job_kind_ == JobKind::SearchPlace;
+    const bool dataset_job = job_kind_ == JobKind::CheckDataset;
+    const bool read_job = load_job || search_job || dataset_job;
+    if (job_kind_ == JobKind::BrowseDatasets) {
         DatasetView view{};
         const bool applying = dataset_request_.action == DatasetAction::Apply;
         if (applying && log_writer_.hasRetainedSession()) view.error = DatasetError::NotStopped;
@@ -246,6 +239,8 @@ void StorageTask::completeJob() {
             view.restart_required = candidate.dataset != state_.settings.dataset ||
                 std::strcmp(candidate.wordbook_language, state_.settings.wordbook_language);
             if (!saveSettings(candidate)) view.error = DatasetError::SaveFailed;
+            else if (!view.restart_required)
+                place_lookup_.configure(DatasetCatalog{}.directory(candidate.dataset), candidate.wordbook_language);
         }
         view.applying = applying; view.revision = dataset_request_.token;
         state_.busy = has_read_; ++state_.revision;
@@ -255,7 +250,7 @@ void StorageTask::completeJob() {
         auto& result = completion_.payload.storage_completion;
         result.request_id = job_request_id_; result.snapshot = state_;
         result.read_kind = StorageReadKind::DatasetBrowser; result.dataset_view = view;
-        has_completion_ = true; has_job_ = dataset_browser_job_ = false;
+        has_completion_ = true; job_kind_ = JobKind::None;
         return;
     }
     bool ok = false;
@@ -264,15 +259,16 @@ void StorageTask::completeJob() {
     const uint32_t started_us = micros();
     const auto cache_before = place_lookup_.cacheStats();
     const auto wordbook_before = place_lookup_.wordBookCacheStats();
-    if (search_job_ || dataset_job_) {
+    if (search_job || dataset_job) {
+        if (dataset_job) place_lookup_.configure(DatasetCatalog{}.directory(state_.settings.dataset), state_.settings.wordbook_language);
         if (mounted_ && state_.card_state == CardState::Mounted)
-            place = dataset_job_ ? place_lookup_.prepare() : place_lookup_.search(place_request_);
-        else { place.request = place_request_; place.state = PlaceState::NoCard; }
+            place = dataset_job ? place_lookup_.prepare() : place_lookup_.search(place_request_);
+        else { place.request = place_request_; place.state = PlaceState::NoCard; place.dataset = place_lookup_.datasetInfo(); place.dataset.state = PlaceState::NoCard; }
         ok = place.state == PlaceState::Ready || place.state == PlaceState::NotFound;
-        if (dataset_job_ && place.state == PlaceState::Ready && !state_.settings.wordbook_language[0])
+        if (dataset_job && place.state == PlaceState::Ready && !state_.settings.wordbook_language[0])
             std::snprintf(state_.settings.wordbook_language, sizeof(state_.settings.wordbook_language), "%s",
                           place_lookup_.selectedLanguage().c_str());
-    } else if (load_job_) ok = loadSettings();
+    } else if (load_job) ok = loadSettings();
     else switch (job_.operation) {
         case StorageOperation::SaveSettings: ok = saveSettings(job_.settings); break;
         case StorageOperation::Remount: mountCard(); ok = state_.card_state == CardState::Mounted; break;
@@ -298,8 +294,8 @@ void StorageTask::completeJob() {
     state_.operation_ok = ok;
     ++state_.revision;
     completion_ = {};
-    completion_.kind = !ok ? (load_job_ || search_job_ || dataset_job_ ? MessageKind::ReadFailed : MessageKind::StorageError) :
-                       load_job_ || search_job_ || dataset_job_ ? MessageKind::ReadCompleted :
+    completion_.kind = !ok ? (read_job ? MessageKind::ReadFailed : MessageKind::StorageError) :
+                       read_job ? MessageKind::ReadCompleted :
                        job_.operation == StorageOperation::SaveSettings ? MessageKind::SettingsWritten :
                        MessageKind::StorageOperationCompleted;
     completion_.source = TaskId::Storage;
@@ -312,12 +308,12 @@ void StorageTask::completeJob() {
     result.operation_id = job_.operation_id;
     state_.log = log_writer_.snapshot();
     result.snapshot = state_;
-    result.read_kind = dataset_job_ ? StorageReadKind::Dataset : search_job_ ? StorageReadKind::Place :
-                       load_job_ ? StorageReadKind::Settings : StorageReadKind::None;
+    result.read_kind = dataset_job ? StorageReadKind::Dataset : search_job ? StorageReadKind::Place :
+                       load_job ? StorageReadKind::Settings : StorageReadKind::None;
     result.place = place;
     has_completion_ = true;
-    has_job_ = false;
-    if (search_job_ || dataset_job_) {
+    job_kind_ = JobKind::None;
+    if (search_job || dataset_job) {
         const auto cache = place_lookup_.cacheStats();
         const auto wordbook = place_lookup_.wordBookCacheStats();
         Console.printf("[DATASET] chunks=%llu max=%lu state=%s\n",
@@ -327,19 +323,19 @@ void StorageTask::completeJob() {
                                   placeStateName(place.state), static_cast<long long>(place.region_code), place.detail,
                                   static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)), ESP.getFreeHeap(),
                                   ESP.getMinFreeHeap(), static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT)));
-        if (search_job_) Console.printf("[CACHE] %s bytes=%u hit=%lu miss=%lu fill=%lu valid=%u rect=%d,%d,%d,%d elapsed_us=%lu\n",
+        if (search_job) Console.printf("[CACHE] %s bytes=%u hit=%lu miss=%lu fill=%lu valid=%u rect=%d,%d,%d,%d elapsed_us=%lu\n",
                                       cache.valid ? (cache.hits > cache_before.hits ? "HIT" : "MISS") : "INVALID",
                                       static_cast<unsigned>(cache.bytes), static_cast<unsigned long>(cache.hits),
                                       static_cast<unsigned long>(cache.misses), static_cast<unsigned long>(cache.fills),
                                       cache.valid, cache.bounds.x, cache.bounds.y, CachedMapReader::Side, CachedMapReader::Side,
                                       static_cast<unsigned long>(micros() - started_us));
-        if (search_job_) Console.printf("[WORDBOOK] %s entries=%u/%u hit=%lu miss=%lu\n",
+        if (search_job) Console.printf("[WORDBOOK] %s entries=%u/%u hit=%lu miss=%lu\n",
                                       place.state != PlaceState::Ready ? "NONE" :
                                       wordbook.hits != wordbook_before.hits ? "HIT" : "MISS",
                                       static_cast<unsigned>(wordbook.entries), static_cast<unsigned>(WordBookCache::Capacity),
                                       static_cast<unsigned long>(wordbook.hits),
                                       static_cast<unsigned long>(wordbook.misses));
-        if (search_job_ && mounted_ && state_.card_state == CardState::Mounted) {
+        if (search_job && mounted_ && state_.card_state == CardState::Mounted) {
             const auto& time = place_lookup_.readTiming();
             Console.printf("[READ-TIME] total_us=%llu open_us=%llu map_us=%llu rect_us=%llu wordbook_us=%llu text_us=%llu\n",
                           static_cast<unsigned long long>(time.total_us), static_cast<unsigned long long>(time.open_us),
@@ -462,16 +458,16 @@ void StorageTask::run() {
         StorageRequest request{};
         // Keep the one accepted operation/result until delivered. An incoming
         // read notification must never be consumed and silently discarded.
-        if (!has_return_ && !has_job_ && !has_completion_ && inbox().receive(request)) { handle(request); sendReturn(); }
+        if (!has_return_ && !hasJob() && !has_completion_ && inbox().receive(request)) { handle(request); sendReturn(); }
         // Display notifications never gate physical work. Only accepted job/results are retained.
-        if (!has_return_ && has_job_) completeJob();
-        if (!usb_mode_ && !has_return_ && !has_job_ && !has_completion_) flushLog();
-        if (!has_return_ && !has_job_ && !has_completion_ && has_read_ && (!usb_mode_ || usb_.local())) {
+        if (!has_return_ && hasJob()) completeJob();
+        if (!usb_mode_ && !has_return_ && !hasJob() && !has_completion_) flushLog();
+        if (!has_return_ && !hasJob() && !has_completion_ && has_read_ && (!usb_mode_ || usb_.local())) {
             if(usb_mode_ && usb_work_==UsbWork::PublishMenu) log_reader_.cancel();
             stepLogRead();
         }
         if (usb_mode_) {
-            if(!has_return_ && !has_job_ && !has_read_ && !has_completion_) stepUsbExport();
+            if(!has_return_ && !hasJob() && !has_read_ && !has_completion_) stepUsbExport();
             const auto view = usb_.snapshot();
             if (!(view == state_.usb)) { state_.usb = view; ++state_.revision; usb_dirty_ = true; }
             if (usb_dirty_) {

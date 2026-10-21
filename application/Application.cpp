@@ -18,28 +18,13 @@ bool Application::begin(bool usb_mode) {
     if (usb_mode_) return beginUsb();
     data_.boot.set(BootItem::Display, BootCheckState::Passed, "240X135");
     data_.boot.set(BootItem::Tasks, BootCheckState::Checking, "STARTING");
-    data_.boot.set(BootItem::GPS, BootCheckState::Checking, "UART INIT");
+    data_.boot.set(BootItem::GPS, BootCheckState::Checking, "DEFERRED");
     if (!setScreen(ScreenId::Boot)) return false;
-    GpsRequest request{};
-    request.kind = MessageKind::StartGpsReception;
-    SyncReturn result{};
-    const bool gps_started = gps_.initialize() && gps_.start("GPS", 4096, 2);
-    if (!gps_started ||
-        !callTask(TaskId::GPS, gps_.inbox(), request, result) || result.status != OperationStatus::Ok) {
-        data_.gps = {};
-        data_.gps.reception = GpsReception::Unavailable;
-        ++data_.revision;
-        ui_data_dirty_ = true;
-        Console.println("[APP] GPS initialization failed; UI remains available");
-        data_.boot.set(BootItem::GPS, BootCheckState::Failed, "UART ERR");
-    } else {
-        applyGpsSnapshot(data_.gps, result.gps);
-        data_.boot.set(BootItem::GPS, BootCheckState::Passed, "UART OK");
-    }
     data_.boot.set(BootItem::Settings, BootCheckState::Checking, "NVS INIT");
     data_.boot.set(BootItem::SD, BootCheckState::Checking, "MOUNTING");
     bootChanged();
     if (!publishUiContent()) return false;
+    SyncReturn result{};
     StorageRequest storage_request{};
     storage_request.kind = MessageKind::InitializeStorage;
     const bool storage_started = storage_.initialize() && storage_.start("Storage", 12288, 1);
@@ -48,13 +33,14 @@ bool Application::begin(bool usb_mode) {
         message("STORAGE UNAVAILABLE");
         data_.boot.set(BootItem::Settings, BootCheckState::Failed, "NO STORE");
         data_.boot.set(BootItem::SD, BootCheckState::Failed, "NO STORE");
-        boot_stage_ = BootStage::NeedDataset;
+        boot_stage_ = BootStage::SelectMode;
+        boot_selection_at_ = taskTimeMs();
     } else {
         applyStorage(result.storage);
         data_.boot.card(result.storage.card_state);
     }
-    data_.boot.set(BootItem::Tasks, gps_started && storage_started ? BootCheckState::Passed : BootCheckState::Failed,
-                   gps_started && storage_started ? "4T/5Q" : "TASK ERR");
+    data_.boot.set(BootItem::Tasks, storage_started ? BootCheckState::Passed : BootCheckState::Failed,
+                   storage_started ? "3T/4Q" : "TASK ERR");
     Console.printf("[MEMORY] messages ui=%u gps=%u storage=%u notify=%u return=%u sd_files=%u frame_bpp=%u\n",
                   static_cast<unsigned>(sizeof(UiRequest)), static_cast<unsigned>(sizeof(GpsRequest)),
                   static_cast<unsigned>(sizeof(StorageRequest)), static_cast<unsigned>(sizeof(AppNotification)),
@@ -134,31 +120,31 @@ void Application::handleNotification(const AppNotification& event) {
         if(completed.read_kind==StorageReadKind::LogBrowse) { completeBrowser(completed.logs); return; }
         if (completed.read_kind == StorageReadKind::Log) { log_retry_at_ = taskTimeMs(); return; }
         if (completed.read_kind == StorageReadKind::Dataset) {
-            data_.dataset = completed.place.dataset;
-            ++data_.revision;
-            ui_data_dirty_ = true;
-            if (screen_ == ScreenId::Boot && boot_stage_ == BootStage::WaitDataset &&
-                completed.request_id == BootDatasetRequest) {
-                data_.boot.dataset(completed.place.state);
-                boot_stage_ = BootStage::Complete;
-                bootChanged();
+            if (completed.request_id != dataset_check_waiting_) return;
+            dataset_check_waiting_ = 0;
+            if (applyDatasetInfo(data_.dataset, completed.place.dataset)) refreshPlace();
+            if (screen_ == ScreenId::Boot && boot_stage_ == BootStage::WaitDataset && completed.request_id == BootDatasetRequest) {
+                data_.boot.dataset(completed.place.state); boot_stage_ = BootStage::Complete; bootChanged();
             }
             return;
         }
-        if (completed.read_kind == StorageReadKind::Settings && screen_ == ScreenId::Boot &&
+        if (completed.read_kind == StorageReadKind::Settings &&
             boot_stage_ == BootStage::WaitSettings && completed.request_id == BootSettingsRequest) {
             data_.boot.settings(completed.snapshot.settings_state);
-            boot_stage_ = BootStage::NeedDataset;
+            boot_stage_ = BootStage::SelectMode;
+            boot_selection_at_ = taskTimeMs();
             bootChanged();
             return;
         }
         if (completed.read_kind == StorageReadKind::Place) {
             const auto& place = completed.place;
-            data_.dataset = place.dataset;
+            if (!place_flow_.owns(completed.request_id)) return;
+            const bool accepted = applyDatasetInfo(data_.dataset, place.dataset);
+            if (accepted && datasetUnavailable(data_.dataset.state)) refreshPlace();
             ++data_.revision;
             ui_data_dirty_ = true;
             const bool current = place_flow_.completed(completed.request_id, place.request.screen_generation, generation_);
-            if (current && screen_ == ScreenId::LivePlace && mode_ == DisplayMode::View && data_.gps.fix.valid) {
+            if (current && accepted && !datasetUnavailable(data_.dataset.state) && screen_ == ScreenId::LivePlace && mode_ == DisplayMode::View && data_.gps.fix.valid) {
                 completePlacePresentation(data_, place);
                 ++data_.revision;
                 ui_data_dirty_ = true;
@@ -176,8 +162,8 @@ void Application::handleNotification(const AppNotification& event) {
             restart_pending_ = true;
         } else if (completed.snapshot.operation == StorageOperation::SaveSettings) message("SETTINGS SAVED");
         else if (completed.snapshot.operation == StorageOperation::Unmount) message("SAFE TO REMOVE SD");
-        else if (completed.snapshot.operation == StorageOperation::Format) message("FAT32 FORMAT COMPLETE");
-        else if (completed.snapshot.operation == StorageOperation::Remount) { data_.dataset = {}; message("SD MOUNTED"); refreshPlace(); }
+        else if (completed.snapshot.operation == StorageOperation::Format) { dataset_check_needed_ = true; message("FAT32 FORMAT COMPLETE"); refreshPlace(); }
+        else if (completed.snapshot.operation == StorageOperation::Remount) { dataset_check_needed_ = true; message("SD MOUNTED"); refreshPlace(); }
     }
     if (event.source == TaskId::GPS &&
         (event.kind == MessageKind::GpsSampleReady || event.kind == MessageKind::GpsStatusChanged)) {
@@ -250,6 +236,29 @@ void Application::readUiContent() {
         if (!publishUiContent(action.action_id, ActionResult::Applied)) ui_changed_ = true;
         return;
     }
+    if (action.kind == ActionKind::Maintenance && !usb_mode_ && mode_ == DisplayMode::View &&
+        (screen_ == ScreenId::Boot || (screen_ == ScreenId::LivePlace && placeIssue(data_) != PlaceState::Ready))) {
+        const bool allowed = datasetChangeReady() && !restart_pending_;
+        if (allowed) {
+            data_.boot.maintenance = true;
+            bootChanged();
+            Console.println("[BOOT] maintenance requested; automatic GPS/GIS startup disabled");
+        } else message("STOP LOGGER FIRST");
+        last_processed_action_ = action.action_id;
+        if (!publishUiContent(action.action_id, allowed ? ActionResult::Applied : ActionResult::Rejected)) ui_changed_ = true;
+        if (allowed && screen_ != ScreenId::Boot) enterMaintenance();
+        return;
+    }
+    if (action.kind == ActionKind::RestartLogger && data_.boot.maintenance && screen_ == ScreenId::Settings &&
+        content.page == SettingsPage::Root && action.confirmed && datasetChangeReady()) {
+        // Do not interrupt a storage operation; its completion must be observed first.
+        const bool allowed = !data_.storage.busy && !storage_operation_id_ && !dataset_waiting_;
+        if (allowed) restart_pending_ = true;
+        else message("STORAGE BUSY");
+        last_processed_action_ = action.action_id;
+        if (!publishUiContent(action.action_id, allowed ? ActionResult::Applied : ActionResult::Rejected)) ui_changed_ = true;
+        return;
+    }
     if (action.kind == ActionKind::Wake && mode_ == DisplayMode::Background) {
         if (!setScreen(ScreenId::LivePlace, action.action_id, ActionResult::Applied)) ui_changed_ = true;
         return;
@@ -260,7 +269,7 @@ void Application::readUiContent() {
         if(!publishUiContent(action.action_id,ok?ActionResult::Applied:ActionResult::Rejected))ui_changed_=true;
         return;
     }
-    if (action.kind == ActionKind::Sleep && mode_ == DisplayMode::View) {
+    if (action.kind == ActionKind::Sleep && !data_.boot.maintenance && mode_ == DisplayMode::View) {
         mode_ = DisplayMode::Background;
         last_processed_action_ = action.action_id;
         if (!publishUiContent(action.action_id, ActionResult::Applied)) ui_changed_ = true;
@@ -303,9 +312,9 @@ void Application::readUiContent() {
         if(before==generation_ && !publishUiContent(action.action_id,accepted?ActionResult::Applied:ActionResult::Rejected)) ui_changed_=true;
         return;
     }
-    const bool valid = action.kind == ActionKind::ChangeScreen && content.screen == screen_ &&
+    const bool valid = !data_.boot.maintenance && action.kind == ActionKind::ChangeScreen && content.screen == screen_ &&
                        action.screen_generation == generation_ && content.screen_generation == generation_ &&
-                       ((screen_ == ScreenId::Boot && data_.boot.complete && !data_.boot.fatal_dataset && action.target == ScreenId::LivePlace) ||
+                       ((screen_ == ScreenId::Boot && data_.boot.complete && action.target == ScreenId::LivePlace) ||
                         (screen_ == ScreenId::LivePlace && (action.target == ScreenId::GpsLogger || action.target == ScreenId::Settings || action.target==ScreenId::Logs)) ||
                         ((screen_ == ScreenId::Settings || screen_ == ScreenId::GpsLogger) && action.target == ScreenId::LivePlace) ||
                         (screen_==ScreenId::Logs && action.target==ScreenId::LivePlace) ||
@@ -349,7 +358,7 @@ void Application::applyStorage(const StorageSnapshot& state) {
         (log.revision && log.revision == data_.storage.log.revision)) data_.storage.log_result = log_result;
     applyActivity(data_.storage.rg, rg);
     applyActivity(data_.storage.sd, sd);
-    if (!usb_mode_ && old_card != state.card_state && state.card_state == CardState::Mounted) { data_.dataset = {}; refreshPlace(); }
+    if (!usb_mode_ && old_card != state.card_state && state.card_state == CardState::Mounted) { refreshPlace(); }
     if (state.settings_state == SettingsState::Defaults || state.settings_state == SettingsState::Loaded ||
         state.settings_state == SettingsState::Saved) data_.settings = state.settings;
     ++data_.revision;
@@ -404,9 +413,9 @@ void Application::refreshPlace() {
 }
 
 bool Application::canSearchPlace() const {
-    return screen_ == ScreenId::LivePlace && mode_ == DisplayMode::View && data_.gps.fix.valid &&
+    return !data_.boot.maintenance && screen_ == ScreenId::LivePlace && mode_ == DisplayMode::View && data_.gps.fix.valid &&
            data_.storage.card_state == CardState::Mounted && !data_.storage.busy &&
-           !datasetUnavailable(data_.dataset.state);
+           data_.dataset.state == PlaceState::Ready && !dataset_check_needed_ && !dataset_check_waiting_;
 }
 
 void Application::requestPlace() {
@@ -431,9 +440,58 @@ void Application::bootChanged() {
     ui_data_dirty_ = true;
 }
 
+void Application::initializeGps() {
+    GpsRequest request{};
+    request.kind = MessageKind::StartGpsReception;
+    SyncReturn result{};
+    const bool gps_started = gps_.initialize() && gps_.start("GPS", 4096, 2);
+    if (!gps_started ||
+        !callTask(TaskId::GPS, gps_.inbox(), request, result) || result.status != OperationStatus::Ok) {
+        data_.gps = {};
+        data_.gps.reception = GpsReception::Unavailable;
+        ++data_.revision;
+        ui_data_dirty_ = true;
+        Console.println("[APP] GPS initialization failed; UI remains available");
+        data_.boot.set(BootItem::GPS, BootCheckState::Failed, "UART ERR");
+    } else {
+        applyGpsSnapshot(data_.gps, result.gps);
+        data_.boot.set(BootItem::GPS, BootCheckState::Passed, "UART OK");
+    }
+    const bool tasks_ok = gps_started && data_.boot.checks[static_cast<unsigned>(BootItem::Tasks)].state == BootCheckState::Passed;
+    data_.boot.set(BootItem::Tasks, tasks_ok ? BootCheckState::Passed : BootCheckState::Failed, tasks_ok ? "4T/5Q" : "TASK ERR");
+    bootChanged();
+}
+
+void Application::enterMaintenance() {
+    if (screen_ == ScreenId::Settings) return;
+    // No new boot job may be scheduled after this point. An already-running
+    // Storage job retains ownership and may complete; UI-only menus remain usable.
+    boot_stage_ = BootStage::Complete;
+    if (screen_ == ScreenId::Boot) {
+        if (data_.boot.checks[static_cast<unsigned>(BootItem::GPS)].state == BootCheckState::Checking)
+            data_.boot.set(BootItem::GPS, BootCheckState::Warning, "SKIPPED");
+        if (data_.boot.checks[static_cast<unsigned>(BootItem::Dataset)].state == BootCheckState::Pending)
+            data_.boot.set(BootItem::Dataset, BootCheckState::Warning, "SKIPPED");
+    }
+    bootChanged();
+    if (setScreen(ScreenId::Settings)) Console.println("[BOOT] maintenance settings ready; automatic GPS logging/GIS disabled");
+}
+
 void Application::advanceBoot() {
+    if (data_.boot.maintenance && boot_stage_ != BootStage::NeedSettings && boot_stage_ != BootStage::WaitSettings) {
+        enterMaintenance();
+        return;
+    }
     if (screen_ != ScreenId::Boot) return;
+    if (boot_stage_ == BootStage::SelectMode) {
+        if (taskTimeMs() - boot_selection_at_ < config::BootMaintenanceWindowMs) return;
+        initializeGps();
+        boot_stage_ = BootStage::NeedDataset;
+        // A key may have arrived while waiting for GPS's synchronous result.
+        if (ui_changed_) return;
+    }
     if (boot_stage_ == BootStage::NeedDataset && data_.storage.card_state != CardState::Mounted) {
+        data_.dataset.state = PlaceState::NoCard;
         data_.boot.dataset(PlaceState::NoCard);
         boot_stage_ = BootStage::Complete;
         bootChanged();
@@ -447,6 +505,7 @@ void Application::advanceBoot() {
         request.sent_at_ms = taskTimeMs();
         if (sendSpeculative(storage_.inbox(), request) == SpeculativeResult::Queued) {
             boot_stage_ = settings ? BootStage::WaitSettings : BootStage::WaitDataset;
+            if (!settings) dataset_check_waiting_ = request.request_id;
             data_.boot.set(settings ? BootItem::Settings : BootItem::Dataset, BootCheckState::Checking,
                            settings ? "READING" : "OPENING");
             data_.storage.busy = true;
@@ -460,6 +519,17 @@ void Application::advanceBoot() {
             Console.printf("[BOOT] %s: %s\n", bootItemName(i), data_.boot.checks[i].detail);
         Console.println(data_.boot.hasIssues() ? "[BOOT] Ready with warnings" : "[BOOT] Ready");
     }
+}
+
+void Application::processDatasetCheck() {
+    if (!dataset_check_needed_ || dataset_check_waiting_ || screen_ == ScreenId::Boot ||
+        data_.storage.busy || data_.storage.card_state != CardState::Mounted || restart_pending_ || dataset_applying_) return;
+    StorageRequest request{}; request.kind = MessageKind::CheckDataset; request.source = TaskId::Application;
+    if (++place_request_id_ == 0) ++place_request_id_;
+    request.request_id = place_request_id_; request.sent_at_ms = taskTimeMs();
+    if (sendSpeculative(storage_.inbox(), request) != SpeculativeResult::Queued) return;
+    dataset_check_needed_ = false; dataset_check_waiting_ = request.request_id;
+    data_.storage.busy = true; ++data_.revision; ui_data_dirty_ = true;
 }
 
 void Application::updateLogElapsed() {
@@ -526,7 +596,7 @@ bool Application::logRequest(MessageKind kind, const LogCommand& command) {
 }
 
 bool Application::queueLogAction(const UiAction& action) {
-    if (dataset_applying_ || restart_pending_ || data_.boot.fatal_dataset) return false;
+    if (data_.boot.maintenance || dataset_applying_ || restart_pending_) return false;
     if (log_control_.action_id) return action.action_id == log_control_.action_id;
     const auto state = data_.recording.state;
     const bool logger_screen = screen_ == ScreenId::GpsLogger;
@@ -602,31 +672,32 @@ void Application::runOnce() {
         else { AppNotification event{}; if (notifications_.receive(event,pdMS_TO_TICKS(50))) handleNotification(event); }
         return;
     }
-    advanceBoot();
     updateLogElapsed();
     processLog();
     if (ui_changed_) {
         readUiContent();
         return;
     }
+    advanceBoot();
+    processDatasetCheck();
     processBrowser();
     requestPlace();
     if (ui_data_dirty_) {
         if (!publishUiContent()) vTaskDelay(pdMS_TO_TICKS(10));
         return;
     }
-    if (screen_ == ScreenId::Boot && data_.boot.complete && !data_.boot.fatal_dataset && taskTimeMs() - boot_completed_at_ >= data_.boot.holdMs()) {
+    if (screen_ == ScreenId::Boot && data_.boot.complete && taskTimeMs() - boot_completed_at_ >= data_.boot.holdMs()) {
         if (!setScreen(ScreenId::LivePlace)) vTaskDelay(pdMS_TO_TICKS(10));
         return;
     }
     AppNotification event{};
     TickType_t wait = portMAX_DELAY;
     if (screen_ == ScreenId::Boot) {
-        if (data_.boot.complete && !data_.boot.fatal_dataset) {
+        if (data_.boot.complete) {
             const auto elapsed = taskTimeMs() - boot_completed_at_;
             const auto hold = data_.boot.holdMs();
             wait = elapsed < hold ? pdMS_TO_TICKS(hold - elapsed) : 0;
-        } else if (boot_stage_ == BootStage::NeedSettings || boot_stage_ == BootStage::NeedDataset) {
+        } else if (boot_stage_ == BootStage::NeedSettings || boot_stage_ == BootStage::SelectMode || boot_stage_ == BootStage::NeedDataset) {
             wait = pdMS_TO_TICKS(50);  // Only retry requests that were not queued.
         }
     } else if (canSearchPlace()) {
@@ -637,6 +708,7 @@ void Application::runOnce() {
         const TickType_t log_wait = pdMS_TO_TICKS(100);
         if (wait == portMAX_DELAY || wait > log_wait) wait = log_wait;
     }
+    if(dataset_check_needed_ && !dataset_check_waiting_ && data_.storage.card_state == CardState::Mounted) { if(wait==portMAX_DELAY || wait>pdMS_TO_TICKS(50)) wait=pdMS_TO_TICKS(50); }
     if(browse_cancel_ || (browse_need_ && !browse_waiting_)) { if(wait==portMAX_DELAY || wait>pdMS_TO_TICKS(50)) wait=pdMS_TO_TICKS(50); }
     if (notifications_.receive(event, wait)) handleNotification(event);
 }

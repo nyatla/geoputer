@@ -68,10 +68,10 @@ void ui() {
     data.recording.pending = true; check(!usbEntryAllowed(data), "pending App sample blocks entry"); data.recording.pending = false;
     data.dataset.state = PlaceState::TooManyChunks; // USB mode does not require a usable dataset or SD card.
     UiModel usb; usb.setScreen({ScreenId::UsbStorage,DisplayMode::View,1,data,0,ActionResult::None});
-    check(!usb.confirming() && usb.usbPage()==UsbPage::Menu && !usb.datasetWarning(), "USB boot shows menu independent of GIS");
+    check(!usb.confirming() && usb.usbPage()==UsbPage::Menu, "USB boot shows menu independent of GIS");
     usb.tick(2); usb.tick(100000);
     check(usb.snapshot().action.kind == ActionKind::None && !usb.confirming(), "USB menu never sleeps automatically");
-    for (auto key : {UiKey::OpenGpsLogger,UiKey::OpenSettings,UiKey::OpenLogs,UiKey::F1,UiKey::DeleteLog}) usb.keyPressed(key,100001);
+    for (auto key : {UiKey::OpenGpsLogger,UiKey::OpenSettings,UiKey::OpenLogs,UiKey::F1,UiKey::PauseLog,UiKey::DeleteLog}) usb.keyPressed(key,100001);
     check(usb.snapshot().action.kind == ActionKind::None, "normal shortcuts cannot leave the USB screen");
     usb.keyPressed(UiKey::Escape,100002); usb.keyPressed(UiKey::Right,100003); usb.keyPressed(UiKey::Enter,100004);
     check(usb.snapshot().action.kind == ActionKind::Storage && usb.snapshot().action.confirmed &&

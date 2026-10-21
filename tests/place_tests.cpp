@@ -169,36 +169,38 @@ void testPlace() {
     check(!hasPlace(data) && data.place_state == PlaceState::DataError,
           "read errors replace pending content with their actual error state");
 
-    for (const auto close_key : {UiKey::Escape, UiKey::Enter}) {
-        UiModel warning;
-        UiData rejected{};
-        rejected.settings = defaultSettings(); rejected.revision = 1;
-        rejected.dataset = {PlaceState::TooManyChunks, 2000, config::MaxDatasetChunks};
-        warning.setScreen({ScreenId::LivePlace, DisplayMode::View, 1, rejected, 0, ActionResult::None});
-        check(warning.datasetWarning(), "unusable dataset opens an acknowledgement warning");
-        warning.tick(100); warning.tick(100000);
-        warning.keyPressed(UiKey::OpenSettings, 100001);
-        check(warning.snapshot().action.kind == ActionKind::None && warning.datasetWarning(),
-              "dataset warning does not sleep or allow menu keys to bypass acknowledgement");
-        warning.keyPressed(close_key, 100002);
-        check(!warning.datasetWarning() && warning.snapshot().action.kind == ActionKind::None,
-              "Esc/Del or Enter closes the warning without activating the underlying screen");
-        ++rejected.revision;
-        warning.updateContent({DisplayMode::View, 1, rejected, 0, ActionResult::None});
-        check(!warning.datasetWarning(), "ordinary GPS/UI updates cannot reopen an acknowledged warning");
-        rejected.dataset.chunks = 2001; ++rejected.revision;
-        warning.updateContent({DisplayMode::View, 1, rejected, 0, ActionResult::None});
-        check(warning.datasetWarning(), "a different rejected dataset opens a fresh warning");
-        rejected.dataset = {PlaceState::Ready, 172, config::MaxDatasetChunks}; ++rejected.revision;
-        warning.updateContent({DisplayMode::View, 1, rejected, 0, ActionResult::None});
-        check(!warning.datasetWarning(), "a corrected dataset clears its warning");
+
+    for (auto failure : {PlaceState::DatasetMissing,PlaceState::MetadataError,PlaceState::VersionError,
+             PlaceState::AmbiguousFiles,PlaceState::DataError,PlaceState::EncodingError,
+             PlaceState::TooManyChunks,PlaceState::OutOfMemory,PlaceState::NoCard}) {
+        check(datasetUnavailable(failure),"all dataset faults disable reverse geocoding");
+        for(bool ja : {false,true}) {
+            const auto text=datasetIssueText(failure,ja);
+            check(validUtf8(text.first) && validUtf8(text.second) && *text.first && *text.second,"failure has two localized fixed lines");
+            for(const auto* line : {text.first,text.second}) {
+                unsigned width=0;
+                for(const auto* p=reinterpret_cast<const unsigned char*>(line);*p;++p) if((*p&0xc0)!=0x80)width+=*p==' '?8:16;
+                check(width<=232,"localized dataset error fits native name region");
+            }
+        }
+        UiData rejected{};rejected.settings=defaultSettings();rejected.storage.card_state=CardState::Mounted;
+        rejected.dataset={failure,2000,1500,7};rejected.gps.reception=GpsReception::Fix;rejected.gps.fix.valid=true;
+        check(placeIssue(rejected)==failure && mainError(rejected)==nullptr,"dataset-only fault does not create duplicate red band");
+        rejected.gps.fix.valid=false;
+        check(placeIssue(rejected)==failure,"NO FIX cannot replace dataset error");
+        UiModel warning;warning.setScreen({ScreenId::LivePlace,DisplayMode::View,1,rejected,0,ActionResult::None});
+        warning.keyPressed(UiKey::OpenSettings,10);
+        check(warning.snapshot().action.target==ScreenId::Settings,"dataset fault never blocks direct settings access");
+        UiModel recovery;recovery.setScreen({ScreenId::LivePlace,DisplayMode::View,1,rejected,0,ActionResult::None});
+        recovery.keyPressed(UiKey::F1,10);
+        check(recovery.snapshot().action.kind==ActionKind::Maintenance,"latched dataset error offers maintenance without a red-band requirement");
+        DatasetInfo state{failure,2000,1500,7};
+        check(!applyDatasetInfo(state,{PlaceState::Ready,1500,1500,7}) && state.state==failure,
+              "same-generation late success cannot clear a dataset error");
+        check(!applyDatasetInfo(state,{PlaceState::Ready,1500,1500,6}),"old dataset success cannot clear current error");
+        check(applyDatasetInfo(state,{PlaceState::Ready,1500,1500,8}) && state.state==PlaceState::Ready,
+              "explicit successful revalidation with a new generation clears error");
+        check(!applyDatasetInfo(state,{failure,2000,1500,7}) && state.state==PlaceState::Ready,"old failure cannot poison repaired selection");
     }
-    UiModel boot_warning;
-    UiData boot_data{};
-    boot_data.settings = defaultSettings();
-    boot_data.dataset = {PlaceState::TooManyChunks, 2000, config::MaxDatasetChunks};
-    boot_warning.setScreen({ScreenId::Boot, DisplayMode::View, 1, boot_data, 0, ActionResult::None});
-    check(!boot_warning.datasetWarning(), "dataset warning does not cover startup checks");
-    boot_warning.setScreen({ScreenId::LivePlace, DisplayMode::View, 2, boot_data, 0, ActionResult::None});
-    check(boot_warning.datasetWarning(), "startup failure remains available for acknowledgement in Live Place");
+    check(!datasetUnavailable(PlaceState::NoFix) && !datasetUnavailable(PlaceState::NotFound),"NO FIX and zero region do not reject the dataset");
 }

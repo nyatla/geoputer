@@ -21,7 +21,7 @@ struct BootStatus {
     static constexpr uint32_t IssueHoldMs = 5000;
     BootCheck checks[Count]{};
     bool complete = false;
-    bool fatal_dataset = false;
+    bool maintenance = false; // Selected before GIS startup, or from a stopped error screen.
 
     void set(BootItem item, BootCheckState state, const char* detail) {
         auto& check = checks[static_cast<unsigned>(item)];
@@ -57,12 +57,13 @@ struct BootStatus {
         }
     }
     void dataset(PlaceState state) {
-        fatal_dataset = state == PlaceState::DatasetMissing || state == PlaceState::NoCard;
         switch (state) {
             case PlaceState::Ready: set(BootItem::Dataset, BootCheckState::Passed, "OPEN OK"); break;
             case PlaceState::NoCard: set(BootItem::Dataset, BootCheckState::Warning, "NO SD"); break;
             case PlaceState::DatasetMissing: set(BootItem::Dataset, BootCheckState::Warning, "MISSING"); break;
             case PlaceState::AmbiguousFiles: set(BootItem::Dataset, BootCheckState::Failed, "MULTIPLE"); break;
+            case PlaceState::MetadataError: set(BootItem::Dataset, BootCheckState::Failed, "CONFIG"); break;
+            case PlaceState::VersionError: set(BootItem::Dataset, BootCheckState::Failed, "VERSION"); break;
             case PlaceState::EncodingError: set(BootItem::Dataset, BootCheckState::Failed, "ENCODING"); break;
             case PlaceState::TooManyChunks: set(BootItem::Dataset, BootCheckState::Warning, "TOO LARGE"); break;
             case PlaceState::OutOfMemory: set(BootItem::Dataset, BootCheckState::Warning, "NO MEMORY"); break;

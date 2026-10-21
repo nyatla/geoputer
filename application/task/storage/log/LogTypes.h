@@ -31,6 +31,11 @@ struct RecordingSnapshot {
     uint32_t elapsed_ms = 0, dropped = 0, now_ms = 0;
     bool pending = false;
 };
+// A paused or retained session still owns log state and blocks mode/dataset changes.
+inline bool loggerStopped(const RecordingSnapshot& recording, const LogSnapshot& log) {
+    return recording.state == RecordingState::Stopped && !recording.pending &&
+           !log.open && !log.closing && !log.buffered;
+}
 inline const char* logErrorName(LogError error) {
     switch (error) {
         case LogError::None: return "";

@@ -7,26 +7,21 @@ namespace geoputer {
 
 enum class PlaceState : uint8_t {
     Waiting, Searching, Ready, NoFix, NoCard, DatasetMissing, AmbiguousFiles,
-    NotFound, EncodingError, DataError, TooManyChunks, OutOfMemory
+    NotFound, EncodingError, DataError, TooManyChunks, OutOfMemory, MetadataError, VersionError
 };
 
 inline bool datasetUnavailable(PlaceState state) {
-    return state == PlaceState::TooManyChunks || state == PlaceState::OutOfMemory;
+    return state == PlaceState::TooManyChunks || state == PlaceState::OutOfMemory ||
+           state == PlaceState::DatasetMissing || state == PlaceState::AmbiguousFiles ||
+           state == PlaceState::EncodingError || state == PlaceState::DataError ||
+           state == PlaceState::MetadataError || state == PlaceState::VersionError || state == PlaceState::NoCard;
 }
 
 struct DatasetInfo {
     PlaceState state;
     uint64_t chunks;
     uint32_t limit;
-};
-
-enum class PlaceAccessMode : uint8_t { Cache, Reload };
-
-struct PlaceAccess {
-    uint32_t request_id;
-    uint32_t screen_generation;
-    PlaceAccessMode mode;
-    bool active;
+    uint32_t generation = 1; // Explicit reopen only; errors retain the same generation.
 };
 
 struct PlaceRequest {
@@ -55,6 +50,8 @@ inline const char* placeStateName(PlaceState state) {
         case PlaceState::AmbiguousFiles: return "MULTIPLE DATA FILES";
         case PlaceState::NotFound: return "PLACE NOT FOUND";
         case PlaceState::EncodingError: return "ENCODING ERROR";
+        case PlaceState::MetadataError: return "DATASET CONFIG ERROR";
+        case PlaceState::VersionError: return "DATASET BAD VERSION";
         case PlaceState::DataError: return "DATA READ ERROR";
         case PlaceState::TooManyChunks: return "DATASET TOO LARGE";
         case PlaceState::OutOfMemory: return "DATASET NO MEMORY";

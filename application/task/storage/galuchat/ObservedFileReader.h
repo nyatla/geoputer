@@ -12,14 +12,24 @@
 #include "../../../Config.h"
 
 namespace geoputer {
+struct FileReadOptions {
+    size_t buffer_bytes = config::FileReadBufferBytes;
+    size_t read_through_skip_bytes = config::FileReadThroughSkipBytes;
+    void validate() const {
+        if (!buffer_bytes) throw std::invalid_argument("file read buffer must be nonempty");
+    }
+};
+
 // SDK-compatible ReaderFactory. Observe actual buffered file operations, not
 // each in-RAM readByte.
 class ObservedFileReader final : public galuchat::ByteReader {
 public:
     ObservedFileReader(const std::string& path, size_t source_size, size_t offset, StorageObserver* observer,
-                       FileIoTiming* timing = nullptr)
-        : observer_(observer), timing_(timing), buffer_(config::FileReadBufferBytes) {
+                       FileIoTiming* timing = nullptr, FileReadOptions options = {})
+        : observer_(observer), timing_(timing), read_through_skip_bytes_(options.read_through_skip_bytes) {
+        options.validate();
         if (offset > source_size) throw std::runtime_error("invalid reader offset");
+        buffer_.resize(options.buffer_bytes);
         SdAccessScope access(observer_);
         {
             FileIoTime elapsed(timing_, &FileIoTiming::open_us);
@@ -63,7 +73,7 @@ protected:
         const auto buffered = buffer_end_ - buffer_pos_;
         if (length <= buffered) { buffer_pos_ += length; pos_ += length; return; }
         auto seek = length - buffered;
-        if (seek <= config::FileReadThroughSkipBytes) {
+        if (seek <= read_through_skip_bytes_) {
             // Consume the existing tail, then discard whole buffered ranges.
             // Keep any read-ahead past the target for subsequent reads.
             buffer_pos_ = buffer_end_;
@@ -104,11 +114,14 @@ private:
     std::FILE* file_ = nullptr;
     std::vector<uint8_t> buffer_;
     size_t length_ = 0, pos_ = 0, buffer_pos_ = 0, buffer_end_ = 0;
+    const size_t read_through_skip_bytes_;
 };
 class ObservedFileReaderFactory final : public galuchat::ReaderFactory {
 public:
-    ObservedFileReaderFactory(std::string path, StorageObserver* observer, FileIoTiming* timing = nullptr)
-        : path_(std::move(path)), observer_(observer), timing_(timing) {
+    ObservedFileReaderFactory(std::string path, StorageObserver* observer, FileIoTiming* timing = nullptr,
+                              FileReadOptions options = {})
+        : path_(std::move(path)), observer_(observer), timing_(timing), options_(options) {
+        options_.validate();
         SdAccessScope access(observer_);
         struct stat status{};
         int stat_result;
@@ -120,13 +133,27 @@ public:
         if (stat_result || status.st_size < 0) throw std::runtime_error("cannot stat: " + path_);
         size_ = static_cast<size_t>(status.st_size);
     }
+    // Storage task only. Existing Readers retain their creation-time options.
+    void setReadOptions(FileReadOptions options) {
+        options.validate();
+        options_ = options;
+    }
     std::unique_ptr<galuchat::ByteReader> create(size_t offset = 0) const override {
-        return std::make_unique<ObservedFileReader>(path_, size_, offset, observer_, timing_);
+        return std::make_unique<ObservedFileReader>(path_, size_, offset, observer_, timing_, options_);
+    }
+    std::unique_ptr<galuchat::ByteReader> createRange(size_t offset, size_t length) const override {
+        if (offset > size_ || length > size_ - offset) throw std::runtime_error("invalid reader range");
+        if (!length) return std::make_unique<galuchat::BufferReader>(nullptr, 0);
+        auto options = options_;
+        options.buffer_bytes = std::min(options.buffer_bytes, length);
+        // The existing Reader treats source_size as its absolute upper bound.
+        return std::make_unique<ObservedFileReader>(path_, offset + length, offset, observer_, timing_, options);
     }
 private:
     std::string path_;
     StorageObserver* observer_;
     FileIoTiming* timing_;
     size_t size_ = 0;
+    FileReadOptions options_;
 };
 }  // namespace geoputer

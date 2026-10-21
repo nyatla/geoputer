@@ -3,7 +3,21 @@
 #include <iostream>
 #include <stdexcept>
 #include <cstring>
+#include <cstdlib>
+#include <new>
 #include "task/storage/galuchat/PlaceLookup.h"
+
+static bool fail_next_allocation=false;
+void* operator new(std::size_t bytes) {
+    if(fail_next_allocation) {fail_next_allocation=false;throw std::bad_alloc();}
+    if(auto* p=std::malloc(bytes?bytes:1))return p;
+    throw std::bad_alloc();
+}
+void* operator new[](std::size_t bytes) {return ::operator new(bytes);}
+void operator delete(void* p) noexcept {std::free(p);}
+void operator delete[](void* p) noexcept {std::free(p);}
+void operator delete(void* p,std::size_t) noexcept {std::free(p);}
+void operator delete[](void* p,std::size_t) noexcept {std::free(p);}
 
 using namespace geoputer;
 namespace fs = std::filesystem;
@@ -35,6 +49,10 @@ int main(int argc, char** argv) {
         lookup.setObserver(&activity);
         check(lookup.prepare().state == PlaceState::DatasetMissing, "startup detects missing dataset without GPS");
         check(lookup.search(request).state == PlaceState::DatasetMissing, "missing dataset");
+        const auto missing_accesses=activity.accesses;
+        check(lookup.prepare().state==PlaceState::DatasetMissing && lookup.search(request).dataset.state==PlaceState::DatasetMissing && activity.accesses==missing_accesses,
+              "missing dataset is latched without repeated directory access");
+        lookup.close();
         fs::create_directories(data);
         // Invalid dictionary content proves that oversized maps are rejected
         // before opening the dictionary or allocating a raster.
@@ -59,9 +77,18 @@ int main(int argc, char** argv) {
         fs::remove(data / "names.giswordbook");
         fs::copy_file(argv[2], data / "area.GLC");
         fs::copy_file(argv[3], data / "names.giswordbook");
+        {
+            PlaceLookup no_memory(data.string());no_memory.setObserver(&activity);
+            fail_next_allocation=true;
+            check(no_memory.prepare().state==PlaceState::OutOfMemory,"allocation failure becomes a dataset rejection");
+            check(!fail_next_allocation,"allocation failure was injected");
+            const auto accesses=activity.accesses;
+            check(no_memory.prepare().state==PlaceState::OutOfMemory && no_memory.search(request).state==PlaceState::OutOfMemory && activity.accesses==accesses,
+                  "memory failure is latched without allocating or reading again");
+            no_memory.close();check(no_memory.prepare().state==PlaceState::Ready,"explicit revalidation recovers from memory failure");
+        }
         check(lookup.prepare().state == PlaceState::Ready, "startup opens real file headers without a GPS fix");
         check(lookup.cacheStats().bytes == 0, "Boot dataset preparation does not allocate the cache image");
-        check(lookup.accessMode(request) == PlaceAccessMode::Reload, "initial access announces a reload");
         check(activity.cache == RgCacheState::Unprepared,"dataset headers alone do not prepare the image");
         check(lookup.search(request).state == PlaceState::Ready && activity.cache == RgCacheState::Ready,
               "completed rectangle rebuild reports persistent ready state");
@@ -101,7 +128,6 @@ int main(int argc, char** argv) {
               "cached names return the current coordinates, time, generation and sample, with no SD read");
         for (unsigned i = 0; i < 4; ++i) {
             const auto result = lookup.search(request);
-            check(lookup.accessMode(request) == PlaceAccessMode::Cache, "same point announces cache access after a read");
             if (result.state != PlaceState::Ready) throw std::runtime_error(result.detail);
             check(std::strcmp(result.lines[0], "千葉県 習志野市") == 0 && !result.lines[1][0],
                   "real UTF-8 dataset resolves Narashino City Hall");
@@ -125,19 +151,25 @@ int main(int argc, char** argv) {
               "no-fix and region-zero results do not discard name-cache entries");
         lookup.close();
         check(activity.cache == RgCacheState::Unprepared && activity.depth == 0,"closing dataset invalidates RG and balances I/O");
-        check(lookup.accessMode(request) == PlaceAccessMode::Reload, "closed dataset cannot announce a cache hit");
         check(lookup.cacheStats().bytes == 0 && !lookup.cacheStats().valid, "closing the dataset releases and invalidates its cache");
         check(!lookup.wordBookCacheStats().entries && !lookup.wordBookCacheStats().hits && !lookup.wordBookCacheStats().misses,
               "closing the dataset clears the wordbook cache and counters");
         fs::copy_file(argv[2], data / "duplicate.glc");
         check(lookup.prepare().state == PlaceState::AmbiguousFiles, "startup reports duplicate data files");
         check(lookup.search(request).state == PlaceState::AmbiguousFiles, "ambiguous datasets are not arbitrarily selected");
+        const auto ambiguous_accesses=activity.accesses;
+        check(lookup.prepare().state==PlaceState::AmbiguousFiles && activity.accesses==ambiguous_accesses,"ambiguous dataset is not rediscovered on each request");
         fs::remove(data / "duplicate.glc");
+        lookup.close();
         { std::ofstream bad(data / "area.GLC", std::ios::binary | std::ios::trunc); bad << "bad"; }
         check(lookup.prepare().state == PlaceState::DataError, "startup reports corrupt headers");
         check(lookup.search(request).state == PlaceState::DataError, "corrupt file is recoverable error");
         fs::copy_file(argv[2], data / "area.GLC", fs::copy_options::overwrite_existing);
-        check(lookup.search(request).state == PlaceState::Ready, "corrected dataset can be reopened");
+        const auto failed_accesses=activity.accesses;
+        check(lookup.search(request).state==PlaceState::DataError && lookup.prepare().state==PlaceState::DataError && activity.accesses==failed_accesses,
+              "repairing file bytes does not silently retry or clear the rejection");
+        lookup.close();
+        check(lookup.search(request).state == PlaceState::Ready, "explicit reopen validates corrected dataset");
         fs::remove(data / "names.giswordbook");
         const auto cached_accesses = activity.accesses;
         check(lookup.search(request).state == PlaceState::Ready && activity.accesses == cached_accesses,
@@ -146,7 +178,7 @@ int main(int argc, char** argv) {
         osaka.fix = {34.6937, 135.5023, 1000, true};
         check(lookup.search(osaka).state == PlaceState::DataError, "uncached dictionary read detects file disappearance");
         check(!lookup.wordBookCacheStats().entries, "read failure closes the dataset and clears old cached names");
-        check(lookup.search(request).state == PlaceState::DatasetMissing, "failed reader is released");
+        check(lookup.search(request).state == PlaceState::DataError, "failed reader is released but original rejection is retained");
         fs::copy_file(argv[3], data / "names.giswordbook");
         {
             std::ifstream input(data / "names.giswordbook", std::ios::binary);
@@ -158,12 +190,15 @@ int main(int argc, char** argv) {
             std::ofstream output(data / "names.giswordbook", std::ios::binary | std::ios::trunc);
             output.write(bytes.data(), bytes.size());
         }
+        lookup.close();
         check(lookup.search(request).state == PlaceState::EncodingError && !lookup.wordBookCacheStats().entries,
               "invalid text is never inserted into the wordbook cache");
-        check(lookup.search(request).state == PlaceState::EncodingError && lookup.wordBookCacheStats().misses == 2,
-              "invalid UTF-8 failures are retried rather than cached");
+        const auto encoding_accesses=activity.accesses;
+        check(lookup.search(request).state == PlaceState::EncodingError && lookup.prepare().state==PlaceState::EncodingError && activity.accesses==encoding_accesses,
+              "invalid UTF-8 rejection performs no further dictionary reads");
         lookup.close();
         fs::copy_file(argv[3], data / "names.giswordbook", fs::copy_options::overwrite_existing);
+        lookup.close();
         check(lookup.search(request).state == PlaceState::Ready && lookup.wordBookCacheStats().misses == 1,
               "reopening a repaired dataset resolves names again without a stale cache entry");
         lookup.close();

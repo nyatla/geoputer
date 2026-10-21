@@ -1,4 +1,5 @@
 #include "UiModel.h"
+#include "PlacePresentation.h"
 #include "LicenseText.h"
 #include "SettingsLayout.h"
 #include "DatasetPresentation.h"
@@ -35,6 +36,10 @@ OperationStatus UiModel::setScreen(const SetUiScreen& command) {
     license_offset_ = 0;
     card_info_ = false;
     redraw_ = true;
+    if (early_maintenance_key_) {
+        early_maintenance_key_ = false;
+        if (screen_ == ScreenId::Boot) action(ActionKind::Maintenance, ScreenId::Settings);
+    }
     return OperationStatus::Ok;
 }
 
@@ -50,9 +55,6 @@ OperationStatus UiModel::updateContent(const UpdateUiContent& command) {
 }
 
 void UiModel::copyData(const UiData& data) {
-    if (!datasetUnavailable(data.dataset.state)) dataset_warning_ = false;
-    else if (data.dataset.state != data_.dataset.state || data.dataset.chunks != data_.dataset.chunks ||
-             data.dataset.limit != data_.dataset.limit) dataset_warning_ = true;
     if (data.gps.fix.valid) clock_.setInitialUtc(data.gps.fix.utc_ms, last_tick_ms_);
     const auto previous_sd = data_.storage.sd;
     const auto previous_rg = data_.storage.rg;
@@ -128,16 +130,17 @@ void UiModel::changed() {
 
 void UiModel::keyPressed(UiKey key, uint32_t now_ms) {
     last_input_ms_ = now_ms;
-    if (action_.kind != ActionKind::None || generation_ == 0 || switchingMode(data_)) return;
+    if (generation_ == 0) {
+        if (key == UiKey::F1) early_maintenance_key_ = true;
+        return;
+    }
+    if (action_.kind != ActionKind::None || switchingMode(data_)) return;
     if (screen_ == ScreenId::Boot) {
-        if (data_.boot.complete && !data_.boot.fatal_dataset && key == UiKey::Enter) action(ActionKind::ChangeScreen, ScreenId::LivePlace);
+        if (key == UiKey::F1) action(ActionKind::Maintenance, ScreenId::Settings);
+        else if (!data_.boot.maintenance && data_.boot.complete && key == UiKey::Enter) action(ActionKind::ChangeScreen, ScreenId::LivePlace);
         return;
     }
     if (mode_ == DisplayMode::Background) { action(ActionKind::Wake); return; }
-    if (datasetWarning()) {
-        if (key == UiKey::Escape || key == UiKey::Enter) { dataset_warning_ = false; changed(); }
-        return;
-    }
     if (dialog_.active()) {
         const auto kind = dialog_.kind();
         if (kind == DialogKind::DeleteLog)
@@ -148,6 +151,11 @@ void UiModel::keyPressed(UiKey key, uint32_t now_ms) {
         else if (result != DialogInput::Ignored) changed();
         return; // A modal owns all keys, including screen shortcuts.
     }
+    if (screen_ == ScreenId::LivePlace && key == UiKey::F1 && placeIssue(data_) != PlaceState::Ready &&
+        loggerStopped(data_.recording, data_.storage.log)) {
+        action(ActionKind::Maintenance, ScreenId::Settings);
+        return;
+    }
     if (screen_ == ScreenId::UsbStorage) {
         usbKey(key);
         return;
@@ -156,7 +164,7 @@ void UiModel::keyPressed(UiKey key, uint32_t now_ms) {
         if (key == UiKey::OpenGpsLogger) action(ActionKind::ChangeScreen, ScreenId::GpsLogger);
         else if (key == UiKey::OpenSettings) action(ActionKind::ChangeScreen, ScreenId::Settings);
         else if (key == UiKey::OpenLogs) action(ActionKind::ChangeScreen, ScreenId::Logs);
-        else if (key == UiKey::F1 && data_.recording.state == RecordingState::Recording) {
+        else if (key == UiKey::PauseLog && data_.recording.state == RecordingState::Recording) {
             dialog_.open(DialogKind::PauseLog); changed();
         }
         return;
@@ -286,7 +294,10 @@ void UiModel::keyPressed(UiKey key, uint32_t now_ms) {
         return;
     }
     if (key == UiKey::Escape) {
-        if (page_ == SettingsPage::Root) action(ActionKind::ChangeScreen, ScreenId::LivePlace);
+        if (page_ == SettingsPage::Root) {
+            if (data_.boot.maintenance) { dialog_.open(DialogKind::RestartLogger); changed(); }
+            else action(ActionKind::ChangeScreen, ScreenId::LivePlace);
+        }
         else { page_ = SettingsPage::Root; selection_ = 0; changed(); }
         return;
     }
@@ -385,6 +396,8 @@ void UiModel::usbKey(UiKey key) {
 
 void UiModel::acceptDialog(DialogKind kind) {
     switch (kind) {
+        case DialogKind::RestartLogger:
+            action(ActionKind::RestartLogger); action_.confirmed = true; break;
         case DialogKind::PauseLog: case DialogKind::StopLog:
             action(ActionKind::Logging);
             action_.log_action = kind == DialogKind::PauseLog ? LogAction::Pause : LogAction::Stop;
@@ -432,14 +445,14 @@ void UiModel::tick(uint32_t now_ms) {
     const bool was_lit = sdAccessLit();
     last_tick_ms_ = now_ms;
     if (sdAccessLit() != was_lit) redraw_ = true;
-    if (screen_ == ScreenId::Boot || screen_ == ScreenId::UsbStorage || switchingMode(data_) || datasetWarning() || data_.datasets.applying ||
+    if (screen_ == ScreenId::Boot || screen_ == ScreenId::UsbStorage || switchingMode(data_) || data_.datasets.applying ||
         (screen_==ScreenId::Logs && data_.browse.deleting)) return;
     if (data_.message[0] && now_ms - data_.message_at_ms >= 3000u) {
         data_.message[0] = '\0';
         redraw_ = true;  // Local toast expiry does not notify App.
     }
     if (!last_input_ms_) last_input_ms_ = now_ms;
-    if (mode_ != DisplayMode::View || generation_ == 0 || action_.kind != ActionKind::None ||
+    if (data_.boot.maintenance || mode_ != DisplayMode::View || generation_ == 0 || action_.kind != ActionKind::None ||
         !validSettings(data_.settings)) return;
     const auto timeout = ScreenTimeouts[data_.settings.screen_timeout];
     if (timeout && now_ms - last_input_ms_ >= timeout * 1000u) {

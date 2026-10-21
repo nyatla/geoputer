@@ -71,7 +71,7 @@ void Application::completeDataset(const DatasetView& incoming) {
     if(applying) {
         data_.datasets.loading=false;data_.datasets.applying=false;data_.datasets.error=incoming.error;
         if(incoming.error==DatasetError::None && incoming.restart_required) restart_pending_=true;
-        else if(incoming.error==DatasetError::None) {dataset_applying_=false;message("SETTINGS SAVED");}
+        else if(incoming.error==DatasetError::None) {dataset_applying_=false;dataset_check_needed_=true;refreshPlace();message("SETTINGS SAVED");}
         else {dataset_applying_=false;message(incoming.error==DatasetError::NotStopped?"STOP LOGGER FIRST":"DATASET CHANGE FAILED");}
         ++data_.datasets.revision;
     } else {

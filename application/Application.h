@@ -42,6 +42,9 @@ private:
     bool canSearchPlace() const;
     void requestPlace();
     void advanceBoot();
+    void processDatasetCheck();
+    void initializeGps();
+    void enterMaintenance();
     void bootChanged();
     void adoptLogSample();
     bool appendPendingLog();
@@ -87,10 +90,13 @@ private:
     PlaceSearchFlow place_flow_;
     uint32_t dataset_token_ = 0, dataset_waiting_ = 0;
     bool dataset_applying_ = false, restart_pending_ = false;
+    bool dataset_check_needed_ = false;
+    uint32_t dataset_check_waiting_ = 0;
     uint32_t place_request_id_ = 0x90000000u;
-    enum class BootStage { NeedSettings, WaitSettings, NeedDataset, WaitDataset, Complete };
+    enum class BootStage { NeedSettings, WaitSettings, SelectMode, NeedDataset, WaitDataset, Complete };
     BootStage boot_stage_ = BootStage::NeedSettings;
     uint32_t boot_completed_at_ = 0;
+    uint32_t boot_selection_at_ = 0;
     static constexpr uint32_t BootSettingsRequest = 0x80000001u;
     static constexpr uint32_t BootDatasetRequest = 0x80000002u;
 };

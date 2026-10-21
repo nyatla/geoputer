@@ -30,7 +30,6 @@ public:
     bool cardInfo() const { return card_info_; }
     UsbPage usbPage() const { return usb_page_; }
     uint8_t usbFile() const { return usb_file_; }
-    bool datasetWarning() const { return dataset_warning_ && screen_ != ScreenId::Boot && screen_ != ScreenId::UsbStorage; }
     const DisplayClock& clock() const { return clock_; }
     static constexpr uint32_t AccessLampMinMs = 150;
     bool sdAccessLit() const {
@@ -74,7 +73,7 @@ private:
     bool card_info_ = false;
     UsbPage usb_page_ = UsbPage::Menu, usb_return_page_ = UsbPage::Menu;
     uint8_t usb_file_ = 0;
-    bool dataset_warning_ = false;
+    bool early_maintenance_key_ = false;
     UiData data_{};
     BatteryStatus battery_{};
     bool sd_seen_ = false;

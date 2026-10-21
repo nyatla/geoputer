@@ -1,4 +1,4 @@
-"""Render dataset list/detail/apply/error and fatal startup with production UI."""
+"""Render dataset list/detail/apply/error and non-blocking startup with production UI."""
 from pathlib import Path
 import io
 import re
@@ -23,9 +23,25 @@ int main(int argc,char** argv) {
     ui.setScreen({ScreenId::Settings,DisplayMode::View,1,data,0,ActionResult::None});
     auto key=[&](UiKey k){ui.keyPressed(k,100);};
     auto publish=[&](){const auto action=ui.snapshot().action;++data.revision;data.datasets.revision=ui.data().datasets.revision+1;ui.updateContent({DisplayMode::View,1,data,action.action_id,ActionResult::Applied});};
-    if(!std::strcmp(mode,"fatal")) {
-        data.boot.complete=data.boot.fatal_dataset=true;data.settings.dataset=2;std::strcpy(data.settings.wordbook_language,"ja");
+    if(!std::strcmp(mode,"missing-boot")) {
+        data.boot.complete=true;data.boot.dataset(PlaceState::DatasetMissing);data.settings.dataset=2;std::strcpy(data.settings.wordbook_language,"ja");
         ui.setScreen({ScreenId::Boot,DisplayMode::View,2,data,0,ActionResult::None});
+    } else if(!std::strcmp(mode,"boot") || !std::strcmp(mode,"boot-ready")) {
+        data.boot.set(BootItem::Display,BootCheckState::Passed,"240X135");
+        data.boot.set(BootItem::Tasks,BootCheckState::Passed,"3T/4Q");
+        data.boot.settings(SettingsState::Loaded);data.boot.card(CardState::Mounted);
+        data.boot.set(BootItem::GPS,BootCheckState::Checking,"DEFERRED");
+        if(!std::strcmp(mode,"boot-ready")) {
+            data.boot.set(BootItem::Tasks,BootCheckState::Passed,"4T/5Q");
+            data.boot.set(BootItem::GPS,BootCheckState::Passed,"UART OK");
+            data.boot.dataset(PlaceState::Ready);data.boot.finish();
+        }
+        ui.setScreen({ScreenId::Boot,DisplayMode::View,2,data,0,ActionResult::None});
+    } else if(!std::strcmp(mode,"maintenance") || !std::strcmp(mode,"restart") || !std::strcmp(mode,"restart-selected")) {
+        data.boot.maintenance=true;
+        ui.setScreen({ScreenId::Settings,DisplayMode::View,2,data,0,ActionResult::None});
+        if(std::strcmp(mode,"maintenance"))key(UiKey::Escape);
+        if(!std::strcmp(mode,"restart-selected"))key(UiKey::Right);
     } else {
         key(UiKey::Enter);for(unsigned i=0;i<5;++i)key(UiKey::Down);key(UiKey::Enter);
         data.datasets.count=4;data.datasets.has_newer=true;
@@ -47,6 +63,17 @@ int main(int argc,char** argv) {
         }
     }
     renderer.draw(ui);
+    auto check_ascii=[&](int x,int y,const char* text,uint16_t color) {
+        for(const auto* p=text;*p;++p,x+=8)for(int row=0;row<8;++row)for(int col=0;col<8;++col) {
+            const bool ink=font8x8_c64[(*p-32)*8+col]&(1u<<row);
+            if(display.pixels.at((y+row)*240+x+col)!=(ink?color:TFT_BLACK))throw std::runtime_error(std::string(mode)+": maintenance guide pixel mismatch at "+std::to_string(x+col)+","+std::to_string(y+row));
+        }
+    };
+    if(!std::strcmp(mode,"missing-boot"))check_ascii(4,124,"F1 MAINT",TFT_CYAN);
+    if(!std::strcmp(mode,"boot") || !std::strcmp(mode,"boot-ready"))check_ascii(4,124,"F1 MAINT",TFT_CYAN);
+    if(!std::strcmp(mode,"maintenance")) {
+        check_ascii(4,7,"MAINTENANCE",TFT_LIGHTGREY);check_ascii(4,124,"ESC RESTART",TFT_WHITE);
+    }
     std::printf("P6\n240 135\n255\n");
     for(auto color:display.pixels) {
         const unsigned char rgb[]={static_cast<unsigned char>(((color>>11)&31)*255/31),static_cast<unsigned char>(((color>>5)&63)*255/63),static_cast<unsigned char>((color&31)*255/31)};
@@ -68,9 +95,9 @@ def main():
         exe=work/'render'
         subprocess.run(['g++','-std=c++17','-Wall','-Wextra','-Werror','-pedantic','-fsanitize=undefined','-fno-sanitize-recover=all','-I',str(work),'-I',str(ROOT/'application'),'-I',str(ROOT/'tests/support'),'-I',str(M5GFX/'Fonts'),str(work/'scene.cpp'),*map(str,sources),str(ROOT/'application/Settings.cpp'),'-o',str(exe)],check=True,timeout=180)
         for language in ('ja','en'):
-            for scene in ('list','detail','extent','apply','blocked','saving','fatal'):
+            for scene in ('list','detail','extent','apply','blocked','saving','missing-boot','boot','boot-ready','maintenance','restart','restart-selected'):
                 frame=reference_frame(exe,scene,language)
-                output=ROOT/'doc/画面・操作'/('boot' if scene=='fatal' else 'settings')/f'dataset-{language}-{scene}-preview.png'
+                output=ROOT/'doc/画面・操作'/('boot' if scene in ('missing-boot','boot','boot-ready') else 'settings')/f'dataset-{language}-{scene}-preview.png'
                 with Image.open(io.BytesIO(frame)) as image:
                     assert image.size==(240,135)
                     image.save(output)

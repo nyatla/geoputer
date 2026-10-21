@@ -55,6 +55,8 @@ DatasetView DatasetCatalog::read(const DatasetRequest& request,UiLanguage ui) co
         switch(result.state) {
             case PlaceState::Ready:probe->describe(view.info);break;
             case PlaceState::DatasetMissing:view.error=DatasetError::Missing;break;
+            case PlaceState::MetadataError:view.error=DatasetError::Metadata;break;
+            case PlaceState::VersionError:view.error=DatasetError::Version;break;
             case PlaceState::EncodingError:view.error=DatasetError::Encoding;break;
             case PlaceState::TooManyChunks:view.error=DatasetError::TooManyChunks;break;
             case PlaceState::OutOfMemory:view.error=DatasetError::NoMemory;break;

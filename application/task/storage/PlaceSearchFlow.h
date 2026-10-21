@@ -11,6 +11,7 @@ class PlaceSearchFlow {
 public:
     static constexpr uint32_t IntervalMs = config::PlaceSearchIntervalMs;
     void refresh() { force_ = true; if (pending()) pending_invalidated_ = true; }
+    bool owns(uint32_t id) const { return id && id == pending_id_; }
     bool pending() const { return pending_id_ != 0; }
     bool accepts(uint32_t id, uint32_t result_generation, uint32_t current_generation) const {
         return pending() && id == pending_id_ && !pending_invalidated_ &&

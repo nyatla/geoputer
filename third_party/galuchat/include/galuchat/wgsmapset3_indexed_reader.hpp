@@ -1,4 +1,5 @@
 #pragma once
+// ReverseGeoputer local prototype, 2026-10-21: size-based chunk index and explicit bounded rectangle API.
 
 #include "wgsmap3_reader.hpp"
 
@@ -94,7 +95,8 @@ public:
         int east = west;
         int north = south;
         for (Origin& origin : origins_) {
-            origin.offset = detail::addSize(chunk_offset_, chunks->pos(), "WGSMapSet chunk offset");
+            const size_t start = chunks->pos();
+            detail::addSize(chunk_offset_, start, "WGSMapSet chunk offset");
             GaluchatImageDataChunk01Reader chunk(*chunks);
             origin.width = chunk.width;
             origin.height = chunk.height;
@@ -105,6 +107,8 @@ public:
             east = chunk_east > east ? chunk_east : east;
             north = chunk_north > north ? chunk_north : north;
             chunk.skipToEnd();
+            origin.byte_size = chunks->pos() - start; // Includes GI01 tag and encoded payload length.
+            detail::addSize(chunk_offset_, chunks->pos(), "WGSMapSet chunk end");
         }
         if (!chunks->atEnd()) {
             throw std::runtime_error("WGSMapSet/3 has trailing bytes");
@@ -177,6 +181,19 @@ public:
         readWgsRectImpl(target, dest, TailMode::Leave);
     }
 
+    // Range-aware opt-in. Physical read-ahead can be limited by the factory.
+    // Existing rectangle APIs continue to call create(offset), without a range.
+    template <class Raster>
+    void readWgsRectWithoutTailBounded(const Rect& target, Raster& dest) const {
+        readWgsRectImpl(target, dest, TailMode::Leave, true);
+    }
+
+    RawRaster readWgsRectWithoutTailBounded(const Rect& target) const {
+        RawRaster result(target.width, target.height);
+        readWgsRectWithoutTailBounded(target, result);
+        return result;
+    }
+
     RawRaster readWgsRectWithoutTail(const Rect& target) const {
         RawRaster result(target.width, target.height);
         readWgsRectWithoutTail(target, result);
@@ -230,7 +247,7 @@ private:
         int south;
         int width = 0;
         int height = 0;
-        size_t offset = 0;
+        size_t byte_size = 0;
     };
 
     template <class Raster>
@@ -266,15 +283,19 @@ private:
     enum class TailMode { Consume, Leave };
 
     template <class Raster>
-    void readWgsRectImpl(const Rect& target, Raster& dest, TailMode tail) const {
+    void readWgsRectImpl(const Rect& target, Raster& dest, TailMode tail, bool bounded = false) const {
         validateRasterTarget(target, dest);
         detail::fillRect(dest, 0, 0, dest.width, dest.height, 0);
 
+        size_t next_offset = chunk_offset_;
         for (const Origin& origin : origins_) {
+            const size_t offset = next_offset;
+            next_offset = detail::addSize(offset, origin.byte_size, "WGSMapSet chunk offset");
             Rect map_area{origin.west, origin.south, origin.width, origin.height};
             Rect crossed{};
             if (!detail::crossRect(map_area, target, crossed)) continue;
-            std::unique_ptr<ByteReader> reader = factory_->create(origin.offset);
+            std::unique_ptr<ByteReader> reader = bounded
+                ? factory_->createRange(offset, origin.byte_size) : factory_->create(offset);
             GaluchatImageDataChunk01Reader chunk(*reader);
             ZeroFilteredRasterView<Raster> filtered(
                 dest,

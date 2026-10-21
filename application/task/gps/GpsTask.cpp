@@ -6,13 +6,7 @@ namespace geoputer {
 
 void GpsTask::handle(const GpsRequest& request) {
     if (request.source != TaskId::Application || request.request_id == 0) return;
-    pending_return_ = {};
-    pending_return_.kind = MessageKind::SyncReturn;
-    pending_return_.source = TaskId::GPS;
-    pending_return_.request_id = request.request_id;
-    pending_return_.sequence = ++sequence_;
-    pending_return_.sent_at_ms = taskTimeMs();
-    pending_return_.payload.result = {request.kind, OperationStatus::InvalidRequest, {}, {}, {}};
+    prepareSyncReturn(pending_return_, TaskId::GPS, request, ++sequence_);
     auto& result = pending_return_.payload.result;
     if (request.kind == MessageKind::StartGpsReception) {
         if (!ready_) {

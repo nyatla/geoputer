@@ -29,7 +29,7 @@ struct DatasetView {
     union { DatasetRow rows[config::DatasetPageRows]; DatasetDetail info; };
 };
 inline bool datasetLogStopped(const RecordingSnapshot& recording,const LogSnapshot& log) {
-    return recording.state==RecordingState::Stopped && !recording.pending && !log.open && !log.closing && !log.buffered;
+    return loggerStopped(recording, log);
 }
 inline const char* datasetErrorText(DatasetError error,bool ja) {
     switch(error) {
