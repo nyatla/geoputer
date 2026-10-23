@@ -10,6 +10,7 @@ void testSettings();
 void testPlace();
 void testBoot();
 void testDatasets();
+void testDatasetSelection();
 void testClock();
 void testFonts();
 void testLicenses();
@@ -227,7 +228,7 @@ static void testUiActionOwnershipAndStaleUpdates() {
     const auto confirmed = model.snapshot();
     check(model.notificationPending(), "confirmed UI action creates notification");
     check(confirmed.screen == ScreenId::LivePlace, "UI cannot switch top-level screen on its own");
-    check(confirmed.action.target == ScreenId::Settings, "2 requests Settings");
+    check(confirmed.action.target == ScreenId::Settings, "Settings shortcut requests Settings");
     model.keyPressed(UiKey::Escape, 20);
     model.keyPressed(UiKey::OpenSettings, 30);
     check(model.snapshot().action.action_id == confirmed.action.action_id, "pending action cannot be overwritten");
@@ -257,7 +258,7 @@ static void testUiActionOwnershipAndStaleUpdates() {
     check(model.updateContent(update) == OperationStatus::Ok, "current data update accepted");
     check(model.snapshot().selected_setting == 1, "App content update preserves local selection");
     model.notificationSent();
-    model.keyPressed(UiKey::Escape, 50);
+    model.keyPressed(UiKey::OpenLivePlace, 50);
     const auto back = model.snapshot().action;
     update.processed_action_id = back.action_id + 1;
     update.action_result = ActionResult::Rejected;
@@ -276,7 +277,7 @@ static void testRepeatedUiRoundTripsAndValueCopies() {
     check(std::strcmp(model.data().place[0], "千葉県") == 0, "UI keeps a value copy of App data");
     for (uint32_t i = 0; i < 1000; ++i) {
         const auto previous = model.snapshot().screen;
-        model.keyPressed(previous == ScreenId::LivePlace ? UiKey::OpenSettings : UiKey::Escape, i + 1);
+        model.keyPressed(previous == ScreenId::LivePlace ? UiKey::OpenSettings : UiKey::OpenLivePlace, i + 1);
         auto snapshot = model.snapshot();
         check(snapshot.screen == previous, "top-level screen stays until App sends it");
         check(snapshot.action.action_id == i + 1, "each confirmed action has a distinct ID");
@@ -310,6 +311,7 @@ int main() {
         testKeyBindings();
         testBoot();
         testDatasets();
+        testDatasetSelection();
         testClock();
         testFonts();
         testLicenses();

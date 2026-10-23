@@ -958,6 +958,65 @@ public:
         readRectImpl(x, y, dest, TailMode::Leave);
     }
 
+    // Description of an externally indexed, contiguous range of whole blocks.
+    // source starts at its first BlockHeader, on a byte boundary. Coordinates
+    // remain relative to the complete image, including padded edge blocks.
+    struct BlockRange {
+        int width, height, square_unit;
+        size_t first_block, block_count, data_bytes;
+    };
+
+    // Decode only the requested part of this range, without consuming its tail.
+    // No GI01 header is read: the caller supplies previously validated metadata.
+    // Palette and compression state are independent at each block boundary.
+    // The caller must position source before each call; no index is retained.
+    template <class Raster>
+    static void readRectFromBlockRange(ByteReader& source, const BlockRange& range,
+                                      int x, int y, Raster& dest) {
+        GaluchatImageDataChunk01Reader decoder(source, range);
+        Rect target{x, y, dest.width, dest.height}, crossed{};
+        Rect grid{0, 0, decoder.hus * decoder.square_unit, decoder.vus * decoder.square_unit};
+        if (!detail::crossRect(grid, target, crossed)) return;
+        const size_t last_x = static_cast<size_t>(crossed.x + crossed.width - 1) / range.square_unit;
+        const size_t last_y = static_cast<size_t>(crossed.y + crossed.height - 1) / range.square_unit;
+        const size_t range_end = range.first_block + range.block_count;
+        const size_t stop = std::min(range_end, last_y * decoder.hus + last_x + 1);
+        BlockReader block(decoder);
+        for (size_t index = range.first_block; index < stop; ++index) {
+            Rect cell{static_cast<int>(index % decoder.hus) * range.square_unit,
+                      static_cast<int>(index / decoder.hus) * range.square_unit,
+                      range.square_unit, range.square_unit};
+            Rect part{};
+            if (!detail::crossRect(cell, target, part)) {
+                block.skipBlock(1);
+                continue;
+            }
+            block.readBlockRect({part.x - cell.x, part.y - cell.y, part.width, part.height},
+                                dest, part.x - target.x, part.y - target.y);
+        }
+        decoder.reader_->skipToByte();
+        if (stop > range.first_block && stop == range_end && !decoder.payload_reader_->atEnd()) {
+            throw std::runtime_error("GI01 block range has trailing bytes");
+        }
+    }
+
+    // Optional enumeration for external indexes; existing read APIs are unchanged.
+    // Offsets are relative to the first BlockHeader. A block is never split.
+    template <class Visitor>
+    void visitBlockPositions(Visitor visitor) {
+        if (consumed_) throw std::runtime_error("GI01 reader has already been consumed");
+        consumed_ = true;
+        const size_t first = reader_->pos();
+        BlockReader block(*this);
+        for (int index = 0; index < hus * vus; ++index) {
+            const size_t start = reader_->pos();
+            block.skipBlock(1);
+            visitor(static_cast<size_t>(index), start - first, reader_->pos() - start);
+        }
+        reader_->skipToByte();
+        if (!payload_reader_->atEnd()) throw std::runtime_error("GI01 has trailing bytes");
+    }
+
     void skipToEnd() {
         reader_->skipToByte();
         reader_->skipInByte(payload_reader_->remaining());
@@ -965,6 +1024,27 @@ public:
     }
 
 private:
+    // Used only by the opt-in range API. The released constructor/read paths
+    // continue to parse and consume their original GI01 stream unchanged.
+    GaluchatImageDataChunk01Reader(ByteReader& source, const BlockRange& range) {
+        if (source.bitOffset() != 0 || range.width <= 0 || range.height <= 0
+            || range.square_unit <= 0 || range.square_unit > (1 << 30)
+            || (range.square_unit & (range.square_unit - 1)) != 0) {
+            throw std::runtime_error("invalid GI01 block range layout");
+        }
+        width = range.width; height = range.height; square_unit = range.square_unit;
+        hus = (width - 1) / square_unit + 1;
+        vus = (height - 1) / square_unit + 1;
+        validateBlockLayout();
+        const size_t total = static_cast<size_t>(hus) * vus;
+        if (!range.block_count || range.first_block >= total
+            || range.block_count > total - range.first_block || !range.data_bytes) {
+            throw std::runtime_error("invalid GI01 block range bounds");
+        }
+        payload_reader_ = std::make_unique<detail::LimitedReader>(source, range.data_bytes);
+        reader_ = payload_reader_.get();
+    }
+
     enum class TailMode { Consume, Leave };
 
     template <class Raster>

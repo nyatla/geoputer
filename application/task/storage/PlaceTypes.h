@@ -7,7 +7,7 @@ namespace geoputer {
 
 enum class PlaceState : uint8_t {
     Waiting, Searching, Ready, NoFix, NoCard, DatasetMissing, AmbiguousFiles,
-    NotFound, EncodingError, DataError, TooManyChunks, OutOfMemory, MetadataError, VersionError
+    NotFound, EncodingError, DataError, TooManyChunks, OutOfMemory, MetadataError, VersionError, Unselected
 };
 
 inline bool datasetUnavailable(PlaceState state) {
@@ -16,6 +16,17 @@ inline bool datasetUnavailable(PlaceState state) {
            state == PlaceState::EncodingError || state == PlaceState::DataError ||
            state == PlaceState::MetadataError || state == PlaceState::VersionError || state == PlaceState::NoCard;
 }
+
+inline bool datasetInactive(PlaceState state) {
+    return state == PlaceState::Unselected || datasetUnavailable(state);
+}
+
+struct DatasetFailure {
+    uint32_t revision;
+    uint8_t number;
+    PlaceState reason;
+    bool save_failed;
+};
 
 struct DatasetInfo {
     PlaceState state;
@@ -41,6 +52,7 @@ struct PlaceResult {
 
 inline const char* placeStateName(PlaceState state) {
     switch (state) {
+        case PlaceState::Unselected: return "DATASET UNSELECTED";
         case PlaceState::Waiting: return "WAITING";
         case PlaceState::Searching: return "SEARCHING...";
         case PlaceState::Ready: return "DATASET 01";

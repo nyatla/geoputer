@@ -1,19 +1,33 @@
 #pragma once
 #include "../../../Config.h"
 #include "../log/LogTypes.h"
+#include "../PlaceTypes.h"
 
 namespace geoputer {
-enum class DatasetAction : uint8_t { Open, Older, Newer, Detail, Language, Apply, CancelLanguage };
-enum class DatasetError : uint8_t { None, Missing, Metadata, Version, Data, Encoding, TooManyChunks, NoMemory, NotStopped, SaveFailed, Busy };
+enum class DatasetPurpose : uint8_t { Select, Rebuild, Verify };
+enum class DatasetAction : uint8_t { Open, Older, Newer, Detail, Language, Apply, CancelLanguage, RebuildIndex, VerifyIndex, Clear };
+enum class DatasetError : uint8_t { None, Missing, Metadata, Version, Data, Encoding, TooManyChunks, NoMemory, NotStopped, SaveFailed, IndexFailed, IndexRestoreFailed, Busy, IndexMismatch, Unselected, CardUnavailable, AlreadyUnselected, SettingsUnavailable };
+enum class IndexTarget : uint8_t { All, Map, WordBooks, Reuse };
+enum class IndexPhase : uint8_t { Idle, Preparing, Map, TI, TT, TM, Structure, Publish, Complete, Failed };
+struct IndexProgress {
+    uint32_t token, elapsed_ms;
+    IndexPhase phase;
+    uint8_t percent;
+    bool verifying;
+    char language[config::DatasetLanguageBytes];
+};
+using IndexProgressCallback=void (*)(void*,const IndexProgress&);
 struct DatasetRequest {
     DatasetAction action;
+    DatasetPurpose purpose;
+    IndexTarget index_target;
     uint32_t token;
     uint8_t number;
     int8_t direction;
     bool reset_settings;
     char language[config::DatasetLanguageBytes];
 };
-struct DatasetRow { uint8_t number; char title[64]; };
+struct DatasetRow { uint8_t number; char title[64]; DatasetError error; };
 struct DatasetDetail {
     char title[64], description[256], language[config::DatasetLanguageBytes];
     double west, south, east, north;
@@ -24,16 +38,34 @@ struct DatasetDetail {
 struct DatasetView {
     uint32_t revision;
     uint8_t number, count, selected;
-    bool detail, loading, applying, has_older, has_newer, restart_required;
+    bool detail, loading, applying, has_older, has_newer;
     DatasetError error;
+    DatasetPurpose purpose;
+    IndexProgress progress;
     union { DatasetRow rows[config::DatasetPageRows]; DatasetDetail info; };
 };
 inline bool datasetLogStopped(const RecordingSnapshot& recording,const LogSnapshot& log) {
     return loggerStopped(recording, log);
 }
+inline PlaceState datasetErrorState(DatasetError error) {
+    switch(error) {
+        case DatasetError::Missing:return PlaceState::DatasetMissing;
+        case DatasetError::Metadata:return PlaceState::MetadataError;
+        case DatasetError::Version:return PlaceState::VersionError;
+        case DatasetError::Encoding:return PlaceState::EncodingError;
+        case DatasetError::TooManyChunks:return PlaceState::TooManyChunks;
+        case DatasetError::NoMemory:return PlaceState::OutOfMemory;
+        case DatasetError::CardUnavailable:return PlaceState::NoCard;
+        default:return PlaceState::DataError;
+    }
+}
 inline const char* datasetErrorText(DatasetError error,bool ja) {
     switch(error) {
         case DatasetError::None:return "";
+        case DatasetError::SettingsUnavailable:return ja?"設定を保存できません":"Settings unavailable";
+        case DatasetError::CardUnavailable:return ja?"SDカードが利用できません":"SD card not ready";
+        case DatasetError::AlreadyUnselected:return ja?"すでに未選択です":"Already unselected";
+        case DatasetError::Unselected:return ja?"データセットが未選択です":"No dataset selected";
         case DatasetError::Missing:return ja?"データセットが見つかりません":"Dataset not found";
         case DatasetError::Metadata:return ja?"メタデータが不正です":"Invalid metadata";
         case DatasetError::Version:return ja?"未対応の形式です":"Unsupported version";
@@ -42,6 +74,9 @@ inline const char* datasetErrorText(DatasetError error,bool ja) {
         case DatasetError::Encoding:return ja?"文字コードに対応していません":"Unsupported encoding";
         case DatasetError::NotStopped:return ja?"先にログを停止してください":"Stop logger first";
         case DatasetError::SaveFailed:return ja?"設定の保存に失敗しました":"Settings save failed";
+        case DatasetError::IndexFailed:return ja?"キャッシュの作成に失敗":"Cache creation failed";
+        case DatasetError::IndexRestoreFailed:return ja?"キャッシュの復元に失敗":"Cache restore failed";
+        case DatasetError::IndexMismatch:return ja?"キャッシュが一致しません":"Cache does not match";
         case DatasetError::Busy:return ja?"処理中です":"Working...";
         default:return ja?"データを読み込めません":"Data read failed";
     }

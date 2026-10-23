@@ -58,6 +58,7 @@ struct BootStatus {
     }
     void dataset(PlaceState state) {
         switch (state) {
+            case PlaceState::Unselected: set(BootItem::Dataset, BootCheckState::Passed, "NONE"); break;
             case PlaceState::Ready: set(BootItem::Dataset, BootCheckState::Passed, "OPEN OK"); break;
             case PlaceState::NoCard: set(BootItem::Dataset, BootCheckState::Warning, "NO SD"); break;
             case PlaceState::DatasetMissing: set(BootItem::Dataset, BootCheckState::Warning, "MISSING"); break;

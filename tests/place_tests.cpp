@@ -192,7 +192,7 @@ void testPlace() {
         warning.keyPressed(UiKey::OpenSettings,10);
         check(warning.snapshot().action.target==ScreenId::Settings,"dataset fault never blocks direct settings access");
         UiModel recovery;recovery.setScreen({ScreenId::LivePlace,DisplayMode::View,1,rejected,0,ActionResult::None});
-        recovery.keyPressed(UiKey::F1,10);
+        recovery.keyPressed(UiKey::Escape,10);
         check(recovery.snapshot().action.kind==ActionKind::Maintenance,"latched dataset error offers maintenance without a red-band requirement");
         DatasetInfo state{failure,2000,1500,7};
         check(!applyDatasetInfo(state,{PlaceState::Ready,1500,1500,7}) && state.state==failure,
@@ -202,5 +202,15 @@ void testPlace() {
               "explicit successful revalidation with a new generation clears error");
         check(!applyDatasetInfo(state,{failure,2000,1500,7}) && state.state==PlaceState::Ready,"old failure cannot poison repaired selection");
     }
+    UiData unselected{};unselected.settings=defaultSettings();unselected.dataset={PlaceState::Unselected,0,1500,8};
+    unselected.storage.card_state=CardState::Mounted;unselected.gps.reception=GpsReception::Fix;unselected.gps.fix.valid=true;
+    check(datasetInactive(PlaceState::Unselected) && !datasetUnavailable(PlaceState::Unselected),"unselected disables lookup without being a fault");
+    check(placeIssue(unselected)==PlaceState::Unselected && mainError(unselected)==nullptr,"unselected does not create a red error band or block GPS");
+    for(bool ja:{false,true}) {const auto text=datasetIssueText(PlaceState::Unselected,ja);check(*text.first && *text.second && validUtf8(text.first) && validUtf8(text.second),"unselected has localized display text");}
+    std::strcpy(unselected.place[0],"old name");result.state=PlaceState::Unselected;completePlacePresentation(unselected,result);
+    check(!hasPlace(unselected) && !unselected.place_fix.valid,"unselection clears old place text and coordinates");
+    DatasetInfo state{PlaceState::Unselected,0,1500,8};
+    check(!applyDatasetInfo(state,{PlaceState::Ready,1,1500,7}) && !applyDatasetInfo(state,{PlaceState::Ready,1,1500,8}),"late place success cannot undo unselection");
+    check(applyDatasetInfo(state,{PlaceState::Ready,1,1500,9}),"explicit selection of a new generation can restore place lookup");
     check(!datasetUnavailable(PlaceState::NoFix) && !datasetUnavailable(PlaceState::NotFound),"NO FIX and zero region do not reject the dataset");
 }

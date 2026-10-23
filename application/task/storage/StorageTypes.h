@@ -21,6 +21,7 @@ struct StorageSnapshot {
     uint32_t revision;
     SettingsState settings_state;
     Settings settings;
+    DatasetFailure dataset_failure; // Latest automatic release; not persisted across reboot.
     CardState card_state;
     uint8_t fat_type;
     uint64_t card_bytes;

@@ -20,31 +20,12 @@ bool endsWith(const std::string& name, const char* suffix) {
     return true;
 }
 
-std::string metadataString(const std::string& metadata, const char* key) {
-    const auto keyPos = metadata.find(std::string("\"") + key + "\"");
-    if (keyPos == std::string::npos) return {};
-    auto pos = metadata.find(':', keyPos);
-    if (pos == std::string::npos) return {};
-    do { ++pos; } while (pos < metadata.size() && std::isspace(static_cast<unsigned char>(metadata[pos])));
-    if (pos >= metadata.size() || metadata[pos++] != '"') return {};
-    const auto end = metadata.find('"', pos);
-    return end == std::string::npos ? std::string{} : metadata.substr(pos, end - pos);
-}
 }  // namespace
 
 void PlaceLookup::configure(std::string directory, std::string language) {
-    close(); directory_ = std::move(directory); language_ = std::move(language); manifest_ = true;
+    directory_ = std::move(directory); language_ = directory_.empty() ? "" : std::move(language);
+    close(); manifest_ = true;
 }
-bool PlaceLookup::describe(DatasetDetail& result) const {
-    if (!map_ || !wordbook_) return false;
-    const auto bounds = map_->coverage();
-    result.west = bounds.x; result.south = bounds.y;
-    result.east = bounds.x + bounds.width; result.north = bounds.y + bounds.height;
-    result.unit_inv_x = map_->unitInvX(); result.unit_inv_y = map_->unitInvY();
-    result.chunks = map_->chunkCount();
-    return true;
-}
-
 void PlaceLookup::releaseReaders() {
     const bool had_reader = wordbook_ || map_;
     wordbook_cache_.clear();
@@ -57,7 +38,7 @@ void PlaceLookup::close() {
     releaseReaders();
     auto generation = dataset_.generation + 1;
     if (!generation) ++generation;
-    dataset_ = {PlaceState::Waiting, 0, config::MaxDatasetChunks, generation};
+    dataset_ = {directory_.empty() ? PlaceState::Unselected : PlaceState::Waiting, 0, config::MaxDatasetChunks, generation};
 }
 
 PlaceState PlaceLookup::reject(PlaceState state) {
@@ -70,7 +51,7 @@ PlaceState PlaceLookup::open() {
     if (map_ && wordbook_) return PlaceState::Ready;
     // A rejected dataset stays rejected until an explicit close/re-open (e.g.
     // SD remount). GPS samples must not repeatedly scan an unusable file.
-    if (datasetUnavailable(dataset_.state)) return dataset_.state;
+    if (datasetInactive(dataset_.state)) return dataset_.state;
     dataset_.limit = config::MaxDatasetChunks;
     std::string mapPath, wordbookPath;
     unsigned maps = 0, books = 0;
@@ -115,26 +96,28 @@ PlaceState PlaceLookup::open() {
     // Same ReaderFactory/Reader API as the SDK's file sample. ESP-IDF's VFS
     // exposes the already-mounted FatFs volume at /sd; do not mount SD twice.
     std::unique_ptr<CachedMapReader> map;
+    DatasetWordBookIndex book_info;
+    std::shared_ptr<ObservedFileReaderFactory> index_factory;
     try {
         auto factory = std::make_shared<ObservedFileReaderFactory>(
             mapPath, observer_, &timing_.map_io,
             FileReadOptions{config::MapInitReadBufferBytes, config::FileReadThroughSkipBytes});
-        map = std::make_unique<CachedMapReader>(factory, observer_);
-        // Index construction has released its Readers. Only future rectangle
-        // Readers use this profile; no live buffer is resized.
+        const auto index_path=directory_+"/_mapindex.dat";
+        const auto info=DatasetIndex(drive_,observer_).loadMap(index_path,mapPath,&timing_.map_io,&timing_.index_io,&book_info,language_);
+        index_factory=std::make_shared<ObservedFileReaderFactory>(index_path,observer_,&timing_.index_io,
+            FileReadOptions{config::IndexReadBufferBytes,0});
+        map=std::make_unique<CachedMapReader>(info,factory,index_factory,observer_);
         factory->setReadOptions({config::MapRectReadBufferBytes, config::FileReadThroughSkipBytes});
-    } catch (const galuchat::MapCountLimitExceeded& error) {
+    } catch (const MapChunkLimitExceeded& error) {
         dataset_.chunks = error.count;
         return dataset_.state = PlaceState::TooManyChunks;
     }
     dataset_.chunks = map->chunkCount();
-    auto book = std::make_unique<galuchat::GaluchatGisWordBookReader>(
+    const auto book_metadata=DatasetIndex(drive_,observer_).checkWordBook(book_info,wordbookPath,&timing_.wordbook_io);
+    if (!wordBookUsesUtf8(book_metadata)) return PlaceState::EncodingError;
+    auto book = std::make_unique<DiskIndexedWordBookReader>(book_info,
         std::make_shared<ObservedFileReaderFactory>(wordbookPath, observer_, &timing_.wordbook_io,
-            FileReadOptions{config::WordBookReadBufferBytes, config::FileReadThroughSkipBytes}), 0);
-    auto encoding = metadataString(book->metadata(), "token_encoding");
-    if (encoding.empty()) encoding = metadataString(book->metadata(), "text_encoding");
-    for (auto& c : encoding) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-    if (encoding != "utf8" && encoding != "utf-8") return PlaceState::EncodingError;
+            FileReadOptions{config::WordBookReadBufferBytes, config::FileReadThroughSkipBytes}), index_factory);
     map_ = std::move(map); wordbook_ = std::move(book);
     dataset_.state = PlaceState::Ready;
     return PlaceState::Ready;
@@ -162,7 +145,7 @@ PlaceResult PlaceLookup::search(const PlaceRequest& request) {
     PlaceResult result{};
     result.request = request;
     result.dataset = dataset_;
-    if (datasetUnavailable(dataset_.state)) { result.state = dataset_.state; return result; }
+    if (datasetInactive(dataset_.state)) { result.state = dataset_.state; return result; }
     if (!request.fix.valid || !std::isfinite(request.fix.latitude) || !std::isfinite(request.fix.longitude) ||
         std::abs(request.fix.latitude) > 90 || std::abs(request.fix.longitude) > 180) {
         result.state = PlaceState::NoFix;

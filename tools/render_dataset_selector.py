@@ -69,8 +69,8 @@ int main(int argc,char** argv) {
             if(display.pixels.at((y+row)*240+x+col)!=(ink?color:TFT_BLACK))throw std::runtime_error(std::string(mode)+": maintenance guide pixel mismatch at "+std::to_string(x+col)+","+std::to_string(y+row));
         }
     };
-    if(!std::strcmp(mode,"missing-boot"))check_ascii(4,124,"F1 MAINT",TFT_CYAN);
-    if(!std::strcmp(mode,"boot") || !std::strcmp(mode,"boot-ready"))check_ascii(4,124,"F1 MAINT",TFT_CYAN);
+    if(!std::strcmp(mode,"missing-boot"))check_ascii(4,124,"ESC MAINT",TFT_CYAN);
+    if(!std::strcmp(mode,"boot") || !std::strcmp(mode,"boot-ready"))check_ascii(4,124,"ESC MAINT",TFT_CYAN);
     if(!std::strcmp(mode,"maintenance")) {
         check_ascii(4,7,"MAINTENANCE",TFT_LIGHTGREY);check_ascii(4,124,"ESC RESTART",TFT_WHITE);
     }

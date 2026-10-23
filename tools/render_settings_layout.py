@@ -37,9 +37,11 @@ int main(int argc,char** argv){
         check(width(settingsRootLabel(language,n),english)<=216,"root label exceeds screen");
     for(unsigned n=0;n<4;++n)
         check(width(settingsStorageLabel(language,n),english)<=216,"storage label exceeds screen");
-    check(20+width(settingsRootLabel(language,SettingsModeRow),english)+8<=236-width(settingsModeValue(language),english),
-          "root mode label overlaps right-aligned value");
-    for(unsigned n=0;n<SettingCount;++n){
+    for(unsigned n=0;n<SettingsSystemCount;++n)
+        check(width(settingsSystemLabel(language,n),english)<=216,"system label exceeds screen");
+    check(20+width(settingsSystemLabel(language,0),english)+8<=236-width(settingsModeValue(language),english),
+          "system mode label overlaps right-aligned value");
+    for(unsigned n=0;n<OperationRowCount;++n){
         for(unsigned choice=0;choice<settingChoices(n);++choice){
             if(n==static_cast<unsigned>(SettingId::Dataset) && !choice)continue;
             char value[32];settingsValueText(language,n,choice,value,sizeof(value));
@@ -63,8 +65,12 @@ int main(int argc,char** argv){
     ui.setScreen({ScreenId::Settings,DisplayMode::View,1,data,0,ActionResult::None});
     auto key=[&](UiKey k){ui.keyPressed(k,1);};
     if(!std::strcmp(mode,"mode")||!std::strcmp(mode,"mode-confirm")||!std::strcmp(mode,"mode-blocked")) {
-        for(unsigned n=0;n<SettingsModeRow;++n)key(UiKey::Down);
-        if(std::strcmp(mode,"mode"))key(UiKey::Enter);
+        for(unsigned n=0;n<SettingsSystemRow;++n)key(UiKey::Down);
+        key(UiKey::Enter);
+        if(std::strcmp(mode,"mode")) {
+            key(UiKey::Enter);key(UiKey::Right);key(UiKey::Enter);
+            key(UiKey::Down);key(UiKey::Down);key(UiKey::Enter);
+        }
     }else if(!std::strcmp(mode,"operation")||!std::strcmp(mode,"operation-bottom")||!std::strcmp(mode,"language-edit")||!std::strcmp(mode,"timeout-never")){
         key(UiKey::Enter);
         if(!std::strcmp(mode,"operation-bottom"))for(unsigned n=0;n<6;++n)key(UiKey::Down);
@@ -76,7 +82,9 @@ int main(int argc,char** argv){
         if(!std::strcmp(mode,"card"))key(UiKey::Enter);
         if(!std::strcmp(mode,"format-confirm")){for(unsigned n=0;n<3;++n)key(UiKey::Down);key(UiKey::Enter);}
     }else if(!std::strcmp(mode,"reset")||!std::strcmp(mode,"reset-confirm")){
-        for(unsigned n=0;n<settingsRootIndex(SettingsRootItem::Reset);++n)key(UiKey::Down);
+        for(unsigned n=0;n<SettingsSystemRow;++n)key(UiKey::Down);
+        key(UiKey::Enter);
+        for(unsigned n=0;n<SettingsSystemResetRow;++n)key(UiKey::Down);
         key(UiKey::Enter);
         if(!std::strcmp(mode,"reset-confirm"))key(UiKey::Enter);
     }else if(!std::strcmp(mode,"about")||!std::strcmp(mode,"about-busy")){
@@ -116,7 +124,7 @@ int main(int argc,char** argv){
                 x+=narrow?8:16;
             }
         };
-        for(unsigned row=0;row<SettingCount;++row)for(unsigned choice=0;choice<settingChoices(row);++choice) {
+        for(unsigned row=0;row<OperationRowCount;++row)for(unsigned choice=0;choice<settingChoices(row);++choice) {
             if(row==static_cast<unsigned>(SettingId::Dataset) && !choice)continue;
             UiData trial=data;
             check(setSettingValue(trial.settings,row,choice),"setting choice fixture");
@@ -150,10 +158,10 @@ int main(int argc,char** argv){
             pixel(x+col,y+row,rows[row]&(0x8000u>>col)?color:TFT_BLACK);
     };
     if(!std::strcmp(mode,"mode")){
-        if(english)ascii(156,47,'G',TFT_CYAN);else japanese(140,47,U'G',TFT_CYAN);
+        if(english)ascii(156,27,'G',TFT_CYAN);else japanese(140,27,U'G',TFT_CYAN);
     }
     if(!std::strcmp(mode,"root")){
-        if(english)ascii(20,47,'O',TFT_WHITE);else japanese(20,27,U'動',TFT_CYAN);
+        if(english)ascii(20,47,'S',TFT_WHITE);else japanese(20,27,U'動',TFT_CYAN);
     }
     if(!std::strcmp(mode,"root-bottom")){
         if(english)ascii(20,87,'L',TFT_CYAN);else japanese(20,87,U'ラ',TFT_CYAN);

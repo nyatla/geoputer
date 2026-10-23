@@ -2,7 +2,7 @@
 
 #include <memory>
 #include <string>
-#include <galuchat/gis_wordbook_reader.hpp>
+#include "DiskIndexedWordBookReader.h"
 #include "CachedMapReader.h"
 #include "WordBookCache.h"
 #include "TextEncoding.h"
@@ -20,10 +20,11 @@ public:
     PlaceLookup& operator=(const PlaceLookup&) = delete;
     void setObserver(StorageObserver* observer) { observer_ = observer; }
     PlaceResult search(const PlaceRequest& request);
-    void configure(std::string directory, std::string language = "");
-    bool describe(DatasetDetail& result) const;
+    void configure(std::string directory, std::string language = ""); // Empty directory disables lookup without file I/O.
+    void setDrive(uint8_t drive) { drive_=drive; }
     const std::string& selectedLanguage() const { return language_; }
     PlaceResult prepare();  // Validate file pair/headers/encoding without requiring GPS.
+    void invalidate() { reject(PlaceState::DataError); }
     void close(); // Explicit revalidation boundary; clears a latched failure.
     DatasetInfo datasetInfo() const { return dataset_; }
     MapCacheStats cacheStats() const { return map_ ? map_->stats() : MapCacheStats{}; }
@@ -37,9 +38,10 @@ private:
     std::string language_;
     PlaceDisplayFormat display_;
     bool manifest_ = false;
+    uint8_t drive_=0;
     PlaceReadTiming timing_{}; // Must outlive the Readers that refer to its I/O counters.
     std::unique_ptr<CachedMapReader> map_;
-    std::unique_ptr<galuchat::GaluchatGisWordBookReader> wordbook_;
+    std::unique_ptr<DiskIndexedWordBookReader> wordbook_;
     WordBookCache wordbook_cache_;
     StorageObserver* observer_ = nullptr;
     DatasetInfo dataset_{};

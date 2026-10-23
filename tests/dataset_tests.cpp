@@ -84,6 +84,13 @@ void savedSelection() {
     const uint8_t legacy[]={0x47,0x50,0x02,0x07,0,2,1,1,2,0,1,0,0,0,0,0};
     uint8_t bytes[16];std::memcpy(bytes,legacy,16);uint32_t hash=2166136261u;for(unsigned i=0;i<12;++i)hash=(hash^bytes[i])*16777619u;for(unsigned i=0;i<4;++i)bytes[12+i]=hash>>(8*i);
     check(decodeSettings(bytes,16,restored) && restored.dataset==1 && !restored.wordbook_language[0] && restored.language==UiLanguage::English,"old unused mode index migrates to 01/default, preserving UI language");
+    check(store.save(defaultSettings()),"clearing selection persists without an SD card");
+    check(reboot.load(restored)==SettingsState::Loaded && !restored.dataset && !restored.wordbook_language[0],"unselected survives reboot with an empty language");
+    selected=defaultSettings();std::strcpy(selected.wordbook_language,"ja");
+    check(!validSettings(selected) && !store.save(selected),"unselected cannot retain a hidden language");
+    uint8_t inconsistent[SettingsRecordSize];encodeSettings(selected,inconsistent);
+    check(!decodeSettings(inconsistent,sizeof(inconsistent),restored),"even a checksummed unselected record with a language is rejected");
+    selected.dataset=1;check(setSettingValue(selected,static_cast<unsigned>(SettingId::Dataset),0) && !selected.wordbook_language[0],"clearing the dataset also clears its language");
     check(!validDatasetLanguage("en--us") && !validDatasetLanguage("dataset") && !validDatasetLanguage("EN") && !validDatasetLanguage(std::string(32,'a').c_str()),"bounded identifiers validated");
 }
 void navigationAndGate() {
@@ -94,10 +101,12 @@ void navigationAndGate() {
     log.closing=true;check(!datasetLogStopped(rec,log),"close acknowledgement must complete");log.closing=false;
     log.buffered=1;check(!datasetLogStopped(rec,log),"unsaved records block reboot");log.buffered=0;
     rec.pending=true;check(!datasetLogStopped(rec,log),"App pending sample blocks reboot");rec.pending=false;
-    UiModel model;UiData data{};data.settings=defaultSettings();
+    UiModel model;UiData data{};data.settings=defaultSettings();data.storage.card_state=CardState::Mounted;data.storage.settings_state=SettingsState::Loaded;
     check(model.setScreen({ScreenId::Settings,DisplayMode::View,1,data,0,ActionResult::None})==OperationStatus::Ok,"settings opens");
     model.keyPressed(UiKey::Enter,1);for(unsigned i=0;i<5;++i)model.keyPressed(UiKey::Down,2+i);model.keyPressed(UiKey::Enter,8);
-    check(model.snapshot().action.kind==ActionKind::Dataset && model.snapshot().action.dataset_action==DatasetAction::Open,"Dataset opens list rather than editing an old choice index");
+    check(model.snapshot().page==SettingsPage::DatasetMenu && model.snapshot().action.kind==ActionKind::None,"Dataset opens its menu without reading or validating files");
+    model.keyPressed(UiKey::Enter,8);
+    check(model.snapshot().action.kind==ActionKind::Dataset && model.snapshot().action.dataset_action==DatasetAction::Open,"Select dataset opens the existing list");
     auto publish=[&](){const auto action=model.snapshot().action;data.revision++;data.datasets.revision=model.data().datasets.revision+1;model.updateContent({DisplayMode::View,1,data,action.action_id,ActionResult::Applied});};
     data.datasets.count=1;data.datasets.rows[0].number=2;std::strcpy(data.datasets.rows[0].title,"Tokyo");publish();
     model.keyPressed(UiKey::Enter,9);check(model.snapshot().action.dataset_action==DatasetAction::Detail,"Enter opens details");
@@ -113,6 +122,11 @@ void navigationAndGate() {
     check(model.snapshot().action.dataset_action==DatasetAction::Apply,"last detail row requests validated apply/restart");
     data.datasets.loading=data.datasets.applying=true;publish();model.keyPressed(UiKey::Escape,45);model.tick(100000);
     check(model.snapshot().page==SettingsPage::DatasetDetail && model.snapshot().action.kind==ActionKind::None,"committed apply cannot be cancelled or put to sleep");
+    for (const auto error : {DatasetError::IndexFailed,DatasetError::IndexRestoreFailed,DatasetError::SaveFailed}) {
+        data.datasets.loading=data.datasets.applying=false;data.datasets.error=error;publish();
+        model.keyPressed(UiKey::Enter,100001);
+        check(model.snapshot().action.dataset_action==DatasetAction::Apply,"index or selection-save failure allows explicit retry");
+    }
     UiModel boot;UiData missing{};missing.settings=defaultSettings();missing.boot.complete=true;
     missing.boot.dataset(PlaceState::DatasetMissing);
     boot.setScreen({ScreenId::Boot,DisplayMode::View,1,missing,0,ActionResult::None});
@@ -120,5 +134,88 @@ void navigationAndGate() {
     check(boot.snapshot().action.kind==ActionKind::ChangeScreen && boot.snapshot().action.target==ScreenId::LivePlace,
           "missing-dataset startup proceeds to normal Live Place");
 }
+
+void unselectedUi() {
+    UiData data{};data.settings=defaultSettings();data.dataset.state=PlaceState::Unselected;
+    data.storage.card_state=CardState::NoCard;data.storage.settings_state=SettingsState::Loaded;
+    UiModel logger;logger.setScreen({ScreenId::GpsLogger,DisplayMode::View,1,data,0,ActionResult::None});
+    logger.keyPressed(UiKey::Enter,1);
+    check(logger.snapshot().action.kind==ActionKind::Logging,"unselected retains logger controls");
+    UiModel model;model.setScreen({ScreenId::Settings,DisplayMode::View,1,data,0,ActionResult::None});
+    uint32_t now=0;auto key=[&](UiKey k){model.keyPressed(k,++now);};
+    auto publish=[&](){const auto action=model.snapshot().action;++data.revision;
+        data.datasets.revision=model.data().datasets.revision+1;
+        model.updateContent({DisplayMode::View,1,data,action.action_id,ActionResult::Applied});};
+    key(UiKey::Enter);for(unsigned i=0;i<5;++i)key(UiKey::Down);key(UiKey::Enter);
+    key(UiKey::Down);
+    check(datasetMenuBlock(model.data(),1)==DatasetError::CardUnavailable,"cache menu knows SD is unavailable");
+    key(UiKey::Enter);check(model.snapshot().page==SettingsPage::DatasetMenu && !model.confirming() && model.snapshot().action.kind==ActionKind::None,
+        "disabled menu does not require trying a confirmation");
+    key(UiKey::Up);key(UiKey::Enter);
+    check(model.snapshot().action.dataset_action==DatasetAction::Open && model.snapshot().action.dataset_purpose==DatasetPurpose::Select,"offline ordinary selection still opens");
+    data.datasets.count=1;publish();
+    check(datasetRowBlock(model.data(),0)==DatasetError::AlreadyUnselected,"already unselected row is visibly disabled");
+    key(UiKey::Enter);check(!model.confirming(),"disabled None row never opens a modal");
+    data.settings.dataset=1;std::strcpy(data.settings.wordbook_language,"ja");data.dataset.state=PlaceState::DataError;publish();
+    data.storage.settings_state=SettingsState::Unavailable;publish();key(UiKey::Enter);
+    check(!model.confirming() && datasetRowBlock(model.data(),0)==DatasetError::SettingsUnavailable,"known NVS unavailability disables selection changes");
+    data.storage.settings_state=SettingsState::Loaded;publish();
+    key(UiKey::Enter);check(model.dialog().kind()==DialogKind::ClearDataset && model.dialog().actionEnabled(),"None is available without reading broken active data or SD");
+    key(UiKey::Enter);check(model.snapshot().action.kind==ActionKind::None,"clear defaults to cancel");
+    data.recording.state=RecordingState::Paused;publish();key(UiKey::Enter);
+    check(!model.confirming() && datasetRowBlock(model.data(),0)==DatasetError::NotStopped,"paused logger disables None before trying");
+    data.recording.state=RecordingState::Stopped;publish();key(UiKey::Enter);key(UiKey::Right);
+    data.storage.busy=true;publish();key(UiKey::Enter);
+    check(model.snapshot().action.kind==ActionKind::None,"snapshot changes invalidate an open clear confirmation");
+    data.storage.busy=false;publish();key(UiKey::Enter);key(UiKey::Right);key(UiKey::Enter);
+    check(model.snapshot().action.dataset_action==DatasetAction::Clear && model.snapshot().action.confirmed,"None emits only confirmed Clear");
+    data.settings=defaultSettings();publish();key(UiKey::Escape);
+    check(model.snapshot().page==SettingsPage::DatasetMenu,"None returns through selection list, with no independent clear menu");
+    key(UiKey::Down);key(UiKey::Down);key(UiKey::Down);
+    check(model.snapshot().selected_setting==2,"dataset menu has exactly three entries");
 }
-void testDatasets() {metadata();savedSelection();navigationAndGate();}
+void cacheFlow(DatasetPurpose purpose) {
+    UiData data{};data.settings=defaultSettings();data.dataset.state=PlaceState::Unselected;data.storage.card_state=CardState::Mounted;
+    UiModel model;model.setScreen({ScreenId::Settings,DisplayMode::View,1,data,0,ActionResult::None});
+    uint32_t now=0;auto key=[&](UiKey k){model.keyPressed(k,++now);};
+    auto publish=[&](){const auto action=model.snapshot().action;++data.revision;
+        data.datasets.revision=model.data().datasets.revision+1;
+        model.updateContent({DisplayMode::View,1,data,action.action_id,ActionResult::Applied});};
+    key(UiKey::Enter);for(unsigned i=0;i<5;++i)key(UiKey::Down);key(UiKey::Enter);
+    const auto entry=static_cast<unsigned>(purpose);for(unsigned i=0;i<entry;++i)key(UiKey::Down);
+    check(datasetMenuBlock(data,entry)==DatasetError::None,"unselected active dataset does not disable cache maintenance");
+    data.recording.state=RecordingState::Recording;publish();key(UiKey::Enter);
+    check(model.snapshot().page==SettingsPage::DatasetMenu && model.snapshot().action.kind==ActionKind::None && datasetMenuBlock(model.data(),entry)==DatasetError::NotStopped,
+        "recording grays cache entry and emits no request");
+    data.recording.state=RecordingState::Stopped;publish();key(UiKey::Enter);
+    check(model.snapshot().page==SettingsPage::DatasetList && model.snapshot().action.dataset_action==DatasetAction::Open &&
+        model.snapshot().action.dataset_purpose==purpose,"maintenance opens a target list without opening a detail reader");
+    data.datasets={};data.datasets.purpose=purpose;data.datasets.count=2;
+    data.datasets.rows[0].number=1;data.datasets.rows[0].error=DatasetError::Metadata;
+    data.datasets.rows[1].number=2;std::strcpy(data.datasets.rows[1].title,"Candidate");publish();
+    key(UiKey::Enter);check(!model.confirming() && model.snapshot().action.kind==ActionKind::None && datasetRowBlock(model.data(),0)==DatasetError::Metadata,
+        "metadata failure known from listing is disabled with its reason");
+    key(UiKey::Down);key(UiKey::Enter);
+    check(model.confirming() && !model.confirmChoice() && model.datasetDialogNumber()==2 && model.snapshot().action.kind==ActionKind::None,
+        "target selection opens Cancel-default confirmation without a Detail request");
+    key(UiKey::Escape);check(model.snapshot().page==SettingsPage::DatasetList && model.snapshot().selected_setting==1,"cancel preserves the chosen target row");
+    key(UiKey::Enter);key(UiKey::Right);key(UiKey::Enter);
+    const auto action=model.snapshot().action;
+    check(action.kind==ActionKind::Dataset && action.confirmed && action.dataset_action==(purpose==DatasetPurpose::Rebuild?DatasetAction::RebuildIndex:DatasetAction::VerifyIndex) &&
+        action.dataset_purpose==purpose && action.index_target==IndexTarget::All && action.browse_index==1 && action.browse_revision==data.datasets.revision,
+        "confirmed maintenance identifies the exact list revision and target, for map and all languages");
+    data.datasets.applying=data.datasets.loading=true;data.datasets.number=2;data.datasets.progress.phase=IndexPhase::TT;publish();
+    key(UiKey::Escape);model.tick(1000000);
+    check(model.snapshot().page==SettingsPage::DatasetIndex && model.snapshot().action.kind==ActionKind::None,"maintenance progress owns input and prevents sleep");
+    data.datasets.applying=data.datasets.loading=false;data.datasets.error=DatasetError::IndexMismatch;data.datasets.progress.phase=IndexPhase::Failed;publish();
+    check(model.snapshot().page==SettingsPage::DatasetIndex && !model.data().settings.dataset,"result does not select the maintenance target");
+    key(UiKey::Enter);check(model.snapshot().page==SettingsPage::DatasetList && model.snapshot().action.dataset_action==DatasetAction::Open && model.snapshot().action.dataset_purpose==purpose,
+        "result returns to the same kind of target list");
+    data.datasets.error=DatasetError::None;publish();key(UiKey::Escape);
+    check(model.snapshot().page==SettingsPage::DatasetMenu && model.snapshot().selected_setting==entry,"target list backs to its own menu entry");
+    key(UiKey::Escape);check(model.snapshot().page==SettingsPage::Operation,"dataset menu backs to Operation");
+}
+}
+void testDatasets() {
+    metadata();savedSelection();navigationAndGate();unselectedUi();cacheFlow(DatasetPurpose::Rebuild);cacheFlow(DatasetPurpose::Verify);
+}

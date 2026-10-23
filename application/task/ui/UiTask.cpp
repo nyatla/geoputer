@@ -4,6 +4,7 @@
 #include "UiRenderer.h"
 #include "KeyBindings.h"
 #include "../../utils/SyncClient.h"
+#include "../../hardware/AdvKeyboardReader.h"
 
 namespace geoputer {
 
@@ -58,11 +59,33 @@ void UiTask::run() {
     auto config = M5.config();
     config.internal_spk = false;
     config.internal_mic = false;
-    M5Cardputer.begin(config, true);
+    // Keep the board's automatic keyboard update off: this task owns polling.
+    M5Cardputer.begin(config, false);
+    if (M5.getBoard() == m5::board_t::board_M5CardputerADV) {
+        auto reader = std::make_unique<AdvKeyboardReader>();
+        auto* state = reader.get();
+        M5Cardputer.Keyboard.begin(std::move(reader));
+        Console.println(state->ready() ? "[UI] ADV physical key snapshot ready" : "[UI] ADV keyboard initialization failed");
+    } else M5Cardputer.Keyboard.begin();
+    auto update_board = [] {
+        M5Cardputer.update();
+        M5Cardputer.Keyboard.updateKeyList();
+        M5Cardputer.Keyboard.updateKeysState();
+    };
+    // Sample before accepting any App request. A held physical ` must be
+    // latched even if it is released while the initial screen is prepared.
+    update_board();
+    bool startup_escape = false;
+    for (const auto& position : M5Cardputer.Keyboard.keyList())
+        startup_escape |= M5Cardputer.Keyboard.getKeyValue(position).value_first == '`';
+    if (startup_escape) {
+        model_.keyPressed(UiKey::Escape, taskTimeMs());
+        Console.println("[UI] startup ESC held; maintenance latched");
+    }
     UiRenderer renderer(M5Cardputer.Display);
     const bool ready = renderer.begin();
     Console.println(ready ? "[UI] ready (240x135)" : "[UI] initialization failed");
-    bool was_one = false, was_settings = false, was_logs = false, was_escape = false, was_up = false, was_down = false;
+    bool was_one = false, was_gps = false, was_logs = false, was_escape = startup_escape || M5Cardputer.Keyboard.keysState().del, was_up = false, was_down = false;
     bool was_left = false, was_right = false, was_enter = false, was_any = false;
     bool was_delete = false, was_pause = false;
     uint32_t repeat_at = 0;
@@ -76,12 +99,13 @@ void UiTask::run() {
             handle(request, ready);
             sendReturn();  // Return after copying/accepting, before rendering.
         }
-        M5Cardputer.update();
+        update_board();
         const auto& keys = M5Cardputer.Keyboard.keysState();
         // Normalize physical keys before detecting edges; adding/removing Fn
         // while holding a navigation key must not create another press.
-        // Physical Del/Backspace and Fn+` share one Back/Cancel press edge.
-        bool f1 = false, gps = false, settings = false, logs = false, escape = keys.del, up = false, down = false;
+        // Del/Backspace is Back/Cancel; only the physical ` selects maintenance.
+        const bool back = keys.del;
+        bool f1 = false, live = false, gps = false, logs = false, escape = false, up = false, down = false;
         bool left = false, right = false;
         bool delete_log = false, pause_log = false;
         for (const auto& position : M5Cardputer.Keyboard.keyList()) {
@@ -90,7 +114,7 @@ void UiTask::run() {
             f1 |= key == UiKey::F1;
             pause_log |= key == UiKey::PauseLog;
             gps |= key == UiKey::OpenGpsLogger;
-            settings |= key == UiKey::OpenSettings;
+            live |= key == UiKey::OpenLivePlace;
             logs |= key == UiKey::OpenLogs;
             delete_log |= key == UiKey::DeleteLog;
             escape |= key == UiKey::Escape;
@@ -101,7 +125,7 @@ void UiTask::run() {
         }
         const uint32_t now = taskTimeMs();
         const bool enter = keys.enter;
-        const bool one = f1 || gps; // Plain 1 and Fn+1 share a physical press edge.
+        const bool one = f1 || live; // Plain 1 and Fn+1 share a physical press edge.
         const bool any = M5Cardputer.Keyboard.isPressed() || keys.fn || keys.shift || keys.ctrl || keys.alt;
         if (ready) {
             if (!battery_sampled || now - battery_at >= 5000) {
@@ -110,18 +134,18 @@ void UiTask::run() {
                                   charging != m5::Power_Class::charge_unknown);
                 battery_sampled = true; battery_at = now;
             }
-            if (one && !was_one) model_.keyPressed(f1 ? UiKey::F1 : UiKey::OpenGpsLogger, now);
+            if (one && !was_one) model_.keyPressed(f1 ? UiKey::F1 : UiKey::OpenLivePlace, now);
             if (pause_log && !was_pause) model_.keyPressed(UiKey::PauseLog, now);
-            if (settings && !was_settings) model_.keyPressed(UiKey::OpenSettings, now);
+            if (gps && !was_gps) model_.keyPressed(UiKey::OpenGpsLogger, now);
             if (logs && !was_logs) model_.keyPressed(UiKey::OpenLogs, now);
             if (delete_log && !was_delete) model_.keyPressed(UiKey::DeleteLog, now);
-            if (escape && !was_escape) model_.keyPressed(UiKey::Escape, now);
+            if ((escape || back) && !was_escape) model_.keyPressed(escape ? UiKey::Escape : UiKey::Back, now);
             if (up && !was_up) model_.keyPressed(UiKey::Up, now);
             if (down && !was_down) model_.keyPressed(UiKey::Down, now);
             if (left && !was_left) model_.keyPressed(UiKey::Left, now);
             if (right && !was_right) model_.keyPressed(UiKey::Right, now);
             if (enter && !was_enter) model_.keyPressed(UiKey::Enter, now);
-            if (any && !was_any && !one && !pause_log && !settings && !logs && !delete_log && !escape && !up && !down && !left && !right && !enter) model_.keyPressed(UiKey::Other, now);
+            if (any && !was_any && !one && !pause_log && !gps && !logs && !delete_log && !escape && !back && !up && !down && !left && !right && !enter) model_.keyPressed(UiKey::Other, now);
             if ((up && !was_up) || (down && !was_down)) repeat_at = now + 400;
             else if ((up || down) && repeat_at && static_cast<int32_t>(now - repeat_at) >= 0) {
                 model_.keyPressed(up ? UiKey::Up : UiKey::Down, now);
@@ -137,10 +161,10 @@ void UiTask::run() {
         }
         was_one = one;
         was_pause = pause_log;
-        was_settings = settings;
+        was_gps = gps;
         was_logs = logs;
         was_delete = delete_log;
-        was_escape = escape;
+        was_escape = escape || back;
         was_up = up;
         was_down = down;
         was_left = left; was_right = right; was_enter = enter; was_any = any;

@@ -26,6 +26,10 @@ void testBoot() {
     check(!progress.finish(), "dataset validation must return before Ready");
     progress.dataset(PlaceState::Ready);
     check(progress.finish() && !progress.hasIssues() && progress.holdMs() == 2000, "normal startup finishes without waiting for GPS fix");
+    progress.dataset(PlaceState::Unselected);
+    check(progress.finish() && !progress.hasIssues() && progress.holdMs()==2000 &&
+          !std::strcmp(progress.checks[static_cast<unsigned>(BootItem::Dataset)].detail,"NONE"),
+          "unselected is a normal completed boot check, without warning delay");
     progress.settings(SettingsState::Defaults);
     check(!progress.hasIssues(), "first boot default settings are not an error");
     progress.card(CardState::NoCard);
@@ -59,7 +63,7 @@ void testBoot() {
     command.data.settings = defaultSettings();
     check(ui.setScreen(command) == OperationStatus::Ok, "Boot is a valid screen");
     ui.tick(100); ui.tick(100000);
-    for (auto key : {UiKey::Enter, UiKey::Escape, UiKey::OpenSettings, UiKey::Up, UiKey::Down, UiKey::Left, UiKey::Right}) ui.keyPressed(key, 100001);
+    for (auto key : {UiKey::Enter, UiKey::Back, UiKey::F1, UiKey::OpenSettings, UiKey::Up, UiKey::Down, UiKey::Left, UiKey::Right}) ui.keyPressed(key, 100001);
     check(ui.snapshot().action.kind == ActionKind::None, "unfinished boot neither sleeps nor accepts screen/menu actions");
     UpdateUiContent update{};
     update.generation = 1; update.mode = DisplayMode::View; update.data = command.data;
@@ -78,14 +82,29 @@ void testBoot() {
     check(ui.snapshot().action.kind == ActionKind::None, "long startup cannot immediately put Live Place to sleep");
     ui.tick(215000);
     check(ui.snapshot().action.kind == ActionKind::Sleep, "idle timeout starts after leaving Boot");
-    // A held F1 can precede the first App screen, and must survive that setup.
+    // A held ESC can precede the first App screen, and must survive that setup.
     UiModel held;
-    held.keyPressed(UiKey::F1, 1);
+    held.keyPressed(UiKey::Escape, 1);
     command = {}; command.screen=ScreenId::Boot;command.mode=DisplayMode::View;
     command.generation=1;command.data.settings=defaultSettings();
-    check(held.setScreen(command)==OperationStatus::Ok, "early F1 does not block the initial screen");
+    check(held.setScreen(command)==OperationStatus::Ok, "early ESC does not block the initial screen");
     check(held.snapshot().action.kind==ActionKind::Maintenance && held.notificationPending(),
-          "F1 held before Boot is retained and notifies App");
+          "ESC held before Boot is retained and notifies App");
+    const auto held_action=held.snapshot().action;
+    command.screen=ScreenId::Settings;command.generation=2;command.data.boot.maintenance=true;
+    command.data.storage.busy=true; // Settings have not been read yet.
+    command.processed_action_id=held_action.action_id;command.action_result=ActionResult::Applied;
+    check(held.setScreen(command)==OperationStatus::Ok && !held.confirming(),
+          "startup ESC can show maintenance while NVS/SD initialization is pending");
+    held.keyPressed(UiKey::Enter,2);held.keyPressed(UiKey::Enter,3);
+    check(!held.editing() && held.snapshot().action.kind==ActionKind::None,
+          "settings cannot be saved before startup NVS restoration completes");
+    command={};command.screen=ScreenId::Boot;command.mode=DisplayMode::View;command.generation=1;
+    command.data.settings=defaultSettings();
+    for(const auto key:{UiKey::F1,UiKey::Back}) {
+        UiModel unrelated;unrelated.keyPressed(key,1);unrelated.setScreen(command);unrelated.keyPressed(key,2);
+        check(unrelated.snapshot().action.kind==ActionKind::None,"F1 and Del cannot select maintenance at boot");
+    }
     for (const bool fatal : {false,true}) {
         UiModel recovery;
         command.data.boot={};command.data.boot.complete=false;
@@ -93,10 +112,10 @@ void testBoot() {
         check(recovery.setScreen(command)==OperationStatus::Ok,"boot/error screen setup");
         recovery.keyPressed(UiKey::Enter,2);
         check(recovery.snapshot().action.kind==ActionKind::None,"unfinished/fatal Boot cannot enter Live Place");
-        recovery.keyPressed(UiKey::F1,3);
+        recovery.keyPressed(UiKey::Escape,3);
         const auto entry=recovery.snapshot().action;
         check(entry.kind==ActionKind::Maintenance && entry.target==ScreenId::Settings,
-              "F1 requests maintenance during checks and fatal startup errors");
+              "ESC requests maintenance during checks and fatal startup errors");
         command.screen=ScreenId::Settings;command.generation=2;
         command.data.boot.maintenance=true;
         command.data.dataset={PlaceState::TooManyChunks,2000,1500};
@@ -120,23 +139,25 @@ void testBoot() {
         command.data={};command.data.settings=defaultSettings();
     }
     UiModel usb;
-    usb.keyPressed(UiKey::F1,1);
+    usb.keyPressed(UiKey::Escape,1);
     command.screen=ScreenId::UsbStorage;
     check(usb.setScreen(command)==OperationStatus::Ok && usb.snapshot().action.kind==ActionKind::None,
-          "early F1 does not override USB storage boot");
+          "early ESC does not override USB storage boot");
     for (const bool recording : {false,true}) {
         UiModel runtime;
         command.screen=ScreenId::LivePlace;
         command.data.storage.card_state=CardState::NoCard;
         command.data.recording.state=recording?RecordingState::Recording:RecordingState::Stopped;
-        runtime.setScreen(command);runtime.keyPressed(UiKey::F1,10);
-        check(runtime.snapshot().action.kind==(recording?ActionKind::None:ActionKind::Maintenance),
-              "runtime errors allow F1 recovery only after recording is stopped");
+        runtime.setScreen(command);runtime.keyPressed(UiKey::Back,8);runtime.keyPressed(UiKey::F1,9);
+        check(runtime.snapshot().action.kind==ActionKind::None,"runtime Del/F1 do not enter maintenance");
+        runtime.keyPressed(UiKey::Escape,10);
+        check(runtime.snapshot().action.kind==(recording?ActionKind::ChangeScreen:ActionKind::Maintenance),
+              "runtime errors use maintenance when stopped and normal settings while recording");
     }
     UiModel healthy;
     command.data.storage.card_state=CardState::Mounted;command.data.recording.state=RecordingState::Stopped;
     command.data.gps.fix.valid=true;command.data.gps.reception=GpsReception::Fix;
-    healthy.setScreen(command);healthy.keyPressed(UiKey::F1,20);
-    check(healthy.snapshot().action.kind==ActionKind::None,"healthy Live Place keeps F1 unassigned");
+    healthy.setScreen(command);healthy.keyPressed(UiKey::Escape,20);
+    check(healthy.snapshot().action.kind==ActionKind::ChangeScreen && healthy.snapshot().action.target==ScreenId::Settings,"healthy Live Place opens Settings with ESC");
 
 }

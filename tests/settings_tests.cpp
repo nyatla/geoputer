@@ -13,10 +13,11 @@ void check(bool value, const char* detail) { if (!value) throw std::runtime_erro
 
 void codec() {
     Settings value = defaultSettings();
+    check(!value.dataset && !value.wordbook_language[0] && validSettings(value), "new configurations start without a dataset");
     uint8_t record[SettingsRecordSize];
     for (unsigned log = 0; log < 3; ++log) for (unsigned flush = 0; flush < 5; ++flush)
     for (unsigned timeout = 0; timeout < settingChoices(static_cast<unsigned>(SettingId::ScreenTimeout)); ++timeout) for (unsigned light = 0; light < 5; ++light)
-    for (unsigned dataset = 1; dataset <= 3; ++dataset) for (unsigned gps = 0; gps < 2; ++gps)
+    for (unsigned dataset = 0; dataset <= 3; ++dataset) for (unsigned gps = 0; gps < 2; ++gps)
     for (unsigned language = 0; language < 2; ++language) {
         value = {static_cast<uint8_t>(log), static_cast<uint8_t>(flush), static_cast<uint8_t>(timeout),
                  static_cast<uint8_t>(light), static_cast<uint8_t>(dataset), static_cast<uint8_t>(gps), static_cast<UiLanguage>(language)};
@@ -97,7 +98,7 @@ void navigationAndEditing() {
     auto command = screen();
     ui.setScreen(command);
     for (unsigned i = 0; i < 10; ++i) ui.keyPressed(UiKey::Down, 10 + i);
-    check(ui.snapshot().selected_setting == SettingsRootCount-1, "Settings root has six entries");
+    check(ui.snapshot().selected_setting == SettingsRootCount-1, "Settings root has five entries");
     ui.keyPressed(UiKey::Enter, 30);
     check(ui.snapshot().page == SettingsPage::Licenses, "last root entry opens licenses");
     ui.keyPressed(UiKey::Down, 40);
@@ -133,8 +134,10 @@ void navigationAndEditing() {
     ui.keyPressed(UiKey::Escape, 160);
     check(ui.snapshot().page == SettingsPage::Root, "Escape returns from operation page to root");
     ui.keyPressed(UiKey::Escape, 170);
+    check(ui.snapshot().action.kind == ActionKind::None, "Escape on Settings root stays on Settings");
+    ui.keyPressed(UiKey::OpenLivePlace, 171);
     check(ui.snapshot().action.kind == ActionKind::ChangeScreen && ui.snapshot().action.target == ScreenId::LivePlace,
-          "Escape at root requests LivePlace through App");
+          "1 at root requests LivePlace through App");
 }
 
 void destructiveConfirmationAndSleep() {
@@ -162,10 +165,18 @@ void destructiveConfirmationAndSleep() {
 
     UiModel reset;
     reset.setScreen(command);
-    for(unsigned n=0;n<settingsRootIndex(SettingsRootItem::Reset);++n)reset.keyPressed(UiKey::Down,10+n);
+    for(unsigned n=0;n<SettingsSystemRow;++n)reset.keyPressed(UiKey::Down,10+n);
+    reset.keyPressed(UiKey::Enter, 20);
+    for(unsigned n=0;n<SettingsSystemResetRow;++n)reset.keyPressed(UiKey::Down,21+n);
     reset.keyPressed(UiKey::Enter, 30);
+    check(reset.snapshot().page == SettingsPage::Reset && !reset.confirming() && reset.snapshot().action.kind == ActionKind::None,
+          "System Reset opens the existing initialization page without executing it");
     reset.keyPressed(UiKey::Enter, 40); reset.keyPressed(UiKey::Escape, 50);
     check(!reset.confirming() && reset.snapshot().action.kind == ActionKind::None, "Escape cancels reset");
+    reset.keyPressed(UiKey::Escape, 51);
+    check(reset.snapshot().page == SettingsPage::System && reset.snapshot().selected_setting == SettingsSystemResetRow,
+          "Reset Back returns to its System parent with selection preserved");
+    reset.keyPressed(UiKey::Enter, 52);
     reset.keyPressed(UiKey::Enter, 60); reset.keyPressed(UiKey::Right, 70); reset.keyPressed(UiKey::Enter, 80);
     check(reset.snapshot().action.kind == ActionKind::ResetSettings && reset.snapshot().action.confirmed &&
           sameSettings(reset.snapshot().action.settings, defaultSettings()), "reset contains defaults only");

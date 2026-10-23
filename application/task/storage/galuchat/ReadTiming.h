@@ -27,6 +27,6 @@ private:
 };
 struct PlaceReadTiming {
     uint64_t total_us = 0, open_us = 0, map_us = 0, rect_us = 0, wordbook_us = 0, text_us = 0;
-    FileIoTiming map_io{}, wordbook_io{};
+    FileIoTiming map_io{}, wordbook_io{}, index_io{};
 };
 } // namespace geoputer

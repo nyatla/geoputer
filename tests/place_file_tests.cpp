@@ -1,4 +1,5 @@
 #include <filesystem>
+#include "support/MapIndexFixture.h"
 #include <fstream>
 #include <iostream>
 #include <stdexcept>
@@ -6,6 +7,7 @@
 #include <cstdlib>
 #include <new>
 #include "task/storage/galuchat/PlaceLookup.h"
+#include "task/storage/DatasetSelection.h"
 
 static bool fail_next_allocation=false;
 void* operator new(std::size_t bytes) {
@@ -29,22 +31,91 @@ struct Activity : StorageObserver {
     void sdEnd() override { check(depth > 0,"balanced observer scope"); --depth; }
     void cacheState(RgCacheState state, bool) override { cache=state; ++transitions; }
 };
+void testMissingCacheRelease(const fs::path& root,const fs::path& map,const fs::path& book) {
+    const auto directory=root/"missing-index";fs::create_directories(directory);
+    fs::copy_file(map,directory/"map.glc");fs::copy_file(book,directory/"names.giswordbook");
+    std::ofstream(directory/"dataset.ini")<<"[dataset]\nversion=1\nmap=map.glc\ndefault_language=ja\n[ja]\ntitle=Test\nwordbook=names.giswordbook\n";
+    SettingsStore store;check(store.begin(),"real-file test NVS opens");
+    StorageSnapshot state{};state.settings=defaultSettings();state.settings.dataset=1;std::strcpy(state.settings.wordbook_language,"ja");
+    check(store.save(state.settings),"selection persisted before cache removal");
+    Activity activity;PlaceLookup lookup;lookup.setObserver(&activity);lookup.configure(directory.string(),"ja");
+    const auto failed=lookup.prepare();check(failed.state==PlaceState::DataError,"missing saved index fails startup preparation");
+    check(releaseUnusableDataset(store,state,failed.state),"failed startup clears selected dataset");
+    lookup.configure("");const auto accesses=activity.accesses;
+    for(unsigned n=0;n<3;++n)check(lookup.prepare().state==PlaceState::Unselected && lookup.search({}).state==PlaceState::Unselected,
+        "released dataset no longer tries to reopen missing index");
+    check(activity.accesses==accesses && lookup.cacheStats().bytes==0,"automatic release performs no later dataset I/O and retains no raster");
+    Settings restored{};SettingsStore reboot;check(reboot.begin() && reboot.load(restored)==SettingsState::Loaded && !restored.dataset,
+        "a reboot after missing cache restores None");
+    PlaceLookup next_boot;next_boot.setObserver(&activity);next_boot.configure(restored.dataset?directory.string():"");
+    check(next_boot.prepare().state==PlaceState::Unselected && activity.accesses==accesses,"next boot skips broken dataset completely");
+    test_index::generate(directory.string(),"map.glc","names.giswordbook");
+    check(reboot.load(restored)==SettingsState::Loaded && !restored.dataset,"cache regeneration does not select the repaired dataset");
+    lookup.configure(directory.string(),"ja");check(lookup.prepare().state==PlaceState::Ready,"explicit selection can use the repaired index");
+}
+void testLiveDatasetSwitch(const fs::path& root,const fs::path& map,const fs::path& book) {
+    const auto first=root/"live-first",second=root/"live-second";
+    for(const auto& directory:{first,second}) {
+        fs::create_directories(directory);
+        fs::copy_file(map,directory/"map.glc");fs::copy_file(book,directory/"names.giswordbook");
+        std::ofstream(directory/"dataset.ini")<<"[dataset]\nversion=1\nmap=map.glc\ndefault_language=ja\n[ja]\ntitle=Test\nwordbook=names.giswordbook\ndisplay_line1="
+            <<(directory==first?"FIRST %0":"SECOND %1%2%3%4")<<"\ndisplay_line2=\n";
+        test_index::generate(directory.string(),"map.glc","names.giswordbook");
+    }
+    Activity activity;PlaceLookup lookup;lookup.setObserver(&activity);
+    PlaceRequest request{7,31,{35.681641,140.027194,1000,true}};
+    lookup.configure(first.string(),"ja");
+    check(lookup.prepare().state==PlaceState::Ready && !std::strcmp(lookup.search(request).lines[0],"FIRST 千葉県"),
+          "first selected dataset fills the raster and formatted name caches");
+    const auto first_generation=lookup.datasetInfo().generation;
+    lookup.configure(second.string(),"ja");
+    check(lookup.datasetInfo().state==PlaceState::Waiting && lookup.datasetInfo().generation>first_generation &&
+          !lookup.cacheStats().bytes && !lookup.wordBookCacheStats().entries && activity.cache==RgCacheState::Unprepared,
+          "live selection releases both caches and advances the dataset generation before search");
+    check(lookup.prepare().state==PlaceState::Ready && !std::strcmp(lookup.search(request).lines[0],"SECOND 習志野市"),
+          "same running lookup resolves the new dataset without stale formatted text");
+    const auto second_generation=lookup.datasetInfo().generation;
+    lookup.configure(second.string(),"ja");
+    check(lookup.datasetInfo().generation>second_generation && !lookup.cacheStats().bytes && !lookup.wordBookCacheStats().entries &&
+          lookup.prepare().state==PlaceState::Ready && !std::strcmp(lookup.search(request).lines[0],"SECOND 習志野市"),
+          "same-selection reapplication also reopens readers and repopulates caches");
+    lookup.configure("");check(lookup.prepare().state==PlaceState::Unselected && !lookup.cacheStats().bytes,
+          "live clear closes readers without restarting the lookup object");
+}
 void testMapCache();
 void testDatasetFiles(const std::string& root,const std::string& map,const std::string& book);
-void testMapCacheFile(const std::string& path);
+void testMapCacheFile(const std::string& path, const std::string& book, const std::string& temporary);
 std::vector<uint8_t> oversizedMapFixture(unsigned count);
 
 int main(int argc, char** argv) {
     try {
         if (argc != 4 && argc != 5) throw std::runtime_error(
             "usage: test <temporary directory> <mapset> <UTF-8 wordbook> [unsupported wordbook]");
+        testMissingCacheRelease(argv[1],argv[2],argv[3]);
+        testLiveDatasetSwitch(argv[1],argv[2],argv[3]);
         testDatasetFiles(argv[1],argv[2],argv[3]);
         testMapCache();
-        testMapCacheFile(argv[2]);
+        testMapCacheFile(argv[2],argv[3],argv[1]);
         const fs::path root(argv[1]);
         const auto data = root / "dataset/01";
         PlaceRequest request{7, 31, {35.681641, 140.027194, 1000, true}};
         Activity activity;
+        {
+            PlaceLookup disabled;disabled.setObserver(&activity);disabled.configure("");
+            const auto accesses=activity.accesses;
+            const auto generation=disabled.datasetInfo().generation;
+            for(unsigned i=0;i<3;++i) {
+                check(disabled.prepare().state==PlaceState::Unselected && disabled.search(request).state==PlaceState::Unselected &&
+                      disabled.search({}).state==PlaceState::Unselected,"unselected bypasses data and GPS validation");
+                disabled.close();
+            }
+            check(activity.accesses==accesses && disabled.cacheStats().bytes==0 && disabled.selectedLanguage().empty() &&
+                  disabled.datasetInfo().generation>generation,"unselected performs no file I/O or raster allocation, including remount/recheck");
+            disabled.configure(data.string());
+            check(disabled.prepare().state==PlaceState::DatasetMissing && activity.accesses>accesses,"explicit selection re-enables dataset validation");
+            disabled.configure("");
+            check(disabled.prepare().state==PlaceState::Unselected,"unselection clears even a latched dataset fault");
+        }
         PlaceLookup lookup(data.string());
         lookup.setObserver(&activity);
         check(lookup.prepare().state == PlaceState::DatasetMissing, "startup detects missing dataset without GPS");
@@ -77,6 +148,7 @@ int main(int argc, char** argv) {
         fs::remove(data / "names.giswordbook");
         fs::copy_file(argv[2], data / "area.GLC");
         fs::copy_file(argv[3], data / "names.giswordbook");
+        test_index::generate(data.string(),"area.GLC","names.giswordbook");
         {
             PlaceLookup no_memory(data.string());no_memory.setObserver(&activity);
             fail_next_allocation=true;
@@ -168,8 +240,9 @@ int main(int argc, char** argv) {
         const auto failed_accesses=activity.accesses;
         check(lookup.search(request).state==PlaceState::DataError && lookup.prepare().state==PlaceState::DataError && activity.accesses==failed_accesses,
               "repairing file bytes does not silently retry or clear the rejection");
+        test_index::generate(data.string(),"area.GLC","names.giswordbook");
         lookup.close();
-        check(lookup.search(request).state == PlaceState::Ready, "explicit reopen validates corrected dataset");
+        check(lookup.search(request).state == PlaceState::Ready, "explicit reapply and reopen validate corrected dataset");
         fs::remove(data / "names.giswordbook");
         const auto cached_accesses = activity.accesses;
         check(lookup.search(request).state == PlaceState::Ready && activity.accesses == cached_accesses,
@@ -191,6 +264,7 @@ int main(int argc, char** argv) {
             output.write(bytes.data(), bytes.size());
         }
         lookup.close();
+        test_index::generate(data.string(),"area.GLC","names.giswordbook");
         check(lookup.search(request).state == PlaceState::EncodingError && !lookup.wordBookCacheStats().entries,
               "invalid text is never inserted into the wordbook cache");
         const auto encoding_accesses=activity.accesses;
@@ -199,6 +273,7 @@ int main(int argc, char** argv) {
         lookup.close();
         fs::copy_file(argv[3], data / "names.giswordbook", fs::copy_options::overwrite_existing);
         lookup.close();
+        test_index::generate(data.string(),"area.GLC","names.giswordbook");
         check(lookup.search(request).state == PlaceState::Ready && lookup.wordBookCacheStats().misses == 1,
               "reopening a repaired dataset resolves names again without a stale cache entry");
         lookup.close();
@@ -222,6 +297,7 @@ int main(int argc, char** argv) {
             std::ofstream output(data / "names.giswordbook", std::ios::binary | std::ios::trunc);
             output.write(bytes.data(), bytes.size());
             output.close();
+            test_index::generate(data.string(),"area.GLC","names.giswordbook");
             const bool supported = metadata.find("cp932") == std::string::npos &&
                 metadata.find("sjis") == std::string::npos && metadata.find("shift") == std::string::npos &&
                 metadata.find("utf16") == std::string::npos && metadata != "{}";
@@ -235,6 +311,7 @@ int main(int argc, char** argv) {
         if (argc == 5) {
             lookup.close();
             fs::copy_file(argv[4], data / "names.giswordbook", fs::copy_options::overwrite_existing);
+            test_index::generate(data.string(),"area.GLC","names.giswordbook");
             check(lookup.prepare().state == PlaceState::EncodingError &&
                   lookup.search(request).state == PlaceState::EncodingError &&
                   !lookup.wordBookCacheStats().entries && lookup.cacheStats().bytes == 0 && activity.depth == 0,

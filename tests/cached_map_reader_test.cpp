@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "application/task/storage/galuchat/CachedMapReader.h"
+#include "support/MapIndexFixture.h"
 #include "application/task/storage/galuchat/ObservedFileReader.h"
 
 namespace {
@@ -97,7 +98,7 @@ void syntheticChecks() {
     Bytes bytes = dataset();
     auto factory = std::make_shared<Factory>(bytes);
     Observer observer;
-    geoputer::CachedMapReader cache(factory, &observer);
+    auto cache=test_index::cache(factory,bytes,&observer);
     require(cache.chunkCount() == 1 && cache.stats().bytes == 0, "lazy cache allocation");
     factory->accesses.clear();
     require(cache.readWgsPoint(64,64) == 1, "first cached point");
@@ -126,17 +127,17 @@ void syntheticChecks() {
     for (uint8_t first : {uint8_t{0}, uint8_t{1}}) {
         Bytes overlap = dataset(2, first);
         auto overlapping = std::make_shared<galuchat::BufferReaderFactory>(overlap);
-        geoputer::CachedMapReader cached(overlapping);
+        auto cached=test_index::cache(overlapping,overlap);
         require(cached.readWgsPoint(64,64) == (first == 0 ? 10 : 1), "overlap point priority");
     }
     Bytes at_limit = dataset(geoputer::config::MaxDatasetChunks);
-    geoputer::CachedMapReader accepted(std::make_shared<galuchat::BufferReaderFactory>(at_limit));
+    auto accepted=test_index::cache(std::make_shared<galuchat::BufferReaderFactory>(at_limit),at_limit);
     require(accepted.chunkCount() == geoputer::config::MaxDatasetChunks, "inclusive chunk limit");
     Bytes too_many = dataset(geoputer::config::MaxDatasetChunks + 1);
     bool rejected = false;
     try {
-        geoputer::CachedMapReader invalid(std::make_shared<galuchat::BufferReaderFactory>(too_many));
-    } catch (const galuchat::MapCountLimitExceeded& error) {
+        auto invalid=test_index::cache(std::make_shared<galuchat::BufferReaderFactory>(too_many),too_many);
+    } catch (const geoputer::MapChunkLimitExceeded& error) {
         require(error.count == geoputer::config::MaxDatasetChunks + 1
                 && error.limit == geoputer::config::MaxDatasetChunks, "application limit details");
         rejected = true;
@@ -148,7 +149,7 @@ void syntheticChecks() {
 void realDataChecks(const char* path) {
     geoputer::FileIoTiming timing{};
     auto factory = std::make_shared<geoputer::ObservedFileReaderFactory>(path, nullptr, &timing);
-    geoputer::CachedMapReader cache(factory);
+    auto cache=test_index::cacheFile(factory,path);
     galuchat::GaluchatWGSMapSet3Reader reference(factory);
     for (const auto& point : std::vector<galuchat::DoubleRect>{
             {140.027194,35.681641,0,0}, {140.027194,35.681641,0,0},

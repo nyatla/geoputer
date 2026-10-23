@@ -8,7 +8,7 @@
 
 ## 1. 目的
 
-Live Placeの数字1から直接開き、Esc / DelでLive Placeへ戻る。GPSログの開始・再開・停止と、記録・保存状態の確認を行う。緯度・経度・速度・進行方位・海抜高度・衛星数等のGPS情報は[Live Place](../live-place/README.md)へ集約する。本画面ではGaluchat検索を実行しない。
+各トップ画面の数字2から直接開く。1でLive Place、3でLogs、EscでSettingsへ直接移動する。Delは従来どおりLive Placeへ戻る。GPSログの開始・再開・停止と、記録・保存状態の確認を行う。緯度・経度・速度・進行方位・海抜高度・衛星数等のGPS情報は[Live Place](../live-place/README.md)へ集約する。本画面ではGaluchat検索を実行しない。
 
 ## 2. レイアウト
 
@@ -59,7 +59,7 @@ RAMへの追加受付エラーはtryAppendLogの通常の戻り値、開始・fl
 - STOPは[共通確認ダイアログ](../共通確認ダイアログ.md)を開く。初期選択は取消とし、右で停止を選んでEnterを押した場合だけ停止する。Esc / Delまたは取消のEnterは元画面へ戻る。
 - 停止確定時は新しいログ追加を止め、保存・終了要求の受付結果を同期操作で取得してSTOPPEDへ移行する。実保存とファイル終了はStorageが非同期に処理して通知する。
 - flushに失敗した未保存レコードはRAMに保持し、件数とSDエラーを表示する。ログ状態と保存エラーは別に表示する。
-- 記録の一時停止はLive Placeの0から行う。一時停止・停止でGPSデバイスをOFFにせず、UART受信とLatestFix更新を継続する。GNSSの休止・復帰は後続実装とする。
+- 記録の一時停止はLive PlaceのPから行う。一時停止・停止でGPSデバイスをOFFにせず、UART受信とLatestFix更新を継続する。GNSSの休止・復帰は後続実装とする。
 
 保存エラーは上記の記録状態とは別に保持する。現行のRecordingStateにSTORAGE_ERRORは設けず、LogErrorと保存進捗を表示する。Appの記録要求を保存障害だけで解除せず、復旧後の受付・保存を再試行する。
 

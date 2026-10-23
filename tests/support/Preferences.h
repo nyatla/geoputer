@@ -10,6 +10,7 @@
 class Preferences {
 public:
     inline static std::map<std::string, std::vector<unsigned char>> records;
+    inline static size_t write_calls = 0;
     inline static bool fail_open = false, fail_write = false, fail_read = false;
 
     bool begin(const char* name, bool) { name_ = std::string(name) + "/"; return !fail_open; }
@@ -22,6 +23,7 @@ public:
         return source.size();
     }
     size_t putBytes(const char* key, const void* source, size_t size) {
+        ++write_calls;
         if (fail_write) return 0;
         const auto* bytes = static_cast<const unsigned char*>(source);
         records[name_ + key] = {bytes, bytes + size};

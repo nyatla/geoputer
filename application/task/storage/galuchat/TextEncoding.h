@@ -6,6 +6,7 @@
 namespace geoputer {
 
 // Dictionary and display strings are UTF-8; no character-code conversion.
+bool wordBookUsesUtf8(const std::string& metadata);
 bool validUtf8(const std::string& source);
 struct PlaceDisplayFormat {
     std::string lines[2];

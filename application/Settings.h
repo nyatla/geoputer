@@ -9,7 +9,7 @@ namespace geoputer {
 enum class UiLanguage : uint8_t { Japanese, English };
 enum class SettingId : uint8_t { Language, LogInterval, FlushInterval, ScreenTimeout, Brightness, Dataset, GpsMode, Count };
 constexpr unsigned SettingCount = static_cast<unsigned>(SettingId::Count);
-constexpr unsigned OperationRowCount = SettingCount;
+constexpr unsigned OperationRowCount = static_cast<unsigned>(SettingId::GpsMode);
 constexpr bool settingEditable(unsigned index) { return index < static_cast<unsigned>(SettingId::Dataset); }
 
 struct Settings {
@@ -17,13 +17,13 @@ struct Settings {
     uint8_t flush_interval;
     uint8_t screen_timeout;
     uint8_t brightness;
-    uint8_t dataset;
+    uint8_t dataset; // 0: unselected; 1..99: dataset directory number.
     uint8_t gps_mode;
     UiLanguage language;
     char wordbook_language[config::DatasetLanguageBytes]{}; // Empty means the dataset default at first boot.
 };
 
-constexpr Settings defaultSettings() { return {0, 2, 1, 1, 1, 0, UiLanguage::Japanese}; }
+constexpr Settings defaultSettings() { return {0, 2, 1, 1, 0, 0, UiLanguage::Japanese}; }
 constexpr unsigned LogIntervals[] = {1, 5, 10};
 constexpr unsigned FlushIntervals[] = {1, 5, 10, 30, 60};
 // Zero disables automatic screen sleep; append it to preserve stored indices.

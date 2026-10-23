@@ -31,41 +31,70 @@ void persistence() {
     Preferences::fail_read = false;
 }
 void ui() {
-    UiData data{}; data.settings = defaultSettings();
+    UiData data{}; data.settings = defaultSettings(); data.storage.settings_state = SettingsState::Loaded;
     auto openMode = [&](UiModel& model) {
         model.setScreen({ScreenId::Settings,DisplayMode::View,1,data,0,ActionResult::None});
-        for (unsigned n=0;n<SettingsModeRow;++n) model.keyPressed(UiKey::Down,n+2);
+        for (unsigned n=0;n<SettingsSystemRow;++n) model.keyPressed(UiKey::Down,n+2);
         model.keyPressed(UiKey::Enter,20);
     };
-    UiModel model; openMode(model);
-    check(model.dialog().kind() == DialogKind::EnterUsbMode && !model.confirmChoice(), "root mode entry opens a Cancel-default dialog");
-    model.keyPressed(UiKey::Enter,21);
-    check(model.snapshot().action.kind == ActionKind::None, "default Enter does not request a reboot");
-    check(model.snapshot().page==SettingsPage::Root && model.snapshot().selected_setting==SettingsModeRow,
-          "cancelling mode switch preserves the root mode selection");
-    model.keyPressed(UiKey::Enter,22); model.keyPressed(UiKey::Right,23); model.keyPressed(UiKey::Enter,24);
+    auto stageUsb = [&](UiModel& model) {
+        openMode(model);
+        check(model.snapshot().page == SettingsPage::System && !model.confirming(), "System opens a submenu");
+        model.keyPressed(UiKey::Enter,21); model.keyPressed(UiKey::Right,22);
+        check(model.editing() && model.editValue() == 1 && !model.systemUsbMode(), "mode preview stays local until Enter");
+        model.keyPressed(UiKey::Enter,23);
+        check(model.systemUsbMode() && model.snapshot().action.kind == ActionKind::None, "draft mode does not persist or reboot");
+        model.keyPressed(UiKey::Down,24); model.keyPressed(UiKey::Enter,25);
+        check(!model.editing() && model.snapshot().action.kind == ActionKind::None, "GPS source remains read-only");
+        model.keyPressed(UiKey::Down,26);
+    };
+    UiModel draft; openMode(draft);
+    draft.keyPressed(UiKey::Enter,21); draft.keyPressed(UiKey::Right,22); draft.keyPressed(UiKey::Escape,23);
+    check(!draft.systemUsbMode() && !draft.editing(), "Escape discards the mode preview");
+    draft.keyPressed(UiKey::Down,24); draft.keyPressed(UiKey::Down,25); draft.keyPressed(UiKey::Enter,26);
+    check(!draft.confirming(), "unchanged mode cannot save and restart");
+    draft.keyPressed(UiKey::Escape,27);
+    check(draft.snapshot().page==SettingsPage::Root && draft.snapshot().selected_setting==SettingsSystemRow,
+          "System back preserves the root selection");
+    UiModel model; stageUsb(model); model.keyPressed(UiKey::Enter,28);
+    check(model.dialog().kind() == DialogKind::EnterUsbMode && !model.confirmChoice(), "Save opens a Cancel-default dialog");
+    model.keyPressed(UiKey::Enter,29);
+    check(model.snapshot().action.kind == ActionKind::None && model.systemUsbMode(), "cancelling confirmation retains the draft without reboot");
+    model.keyPressed(UiKey::Enter,30); model.keyPressed(UiKey::Right,31); model.keyPressed(UiKey::Enter,32);
     check(model.snapshot().action.kind == ActionKind::Storage && model.snapshot().action.confirmed &&
-          model.snapshot().action.storage_operation == StorageOperation::EnterUsbMode, "confirmed entry asks Storage to change the flag");
+          model.snapshot().action.storage_operation == StorageOperation::EnterUsbMode, "confirmed Save asks Storage to persist boot mode");
     const auto accepted=model.snapshot().action;
     data.storage.busy=true;data.storage.operation=StorageOperation::EnterUsbMode;
     model.updateContent({DisplayMode::View,1,data,accepted.action_id,ActionResult::Applied});
-    model.keyPressed(UiKey::Escape,25);model.keyPressed(UiKey::Enter,26);model.tick(27);model.tick(100000);
-    check(model.snapshot().page==SettingsPage::Root && model.snapshot().action.kind==ActionKind::None && !model.confirming(),
-          "accepted mode change blocks new navigation/actions and sleep until its completion");
-    data.storage.busy=false;
+    model.keyPressed(UiKey::Escape,33);model.keyPressed(UiKey::Enter,34);model.tick(35);model.tick(100000);
+    check(model.snapshot().page==SettingsPage::System && model.snapshot().action.kind==ActionKind::None && !model.confirming(),
+          "accepted mode change blocks navigation and sleep until completion");
+    data.storage.busy=false;data.storage.operation=StorageOperation::None;
     model.updateContent({DisplayMode::View,1,data,0,ActionResult::None});model.keyPressed(UiKey::Enter,100001);
-    check(model.confirming(),"save failure or rejection can restore interactive retry without restarting");
-    data.storage.operation=StorageOperation::None;
+    check(model.confirming(),"save failure or rejection permits retry without restarting");
+    data.recording.state=RecordingState::Recording;
+    model.updateContent({DisplayMode::View,1,data,0,ActionResult::None});
+    check(!model.dialog().actionEnabled(),"a changed prerequisite disables an open confirmation");
+    model.keyPressed(UiKey::Right,100002);model.keyPressed(UiKey::Enter,100003);
+    check(model.snapshot().action.kind==ActionKind::None,"disabled confirmation cannot request mode switch");
     for (auto state : {RecordingState::Recording,RecordingState::Paused,RecordingState::Starting}) {
-        data.recording.state = state; UiModel blocked; openMode(blocked);
-        blocked.keyPressed(UiKey::Right,30); blocked.keyPressed(UiKey::Enter,31);
-        check(blocked.snapshot().action.kind == ActionKind::None, "recording, paused and starting cannot switch to USB");
+        data.recording.state = state; UiModel blocked; stageUsb(blocked);
+        blocked.keyPressed(UiKey::Enter,30);
+        check(!blocked.confirming() && blocked.snapshot().action.kind == ActionKind::None, "recording, paused and starting block Save");
     }
     data.recording.state = RecordingState::Stopped;
     data.storage.log.closing = true; check(!usbEntryAllowed(data), "closing session blocks entry"); data.storage.log.closing = false;
     data.storage.log.buffered = 1; check(!usbEntryAllowed(data), "unsaved ring records block entry"); data.storage.log.buffered = 0;
     data.storage.log.open = true; check(!usbEntryAllowed(data), "retained session blocks entry"); data.storage.log.open = false;
     data.recording.pending = true; check(!usbEntryAllowed(data), "pending App sample blocks entry"); data.recording.pending = false;
+    data.storage.busy = true; check(!usbEntryAllowed(data), "storage busy blocks entry"); data.storage.busy = false;
+    data.datasets.loading = true; check(!usbEntryAllowed(data), "dataset read blocks entry"); data.datasets.loading = false;
+    data.storage.settings_state=SettingsState::Unavailable;
+    UiModel noNvs; stageUsb(noNvs);noNvs.keyPressed(UiKey::Enter,30);
+    check(!noNvs.confirming(),"known NVS unavailability blocks Save");
+    data.storage.settings_state=SettingsState::Loaded;
+    UiModel leave; stageUsb(leave);leave.keyPressed(UiKey::Escape,30);leave.keyPressed(UiKey::Enter,31);
+    check(!leave.systemUsbMode(),"leaving System discards unsaved draft");
     data.dataset.state = PlaceState::TooManyChunks; // USB mode does not require a usable dataset or SD card.
     UiModel usb; usb.setScreen({ScreenId::UsbStorage,DisplayMode::View,1,data,0,ActionResult::None});
     check(!usb.confirming() && usb.usbPage()==UsbPage::Menu, "USB boot shows menu independent of GIS");

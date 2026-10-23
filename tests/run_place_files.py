@@ -16,14 +16,18 @@ with tempfile.TemporaryDirectory(prefix="geoputer-place-") as directory:
     subprocess.run([
         "g++", "-std=c++17", "-Wall", "-Wextra", "-Werror", "-pedantic",
         "-fsanitize=undefined", "-fno-sanitize-recover=all", "-D_GLIBCXX_ASSERTIONS", "-g",
-        "-I", str(root / "application"), "-I", str(root / "third_party/galuchat/include"),
+        "-I", str(root / "tests/support"), "-I", str(root / "application"), "-I", str(root / "third_party/galuchat/include"),
         str(root / "tests/place_file_tests.cpp"),
         str(root / "tests/map_cache_tests.cpp"),
         str(root / "tests/dataset_file_tests.cpp"),
         str(root / "application/Settings.cpp"),
+        str(root / "application/task/storage/SettingsStore.cpp"),
         str(root / "application/task/storage/dataset/DatasetMetadata.cpp"),
         str(root / "application/task/storage/dataset/DatasetCatalog.cpp"),
         str(root / "application/task/storage/galuchat/CachedMapReader.cpp"),
+        str(root / "application/task/storage/galuchat/DiskIndexedMapReader.cpp"),
+        str(root / "application/task/storage/galuchat/DiskIndexedWordBookReader.cpp"),
+        str(root / "application/task/storage/dataset/DatasetIndex.cpp"),
         str(root / "application/task/storage/galuchat/PlaceLookup.cpp"),
         str(root / "application/task/storage/galuchat/TextEncoding.cpp"), "-o", str(binary)
     ], check=True, timeout=180)

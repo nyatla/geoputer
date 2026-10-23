@@ -99,7 +99,7 @@ int main(int argc,char** argv) {
                 n>=16&&n<19?(data.browse.loading||(data.browse.active_mask&1)?TFT_DARKGREY:TFT_CYAN):TFT_LIGHTGREY;
             for(int row=0;row<8;++row)for(int col=0;col<8;++col) {
                 const bool ink=font8x8_c64[(guide[n]-32)*8+col]&(1u<<row);
-                if(display.pixels[(124+row)*240+4+n*8+col]!=(ink?color:TFT_BLACK))throw std::runtime_error("list footer key guide differs from the specified pixel layout");
+                if(display.pixels[(97+row)*240+4+n*8+col]!=(ink?color:TFT_BLACK))throw std::runtime_error("list footer key guide differs from the specified pixel layout");
             }
         }
     }

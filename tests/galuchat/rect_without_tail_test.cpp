@@ -114,6 +114,24 @@ Bytes mapset(const std::vector<Bytes>& images, const std::vector<galuchat::Rect>
     return out;
 }
 
+void checkBlockEnumeration() {
+    const auto bytes=image();
+    galuchat::BufferReader source(bytes);
+    galuchat::GaluchatImageDataChunk01Reader reader(source);
+    size_t count=0,relative=0;
+    reader.visitBlockPositions([&](size_t index,size_t offset,size_t length) {
+        require(index==count && offset==relative && length==BLOCKS[index].size(), "enumerated block position/length");
+        ++count; relative+=length;
+    });
+    require(count==BLOCKS.size() && source.atEnd() && !source.bitOffset(), "enumeration must consume and align the entire image");
+    expectThrow([&]{reader.visitBlockPositions([](size_t,size_t,size_t){});}, "single-use block enumeration");
+    expectThrow([&]{reader.toRaster();}, "enumeration cannot be followed by a second read");
+    const auto extra=image(BLOCKS,4,4,{0});
+    galuchat::BufferReader invalid(extra);
+    galuchat::GaluchatImageDataChunk01Reader bad(invalid);
+    expectThrow([&]{bad.visitBlockPositions([](size_t,size_t,size_t){});}, "enumeration rejects unaccounted payload bytes");
+}
+
 void checkRectangles() {
     // Also cover the existing low-level API's padded edge-block semantics.
     for (int dimension : {3, 4}) {
@@ -370,6 +388,7 @@ void checkIndexedLimits() {
 } // namespace
 
 int main() {
+    checkBlockEnumeration();
     checkRectangles();
     checkLifetimeAndStream();
     checkValidation();

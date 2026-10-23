@@ -12,7 +12,7 @@ inline constexpr uint8_t LoraBusyPin = 6;
 inline constexpr uint32_t LoraBusyTimeoutMs = 100;
 inline constexpr uint32_t LoraSpiHz = 1000000;
 
-inline constexpr uint32_t BootMaintenanceWindowMs = 1500; // After settings load, before GPS/GIS startup.
+inline constexpr uint32_t BootMaintenanceWindowMs = 1500; // After settings load; held ESC bypasses this wait.
 
 inline constexpr uint8_t UiColorDepth = 4;       // 16-color palette; 16 selects the RGB565 reference path.
 inline constexpr uint8_t SdMaxOpenFiles = 3;     // GIS initialization needs two simultaneous VFS readers.
@@ -26,6 +26,11 @@ inline constexpr size_t MapInitReadBufferBytes = 4096;
 inline constexpr size_t MapRectReadBufferBytes = 16384; // Rectangle fills only; measured against 4/8KiB.
 inline constexpr size_t WordBookReadBufferBytes = 4096;
 inline constexpr size_t FileReadThroughSkipBytes = 4096; // Inclusive gap beyond buffered data; independent of buffer size; 0 disables.
+// Dataset index generation / streaming access format v1.
+inline constexpr size_t IndexReadBufferBytes = 4096;
+inline constexpr uint32_t IndexMinChunkBytes = 16384;
+inline constexpr uint32_t IndexGroupTargetBytes = 65536;
+inline constexpr uint16_t IndexMaxDepth = 32; // Bounds recursive TI00 parsing during generation.
 inline constexpr size_t WordBookCacheEntries = 16;
 inline constexpr uint32_t PlaceSearchIntervalMs = 5000;
 inline constexpr size_t DatasetLineBytes = 256;  // 255 UTF-8 bytes plus NUL.
@@ -36,6 +41,8 @@ inline constexpr unsigned ExportRecordsPerStep = 10;
 inline constexpr size_t ExportWriteBufferBytes = 2048;
 inline constexpr uint32_t ExportProgressIntervalMs = 200;
 
+static_assert(IndexReadBufferBytes > 0 && IndexMinChunkBytes > 0 && IndexGroupTargetBytes > 0 && IndexMaxDepth > 0,
+              "Index resource limits must be nonzero");
 static_assert(MaxDatasetChunks > 0, "A dataset must allow at least one chunk");
 static_assert(UiColorDepth == 4 || UiColorDepth == 16, "Supported UI frame formats");
 static_assert(SdMaxOpenFiles >= 2, "Map header validation opens two readers");

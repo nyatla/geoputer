@@ -3,7 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
-#include <galuchat/wgsmapset3_indexed_reader.hpp>
+#include "DiskIndexedMapReader.h"
 #include "../StorageActivity.h"
 #include "../../../Config.h"
 
@@ -27,8 +27,9 @@ public:
     static constexpr size_t Pixels = Side * Side;
     static constexpr size_t Bytes = Pixels * sizeof(uint32_t);
 
-    explicit CachedMapReader(std::shared_ptr<const galuchat::ReaderFactory> factory, StorageObserver* observer = nullptr)
-        : reader_(std::move(factory), config::MaxDatasetChunks), observer_(observer) {}
+    CachedMapReader(DatasetMapIndex info,std::shared_ptr<const galuchat::ReaderFactory> map,
+                    std::shared_ptr<const galuchat::ReaderFactory> index,StorageObserver* observer=nullptr)
+        : reader_(info,std::move(map),std::move(index)),observer_(observer) {}
 
     // Code zero includes uncovered cells and undefined regions, as PlaceLookup
     // already treats both as NotFound. No point/file reads are made on a hit.
@@ -36,16 +37,16 @@ public:
     bool isCached(double longitude, double latitude) const;
     void invalidate() { stats_.valid = false; if (observer_) observer_->cacheState(RgCacheState::Unprepared); }
     const MapCacheStats& stats() const { return stats_; }
-    size_t chunkCount() const { return reader_.mapCount(); }
-    galuchat::DoubleRect coverage() const { return reader_.areaOfWgs(); }
-    int unitInvX() const { return reader_.unit_inv_x; }
-    int unitInvY() const { return reader_.unit_inv_y; }
+    size_t chunkCount() const { return reader_.chunkCount(); }
+    galuchat::DoubleRect coverage() const { return reader_.coverage(); }
+    int unitInvX() const { return reader_.unitInvX(); }
+    int unitInvY() const { return reader_.unitInvY(); }
 
 private:
     bool contains(int x, int y) const;
     void rebuild(int x, int y);
 
-    galuchat::GaluchatWGSMapSet3IndexedReader reader_;
+    DiskIndexedMapReader reader_;
     std::unique_ptr<uint32_t[]> pixels_;
     MapCacheStats stats_{};
     StorageObserver* observer_;

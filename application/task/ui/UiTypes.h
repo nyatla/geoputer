@@ -18,13 +18,15 @@ enum class UsbPage : uint8_t { Menu, WaitEject, Files, Format, Progress, Complet
 enum class UsbAction : uint8_t { Begin, Start, Publish, Older, Newer };
 enum class BrowseAction : uint8_t { OpenFile, Older, Newer, Points, Reload, Point, Delete };
 enum class ActionResult : uint8_t { None, Applied, Rejected };
-enum class UiKey : uint8_t { OpenGpsLogger, OpenSettings, OpenLogs, DeleteLog, Escape, Up, Down, Left, Right, Enter, Other, F1, PauseLog };
-enum class SettingsPage : uint8_t { Root, Operation, Storage, Reset, Licenses, DatasetList, DatasetDetail, About };
+enum class UiKey : uint8_t { OpenGpsLogger, OpenSettings, OpenLogs, DeleteLog, Escape, Up, Down, Left, Right, Enter, Other, F1, PauseLog, Back, OpenLivePlace };
+enum class SettingsPage : uint8_t { Root, Operation, Storage, Reset, Licenses, DatasetList, DatasetDetail, About, DatasetIndex, DatasetMenu, System };
 // Menu commands are separate from persisted settings and page identifiers.
-enum class SettingsRootItem : uint8_t { Operation, OperatingMode, Storage, Reset, About, Licenses, Count };
+enum class SettingsRootItem : uint8_t { Operation, System, Storage, About, Licenses, Count };
 constexpr unsigned settingsRootIndex(SettingsRootItem item) { return static_cast<unsigned>(item); }
 constexpr unsigned SettingsRootCount = settingsRootIndex(SettingsRootItem::Count);
-constexpr unsigned SettingsModeRow = settingsRootIndex(SettingsRootItem::OperatingMode);
+constexpr unsigned SettingsSystemRow = settingsRootIndex(SettingsRootItem::System);
+constexpr unsigned SettingsSystemResetRow = 3;
+constexpr unsigned SettingsSystemCount = 4;
 
 struct UiAction {
     ActionKind kind;
@@ -37,6 +39,8 @@ struct UiAction {
     LogAction log_action;
     BrowseAction browse_action;
     DatasetAction dataset_action;
+    DatasetPurpose dataset_purpose;
+    IndexTarget index_target;
     uint32_t browse_index, browse_revision;
     UsbAction usb_action;
     ExportFormat export_format;
@@ -61,7 +65,8 @@ struct UiData {
 };
 
 inline bool usbEntryAllowed(const UiData& data) {
-    return loggerStopped(data.recording, data.storage.log);
+    return loggerStopped(data.recording, data.storage.log) && !data.storage.busy &&
+        !data.datasets.loading && !data.datasets.applying && data.storage.settings_state != SettingsState::Unavailable;
 }
 
 struct UiSnapshot {

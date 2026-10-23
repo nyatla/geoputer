@@ -1,10 +1,30 @@
 #include "TextEncoding.h"
 #include "../../../PlaceText.h"
 #include <cstdint>
+#include <cctype>
 #include <cstring>
 #include <stdexcept>
 
 namespace geoputer {
+namespace {
+std::string metadataString(const std::string& metadata, const char* key) {
+    const auto keyPos = metadata.find(std::string("\"") + key + "\"");
+    if (keyPos == std::string::npos) return {};
+    auto pos = metadata.find(':', keyPos);
+    if (pos == std::string::npos) return {};
+    do { ++pos; } while (pos < metadata.size() && std::isspace(static_cast<unsigned char>(metadata[pos])));
+    if (pos >= metadata.size() || metadata[pos++] != '"') return {};
+    const auto end = metadata.find('"', pos);
+    return end == std::string::npos ? std::string{} : metadata.substr(pos, end - pos);
+}
+}
+bool wordBookUsesUtf8(const std::string& metadata) {
+    auto encoding=metadataString(metadata,"token_encoding");
+    if (encoding.empty()) encoding=metadataString(metadata,"text_encoding");
+    for (auto& c:encoding) c=static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return encoding=="utf8" || encoding=="utf-8";
+}
+
 bool validUtf8(const std::string& source) {
     for (size_t i = 0; i < source.size();) {
         const auto c = static_cast<unsigned char>(source[i++]);

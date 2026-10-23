@@ -1,5 +1,6 @@
 #include "utils/Console.h"
 #include "Application.h"
+#include "task/ui/ScreenNavigation.h"
 #include "task/ui/PlacePresentation.h"
 #include <Arduino.h>
 #include <esp_system.h>
@@ -19,7 +20,9 @@ bool Application::begin(bool usb_mode) {
     data_.boot.set(BootItem::Display, BootCheckState::Passed, "240X135");
     data_.boot.set(BootItem::Tasks, BootCheckState::Checking, "STARTING");
     data_.boot.set(BootItem::GPS, BootCheckState::Checking, "DEFERRED");
+    data_.storage.busy = true; // Menus may be visible before Storage/NVS is ready.
     if (!setScreen(ScreenId::Boot)) return false;
+    readUiContent(); // UI sampled startup ESC before its first screen acknowledgement.
     data_.boot.set(BootItem::Settings, BootCheckState::Checking, "NVS INIT");
     data_.boot.set(BootItem::SD, BootCheckState::Checking, "MOUNTING");
     bootChanged();
@@ -39,6 +42,7 @@ bool Application::begin(bool usb_mode) {
         applyStorage(result.storage);
         data_.boot.card(result.storage.card_state);
     }
+    data_.storage.busy = boot_stage_ == BootStage::NeedSettings || boot_stage_ == BootStage::WaitSettings;
     data_.boot.set(BootItem::Tasks, storage_started ? BootCheckState::Passed : BootCheckState::Failed,
                    storage_started ? "3T/4Q" : "TASK ERR");
     Console.printf("[MEMORY] messages ui=%u gps=%u storage=%u notify=%u return=%u sd_files=%u frame_bpp=%u\n",
@@ -99,6 +103,12 @@ bool Application::setScreen(ScreenId target, uint32_t action_id, ActionResult ac
 }
 
 void Application::handleNotification(const AppNotification& event) {
+    if(event.source==TaskId::Storage && event.kind==MessageKind::DatasetProgress) {
+        if(dataset_applying_ && dataset_waiting_ && event.payload.index_progress.token==dataset_waiting_) {
+            data_.datasets.progress=event.payload.index_progress;++data_.datasets.revision;++data_.revision;ui_data_dirty_=true;
+        }
+        return;
+    }
     if (event.source == TaskId::Storage && event.kind == MessageKind::UsbStorageChanged) {
         applyStorage(event.payload.usb_storage); return;
     }
@@ -140,11 +150,11 @@ void Application::handleNotification(const AppNotification& event) {
             const auto& place = completed.place;
             if (!place_flow_.owns(completed.request_id)) return;
             const bool accepted = applyDatasetInfo(data_.dataset, place.dataset);
-            if (accepted && datasetUnavailable(data_.dataset.state)) refreshPlace();
+            if (accepted && datasetInactive(data_.dataset.state)) refreshPlace();
             ++data_.revision;
             ui_data_dirty_ = true;
             const bool current = place_flow_.completed(completed.request_id, place.request.screen_generation, generation_);
-            if (current && accepted && !datasetUnavailable(data_.dataset.state) && screen_ == ScreenId::LivePlace && mode_ == DisplayMode::View && data_.gps.fix.valid) {
+            if (current && accepted && !datasetInactive(data_.dataset.state) && screen_ == ScreenId::LivePlace && mode_ == DisplayMode::View && data_.gps.fix.valid) {
                 completePlacePresentation(data_, place);
                 ++data_.revision;
                 ui_data_dirty_ = true;
@@ -246,7 +256,7 @@ void Application::readUiContent() {
         } else message("STOP LOGGER FIRST");
         last_processed_action_ = action.action_id;
         if (!publishUiContent(action.action_id, allowed ? ActionResult::Applied : ActionResult::Rejected)) ui_changed_ = true;
-        if (allowed && screen_ != ScreenId::Boot) enterMaintenance();
+        if (allowed) enterMaintenance();
         return;
     }
     if (action.kind == ActionKind::RestartLogger && data_.boot.maintenance && screen_ == ScreenId::Settings &&
@@ -277,7 +287,7 @@ void Application::readUiContent() {
     }
     if (action.kind == ActionKind::Storage && mode_ == DisplayMode::View &&
         ((screen_ == ScreenId::UsbStorage && action.storage_operation == StorageOperation::ExitUsbMode) ||
-         (screen_ == ScreenId::Settings && content.page == SettingsPage::Root && content.selected_setting == SettingsModeRow && action.storage_operation == StorageOperation::EnterUsbMode))) {
+         (screen_ == ScreenId::Settings && content.page == SettingsPage::System && content.selected_setting == 2 && action.storage_operation == StorageOperation::EnterUsbMode))) {
         const bool accepted = operateBootMode(action);
         last_processed_action_ = action.action_id;
         if (!publishUiContent(action.action_id,accepted?ActionResult::Applied:ActionResult::Rejected)) ui_changed_ = true;
@@ -315,9 +325,7 @@ void Application::readUiContent() {
     const bool valid = !data_.boot.maintenance && action.kind == ActionKind::ChangeScreen && content.screen == screen_ &&
                        action.screen_generation == generation_ && content.screen_generation == generation_ &&
                        ((screen_ == ScreenId::Boot && data_.boot.complete && action.target == ScreenId::LivePlace) ||
-                        (screen_ == ScreenId::LivePlace && (action.target == ScreenId::GpsLogger || action.target == ScreenId::Settings || action.target==ScreenId::Logs)) ||
-                        ((screen_ == ScreenId::Settings || screen_ == ScreenId::GpsLogger) && action.target == ScreenId::LivePlace) ||
-                        (screen_==ScreenId::Logs && action.target==ScreenId::LivePlace) ||
+                        (rootScreenTransition(screen_, content.page, action.target) && !data_.browse.deleting) ||
                         (screen_==ScreenId::LogDetail && action.target==ScreenId::Logs) ||
                         (screen_==ScreenId::LogPoint && action.target==ScreenId::LogDetail));
     if (valid && action.action_id != last_processed_action_) {
@@ -342,6 +350,8 @@ void Application::applyStorage(const StorageSnapshot& state) {
     if (!state.revision || (data_.storage.revision &&
         static_cast<int32_t>(state.revision - data_.storage.revision) <= 0)) return;
     const auto old_card = data_.storage.card_state;
+    const auto old_dataset = data_.settings.dataset;
+    const auto old_failure = data_.storage.dataset_failure.revision;
     const auto old_export=data_.storage.export_job.phase;
     const auto rg = data_.storage.rg;
     const auto sd = data_.storage.sd;
@@ -360,7 +370,12 @@ void Application::applyStorage(const StorageSnapshot& state) {
     applyActivity(data_.storage.sd, sd);
     if (!usb_mode_ && old_card != state.card_state && state.card_state == CardState::Mounted) { refreshPlace(); }
     if (state.settings_state == SettingsState::Defaults || state.settings_state == SettingsState::Loaded ||
-        state.settings_state == SettingsState::Saved) data_.settings = state.settings;
+        state.settings_state == SettingsState::Saved || (state.dataset_failure.number && !state.settings.dataset)) data_.settings = state.settings;
+    if(state.dataset_failure.revision!=old_failure && screen_==ScreenId::Boot) data_.boot.settings(state.settings_state);
+    if (!data_.settings.dataset) {
+        data_.dataset.state = PlaceState::Unselected;
+        if (old_dataset || data_.place_state != PlaceState::Unselected) refreshPlace();
+    }
     ++data_.revision;
     ui_data_dirty_ = true;
 }
@@ -370,8 +385,8 @@ bool Application::operateStorage(const UiAction& action) {
     const bool saving = action.kind == ActionKind::SaveSettings || action.kind == ActionKind::ResetSettings;
     const auto value = action.kind == ActionKind::ResetSettings ? defaultSettings() : action.settings;
     if (action.kind == ActionKind::ResetSettings &&
-        (data_.settings.dataset != 1 || data_.settings.wordbook_language[0])) {
-        DatasetRequest reset{}; reset.action = DatasetAction::Apply; reset.number = 1; reset.reset_settings = true;
+        (data_.settings.dataset || data_.settings.wordbook_language[0])) {
+        DatasetRequest reset{}; reset.action = DatasetAction::Clear; reset.reset_settings = true;
         return requestDataset(reset);
     }
     if (saving && (!validSettings(value) || value.gps_mode != 0 || value.dataset != data_.settings.dataset ||
@@ -405,7 +420,8 @@ bool Application::operateStorage(const UiAction& action) {
 
 void Application::refreshPlace() {
     place_flow_.refresh();
-    clearPlacePresentation(data_, datasetUnavailable(data_.dataset.state) ? data_.dataset.state :
+    clearPlacePresentation(data_, !data_.settings.dataset ? PlaceState::Unselected :
+                           datasetInactive(data_.dataset.state) ? data_.dataset.state :
                            !data_.gps.fix.valid ? PlaceState::NoFix :
                            data_.storage.card_state != CardState::Mounted ? PlaceState::NoCard : PlaceState::Waiting);
     ++data_.revision;
@@ -413,7 +429,7 @@ void Application::refreshPlace() {
 }
 
 bool Application::canSearchPlace() const {
-    return !data_.boot.maintenance && screen_ == ScreenId::LivePlace && mode_ == DisplayMode::View && data_.gps.fix.valid &&
+    return data_.settings.dataset && !data_.boot.maintenance && screen_ == ScreenId::LivePlace && mode_ == DisplayMode::View && data_.gps.fix.valid &&
            data_.storage.card_state == CardState::Mounted && !data_.storage.busy &&
            data_.dataset.state == PlaceState::Ready && !dataset_check_needed_ && !dataset_check_waiting_;
 }
@@ -463,10 +479,14 @@ void Application::initializeGps() {
 }
 
 void Application::enterMaintenance() {
-    if (screen_ == ScreenId::Settings) return;
-    // No new boot job may be scheduled after this point. An already-running
-    // Storage job retains ownership and may complete; UI-only menus remain usable.
-    boot_stage_ = BootStage::Complete;
+    const bool loading_settings = boot_stage_ == BootStage::NeedSettings || boot_stage_ == BootStage::WaitSettings;
+    if (screen_ == ScreenId::Settings) {
+        if (!loading_settings) boot_stage_ = BootStage::Complete;
+        return;
+    }
+    // Only pending NVS restoration may continue; do not start GPS/GIS.
+    // A running Storage job retains ownership while the menus are displayed.
+    if (!loading_settings) boot_stage_ = BootStage::Complete;
     if (screen_ == ScreenId::Boot) {
         if (data_.boot.checks[static_cast<unsigned>(BootItem::GPS)].state == BootCheckState::Checking)
             data_.boot.set(BootItem::GPS, BootCheckState::Warning, "SKIPPED");
@@ -482,19 +502,14 @@ void Application::advanceBoot() {
         enterMaintenance();
         return;
     }
-    if (screen_ != ScreenId::Boot) return;
+    // Maintenance is shown immediately; only NVS loading continues behind it.
+    if (screen_ != ScreenId::Boot && !data_.boot.maintenance) return;
     if (boot_stage_ == BootStage::SelectMode) {
         if (taskTimeMs() - boot_selection_at_ < config::BootMaintenanceWindowMs) return;
         initializeGps();
         boot_stage_ = BootStage::NeedDataset;
         // A key may have arrived while waiting for GPS's synchronous result.
         if (ui_changed_) return;
-    }
-    if (boot_stage_ == BootStage::NeedDataset && data_.storage.card_state != CardState::Mounted) {
-        data_.dataset.state = PlaceState::NoCard;
-        data_.boot.dataset(PlaceState::NoCard);
-        boot_stage_ = BootStage::Complete;
-        bootChanged();
     }
     if (boot_stage_ == BootStage::NeedSettings || boot_stage_ == BootStage::NeedDataset) {
         const bool settings = boot_stage_ == BootStage::NeedSettings;
@@ -523,7 +538,7 @@ void Application::advanceBoot() {
 
 void Application::processDatasetCheck() {
     if (!dataset_check_needed_ || dataset_check_waiting_ || screen_ == ScreenId::Boot ||
-        data_.storage.busy || data_.storage.card_state != CardState::Mounted || restart_pending_ || dataset_applying_) return;
+        data_.storage.busy || restart_pending_ || dataset_applying_) return;
     StorageRequest request{}; request.kind = MessageKind::CheckDataset; request.source = TaskId::Application;
     if (++place_request_id_ == 0) ++place_request_id_;
     request.request_id = place_request_id_; request.sent_at_ms = taskTimeMs();

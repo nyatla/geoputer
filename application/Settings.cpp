@@ -27,17 +27,17 @@ uint8_t settingValue(const Settings& v, unsigned index) {
     }
 }
 bool setSettingValue(Settings& v,unsigned index,uint8_t choice) {
-    if(choice>=settingChoices(index) || (index==5 && !choice)) return false;
+    if(choice>=settingChoices(index)) return false;
     switch(index) {
         case 0:v.language=static_cast<UiLanguage>(choice);break; case 1:v.log_interval=choice;break;
         case 2:v.flush_interval=choice;break;case 3:v.screen_timeout=choice;break;case 4:v.brightness=choice;break;
-        case 5:v.dataset=choice;break;case 6:v.gps_mode=choice;break;default:return false;
+        case 5:v.dataset=choice;if(!choice) std::memset(v.wordbook_language,0,sizeof(v.wordbook_language));break;case 6:v.gps_mode=choice;break;default:return false;
     }
     return true;
 }
 bool validSettings(const Settings& v) {
     for(unsigned i=0;i<SettingCount;++i) if(settingValue(v,i)>=settingChoices(i)) return false;
-    return v.dataset && validDatasetLanguage(v.wordbook_language,true);
+    return validDatasetLanguage(v.wordbook_language,true) && (v.dataset || !v.wordbook_language[0]);
 }
 bool sameSettings(const Settings& a,const Settings& b) {
     for(unsigned i=0;i<SettingCount;++i) if(settingValue(a,i)!=settingValue(b,i)) return false;
@@ -66,7 +66,7 @@ bool decodeSettings(const uint8_t* record,size_t size,Settings& value) {
     if(hash!=checksum(record,size-4)) return false;
     Settings candidate=defaultSettings();
     for(unsigned i=0;i<6;++i) {
-        if(old && i==4) { if(record[8]>=3) return false; continue; } // Old values were unused mode indices, never folder IDs.
+        if(old && i==4) { if(record[8]>=3) return false; candidate.dataset=1; continue; } // Old values were unused mode indices, never folder IDs.
         if(!setSettingValue(candidate,i+1,record[4+i])) return false;
     }
     if(record[2]!=1 && !setSettingValue(candidate,0,record[10])) return false;

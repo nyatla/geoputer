@@ -15,18 +15,31 @@ const char* at(UiLanguage language, const Translation (&table)[N], unsigned row)
 }
 
 const char* settingsRootLabel(UiLanguage language, unsigned row) {
-    static const Translation values[] = {{"動作設定", "Operation"}, {"動作モード", "Operating mode"}, {"ストレージ操作", "Storage"},
-        {"初期化", "Reset"}, {"バージョン情報", "About"}, {"ライセンス情報", "Licenses"}};
+    static const Translation values[] = {{"動作設定", "Operation"}, {"システム設定", "System settings"}, {"ストレージ操作", "Storage"},
+        {"バージョン情報", "About"}, {"ライセンス情報", "Licenses"}};
     return at(language, values, row);
 }
-const char* settingsModeValue(UiLanguage language) {
-    return language == UiLanguage::Japanese ? "GPSロガー" : "GPS logger";
+const char* settingsModeValue(UiLanguage language, bool usb) {
+    return usb ? "USB" : language == UiLanguage::Japanese ? "GPSロガー" : "GPS logger";
+}
+const char* settingsSystemLabel(UiLanguage language, unsigned row) {
+    static const Translation values[] = {{"モード", "Mode"}, {"GPS接続", "GPS source"},
+        {"保存して再起動", "Save and restart"}, {"初期化", "Reset"}};
+    return at(language, values, row);
+}
+const char* systemModeBlockText(const UiData& data, bool changed, UiLanguage language) {
+    const bool ja = language == UiLanguage::Japanese;
+    if (!loggerStopped(data.recording, data.storage.log)) return ja ? "先に記録を停止" : "Stop logger first";
+    if (data.storage.busy || data.datasets.loading || data.datasets.applying) return ja ? "処理中です" : "Storage busy";
+    if (data.storage.settings_state == SettingsState::Unavailable) return ja ? "設定を保存できません" : "Settings unavailable";
+    if (!changed) return ja ? "変更はありません" : "No changes";
+    return "";
 }
 const char* settingsOperationLabel(UiLanguage language, unsigned row) {
     static const Translation values[] = {{"表示言語", "Language"}, {"記録間隔", "Log interval"},
         {"SD保存間隔", "SD flush interval"}, {"消灯時間", "Screen timeout"}, {"明るさ", "Brightness"},
         {"データセット", "Dataset"}, {"GPS接続", "GPS source"}};
-    return at(language, values, row);
+    return row < OperationRowCount ? at(language, values, row) : "--";
 }
 const char* settingsStorageLabel(UiLanguage language, unsigned row) {
     static const Translation values[] = {{"カード情報", "Card information"}, {"再マウント", "Remount"},
@@ -75,7 +88,10 @@ void settingsValueText(UiLanguage language, unsigned row, uint8_t choice, char* 
             break;
         }
         case SettingId::Brightness: std::snprintf(out, size, "%u%%", Brightnesses[choice]); break;
-        case SettingId::Dataset: std::snprintf(out, size, "%02u", choice); break;
+        case SettingId::Dataset:
+            if(choice) std::snprintf(out, size, "%02u", choice);
+            else std::snprintf(out, size, "%s", language == UiLanguage::English ? "None" : "未選択");
+            break;
         case SettingId::GpsMode: std::snprintf(out, size, "%s", choice ?
             (language == UiLanguage::English ? "External" : "外付け") :
             (language == UiLanguage::English ? "Mesh Kit" : "MESH")); break;

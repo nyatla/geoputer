@@ -29,6 +29,7 @@ private:
     void sendReturn();
     void completeJob();
     void notifyActivity();
+    static void indexProgress(void*,const IndexProgress&);
     void sdBegin() override;
     void sdEnd() override;
     void cacheState(RgCacheState state, bool new_dataset = false) override;
@@ -40,6 +41,8 @@ private:
     void mountCard();
     void closeCard();
     bool formatCard();
+    void configureDataset();
+    void releaseDataset(PlaceState reason);
     bool loadSettings();
     bool saveSettings(const Settings& value);
 
@@ -78,6 +81,9 @@ private:
     JobKind job_kind_ = JobKind::None;
     bool has_completion_ = false;
     DatasetRequest dataset_request_{};
+    IndexProgress index_progress_{};
+    uint32_t index_started_at_=0,index_progress_at_=0;
+    bool index_progress_dirty_=false;
 };
 
 }  // namespace geoputer

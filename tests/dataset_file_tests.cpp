@@ -1,4 +1,5 @@
 #include <filesystem>
+#include "support/MapIndexFixture.h"
 #include <fstream>
 #include <stdexcept>
 #include <cstring>
@@ -22,12 +23,21 @@ void testDatasetFiles(const std::string& temporary,const std::string& map,const 
     fs::create_directories(root/"00");fs::create_directories(root/"100");fs::create_directories(root/"abc");
     DatasetCatalog catalog(root.string());DatasetRequest request{};request.action=DatasetAction::Open;
     auto list=catalog.read(request,UiLanguage::English);
-    check(list.count==4 && list.rows[0].number==1 && list.rows[3].number==21 && list.has_newer && !list.has_older,"numeric ID list is ordered, bounded and paginated without opening GLCs");
-    check(!std::strcmp(list.rows[0].title,"Japan"),"catalog chooses the UI title independently");
-    request.action=DatasetAction::Newer;request.number=21;list=catalog.read(request,UiLanguage::English);
-    check(list.count==2 && list.rows[0].number==55 && list.rows[1].number==99 && list.has_older && !list.has_newer,"second page skips sparse IDs and excludes 00/100/abc");
+    check(list.count==4 && list.rows[0].number==0 && list.rows[3].number==10 && list.has_newer && !list.has_older,"numeric ID list is ordered, bounded and paginated without opening GLCs");
+    check(!std::strcmp(list.rows[1].title,"Japan"),"catalog chooses the UI title independently");
+    request.action=DatasetAction::Newer;request.number=10;list=catalog.read(request,UiLanguage::English);
+    check(list.count==3 && list.rows[0].number==21 && list.rows[2].number==99 && list.has_older && !list.has_newer,"second page skips sparse IDs and excludes 00/100/abc");
     request.action=DatasetAction::Older;request.number=55;list=catalog.read(request,UiLanguage::Japanese);
     check(list.count==4 && list.rows[0].number==1 && list.selected==3,"previous page restores the preceding selection");
+    for(const auto purpose:{DatasetPurpose::Rebuild,DatasetPurpose::Verify}) {
+        request={};request.action=DatasetAction::Open;request.purpose=purpose;
+        list=catalog.read(request,UiLanguage::English);
+        check(list.purpose==purpose && list.count==4 && list.rows[0].number==1 && list.rows[3].number==21,"maintenance lists omit None and read metadata only, even where data files are absent");
+    }
+    manifest(99,"broken metadata");request={};request.action=DatasetAction::Open;request.number=99;
+    list=catalog.read(request,UiLanguage::English);
+    check(list.count==1 && list.rows[0].error!=DatasetError::None,"known bad metadata is exposed on the row for pre-emptive disabling");
+    manifest(99,ini);
     request={};request.action=DatasetAction::Detail;request.number=1;
     auto detail=catalog.read(request,UiLanguage::English);
     check(detail.error==DatasetError::None && detail.detail && detail.info.chunks>0 && detail.info.chunks<=1500 && detail.info.unit_inv_x && detail.info.east>detail.info.west,"real GLC supplies resolution/coverage/chunk count");
@@ -38,6 +48,8 @@ void testDatasetFiles(const std::string& temporary,const std::string& map,const 
     fs::remove(dir/"en.giswordbook");request.action=DatasetAction::Detail;std::strcpy(request.language,"en");
     check(catalog.read(request,UiLanguage::Japanese).error==DatasetError::Missing,"missing selected Wordbook does not fall back to another file");
     PlaceLookup lookup(dir.string());lookup.configure(dir.string(),"ja");
+    check(lookup.prepare().state==PlaceState::DataError,"missing saved index is a dataset error without automatic generation");
+    test_index::generate(dir.string(),"map.glc","ja.giswordbook");lookup.close();
     check(lookup.prepare().state==PlaceState::Ready && lookup.selectedLanguage()=="ja","strict manifest tolerates unselected extra files");
     PlaceRequest point{1,1,{35.681641,140.027194,1000,true}};
     check(lookup.search(point).state==PlaceState::Ready && lookup.wordBookCacheStats().entries==1,"configured production lookup resolves coordinates and fills its caches");

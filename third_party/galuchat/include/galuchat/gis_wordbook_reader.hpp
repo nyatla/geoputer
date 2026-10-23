@@ -106,7 +106,83 @@ public:
         return true;
     }
 
+    // Opt-in entry points for external indexes. Existing readers remain sequential.
+    struct IndexRootRange {
+        size_t depth, record_count;
+        int code_bits;
+        size_t start_bit, bit_count;
+        bool final_root = false;
+    };
+    static std::vector<size_t> readCodeSetFromRoot(ByteReader& source,
+                                                  const IndexRootRange& range, size_t target) {
+        if (source.bitOffset() || range.start_bit > 7 || !range.bit_count
+            || !range.depth || range.depth > range.bit_count) {
+            throw std::runtime_error("invalid indexed TI00 root range");
+        }
+        const size_t end_bits = detail::addSize(range.start_bit, range.bit_count, "TI00 root bits");
+        detail::LimitedReader bytes(source, detail::addSize(end_bits, 7, "TI00 root bytes") / 8);
+        bytes.skipBits(range.start_bit);
+        HierarchicalIndexReader root(bytes, range);
+        auto result = root.readIndexedRoot(target, end_bits, range.final_root);
+        if (bitPosition(bytes) > end_bits) throw std::runtime_error("TI00 root range exceeded");
+        return result;
+    }
+
+    // source starts at PageHeader; only the selected page is visible to decoding.
+    static std::vector<std::pair<size_t, std::vector<size_t>>> readTokenIdSetsFromPage(
+        ByteReader& source, size_t page_bytes, size_t first_code, size_t record_count,
+        int token_bits, const std::vector<size_t>& targets) {
+        if (source.bitOffset() || token_bits < 1 || token_bits > 16 || !record_count)
+            throw std::runtime_error("invalid indexed TT00 page");
+        const size_t end = detail::addSize(first_code, record_count, "TT00 page end");
+        validateIndexedTargets(targets, first_code, end);
+        if (targets.empty()) return {};
+        detail::LimitedReader page(source, page_bytes);
+        if (page.readByte() != 0) throw std::runtime_error("unsupported TT00 page header");
+        const size_t tokens = detail::toSize(page.readMbUInt(), "TT00 record tokens");
+        const size_t records = detail::toSize(page.readMbUInt(), "TT00 page records");
+        const size_t stream_bytes = detail::toSize(page.readMbUInt(), "TT00 stream size");
+        validateTextPage(tokens, records, 0, false);
+        if (records != record_count || !stream_bytes || stream_bytes != page.remaining())
+            throw std::runtime_error("TT00 indexed page length/count mismatch");
+        std::vector<size_t> local;
+        for (size_t code : targets) local.push_back(code - first_code);
+        detail::LimitedReader stream(page, stream_bytes);
+        auto result = decodeTargets(stream, records, local, token_bits);
+        for (auto& value : result) {
+            if (value.second.size() != tokens) throw std::runtime_error("TT00 record token count mismatch");
+            value.first += first_code;
+        }
+        return result;
+    }
+
+    // source starts at a fixed-width TokenStream range, without the page header.
+    static std::vector<std::pair<size_t, std::string>> readTokensFromPage(
+        ByteReader& source, size_t first_token, size_t count, size_t token_bytes,
+        const std::vector<size_t>& targets) {
+        if (source.bitOffset() || !token_bytes || !count)
+            throw std::runtime_error("invalid indexed TM00 page");
+        const size_t end = detail::addSize(first_token, count, "TM00 page end");
+        validateIndexedTargets(targets, first_token, end);
+        detail::LimitedReader stream(source, detail::multiplySize(count, token_bytes, "TM00 stream bytes"));
+        std::vector<std::pair<size_t, std::string>> result;
+        size_t consumed = 0;
+        for (size_t token : targets) {
+            const size_t offset = detail::multiplySize(token - first_token, token_bytes, "TM00 token offset");
+            stream.skipInByte(offset - consumed);
+            result.push_back({token, detail::readAscii(stream, token_bytes)});
+            consumed = offset + token_bytes;
+        }
+        return result;
+    }
+
 private:
+    static void validateIndexedTargets(const std::vector<size_t>& targets, size_t first, size_t end) {
+        for (size_t i = 0; i < targets.size(); ++i) {
+            if (targets[i] < first || targets[i] >= end || (i && targets[i] <= targets[i-1]))
+                throw std::runtime_error("indexed targets must be sorted, unique and in range");
+        }
+    }
     static constexpr int PALETTE_SIZE = 15;
 
     struct ChunkLocation {
@@ -296,6 +372,36 @@ private:
             if (header_size > size || header_.stream_size != size - header_size) {
                 throw std::runtime_error("TI00 has trailing bytes");
             }
+        }
+
+        // Metadata-only construction for an independently positioned root.
+        HierarchicalIndexReader(ByteReader& reader, const IndexRootRange& range) : reader_(reader) {
+            header_ = {range.depth, range.record_count, range.code_bits, 1, 1};
+            validateIndexHeader(header_);
+        }
+        std::vector<size_t> readIndexedRoot(size_t target, size_t end_bits, bool final_root) {
+            if (target >= header_.record_count) throw std::runtime_error("TI00 index out of range");
+            std::vector<size_t> result(header_.max_depth, 0);
+            if (header_.max_depth == 1) {
+                const size_t leaves = detail::toSize(reader_.readMbUInt(), "TI00 root leaves");
+                if (leaves != header_.record_count) throw std::runtime_error("TI00 indexed root count mismatch");
+                const size_t payload = detail::multiplySize(leaves, size_t(header_.code_bits), "TI00 root payload");
+                if (bitPosition(reader_) > end_bits || (payload > end_bits - bitPosition(reader_) ||
+                    (final_root ? end_bits - bitPosition(reader_) - payload > 7 : payload != end_bits - bitPosition(reader_))))
+                    throw std::runtime_error("TI00 indexed root length mismatch");
+                reader_.skipBits(detail::multiplySize(target, size_t(header_.code_bits), "TI00 leaf offset"));
+                result[0] = reader_.readBitsAsInt32(header_.code_bits);
+            } else {
+                result[0] = reader_.readBitsAsInt32(header_.code_bits);
+                const size_t leaves = detail::toSize(reader_.readMbUInt(), "TI00 root leaves");
+                const size_t payload = detail::toSize(reader_.readMbUInt(), "TI00 root payload");
+                if (leaves != header_.record_count || bitPosition(reader_) > end_bits
+                    || (payload && (payload > end_bits - bitPosition(reader_) ||
+                    (final_root ? end_bits - bitPosition(reader_) - payload > 7 : payload != end_bits - bitPosition(reader_)))))
+                    throw std::runtime_error("TI00 indexed root length/count mismatch");
+                readChildren(1, leaves, target, result);
+            }
+            return result;
         }
 
         size_t recordCount() const { return header_.record_count; }

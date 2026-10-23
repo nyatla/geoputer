@@ -40,6 +40,7 @@ enum class MessageKind : uint8_t {
     StorageOperationCompleted,
     StorageError,
     DatasetOperation,
+    DatasetProgress,
     UsbStorageChanged,
     UsbExportOperation,
     SyncReturn,
@@ -84,6 +85,7 @@ union StorageRequestPayload {
     ExportRequest export_request;
 };
 union AppNotificationPayload {
+    IndexProgress index_progress;
     StorageSnapshot usb_storage;
     UiContentChanged changed;
     GpsSnapshot gps;
