@@ -12,6 +12,52 @@
 using namespace geoputer;
 namespace {
 void check(bool value,const char* message){if(!value)throw std::runtime_error(message);}
+// Compare with coordinate-based sampling, including cropped source buffers,
+// repeated/skipped source rows, partial updates, and the last row/column.
+void testBoundarySampling() {
+    for (double latitude : {0.0, 35.68, -35.68, 70.0})
+    for (int unit_y : {10000, 20000})
+    for (int width : {1, 5, 240})
+    for (int height : {1, 3, 101}) {
+        map::ViewportPlan plan;
+        check(map::planViewport(latitude, -140.0, 10000, unit_y, SIZE_MAX, plan, width, height) == map::Error::None,
+              "boundary sampling test plan succeeds");
+        auto bounds = plan.source;
+        bounds.x -= 2; bounds.y -= 2; bounds.width += 4; bounds.height += 4;
+        std::vector<uint32_t> pixels(size_t(bounds.width) * bounds.height);
+        uint32_t random = 12345;
+        for (auto& pixel : pixels) {
+            random = random * 1664525u + 1013904223u;
+            pixel = (random >> 24) % 4; // Include zero and multiple region codes.
+        }
+        const map::RasterView view{pixels.data(), bounds, pixels.size()};
+        for (map::RegionCode current : {0u, 1u, 9u}) {
+            map::BoundaryImage expected, actual;
+            check(expected.resize(width,height) && actual.resize(width,height), "sampling images allocated");
+            for (int y=0;y<height;++y) for (int x=0;x<width;++x) {
+                const auto a=view.get(plan.sampleX(x),plan.sampleY(y));
+                const auto b=x+1<width?view.get(plan.sampleX(x+1),plan.sampleY(y)):a;
+                const auto c=y+1<height?view.get(plan.sampleX(x),plan.sampleY(y+1)):a;
+                expected.set(x,y,a!=b || a!=c ? current && (a==current || b==current || c==current)?2:1 : 0);
+                actual.set(x,y,3); // Each requested row must overwrite its old pixels.
+            }
+            unsigned first=0;
+            for (unsigned count : {0u,1u,2u,8u,90u}) {
+                count=std::min(count,unsigned(height)-first);
+                check(map::buildBoundaryRows(view,plan,current,first,count,actual)==map::Error::None,
+                      "row sampling accepts partial updates");
+                first+=count;
+                for (int y=0;y<height;++y) for (int x=0;x<width;++x)
+                    check(actual.get(x,y)==(unsigned(y)<first?expected.get(x,y):3),
+                          "row sampling preserves the reference pixels and untouched rows");
+            }
+            check(first==unsigned(height) && !std::memcmp(actual.data(),expected.data(),actual.bytes()),
+                  "packed boundary bytes match coordinate sampling including padding");
+            check(map::buildBoundaryRows(view,plan,current,height,0,actual)==map::Error::None,
+                  "empty update after final row is accepted");
+        }
+    }
+}
 MapSourceResult source(const map::Request& request) {
     MapSourceResult result;result.info.request=request;
     check(map::planViewport(35.681641,140.027194,10000,10000,96*1024,result.plan)==map::Error::None,"map plan succeeds within independent memory budget");
@@ -23,6 +69,7 @@ MapSourceResult source(const map::Request& request) {
 }
 }
 void testMaps() {
+    testBoundarySampling();
     map::BoundaryImage image;check(!image.resize(0,1) && !image.resize(241,101),"image rejects zero/oversized dimensions");
     check(image.resize(5,3) && image.bytes()==6,"odd image widths have padded rows");
     image.set(0,0,1);image.set(1,0,2);image.set(4,0,2);
