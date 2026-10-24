@@ -9,6 +9,7 @@ struct Request {
     uint32_t token = 0, screen_generation = 0, dataset_generation = 0, sample_seq = 0;
     double latitude = 0, longitude = 0;
     uint16_t row = 0;
+    uint8_t scale = 1; // Input cells per stored sample: 1, 2 or 4.
 };
 struct FrameInfo {
     Request request;
@@ -25,7 +26,9 @@ struct Transfer {
     uint16_t row = 0, rows = 0;
     uint8_t pixels[TransferBytes]{};
 };
-struct ViewState { bool busy = false; Error error = Error::None; };
+constexpr bool supportedScale(unsigned scale) { return scale==1 || scale==2 || scale==4; }
+inline const char* scaleText(unsigned scale) { return scale==4?"1/4":scale==2?"1/2":"1"; }
+struct ViewState { bool busy = false; Error error = Error::None; uint8_t scale = 1; };
 struct GridRect { int32_t x = 0, y = 0, width = 0, height = 0; };
 struct RasterView {
     const RegionCode* pixels = nullptr;

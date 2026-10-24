@@ -1,4 +1,5 @@
 #include "MapSource.h"
+#include "../../../map/DecimatedViewport.h"
 #include "../../../utils/HeapDiagnostics.h"
 #include "DiskIndexedMapReader.h"
 #include "DiskIndexedWordBookReader.h"
@@ -23,12 +24,16 @@ MapSourceResult readBoundaryMap(const std::string& directory,const std::string& 
         {
             DiskIndexedMapReader reader(info,std::make_shared<ObservedFileReaderFactory>(map_path,observer,nullptr,
                 FileReadOptions{config::MapRectReadBufferBytes,config::FileReadThroughSkipBytes},drive),index_factory);
-            result.info.error=map::planViewport(request.latitude,request.longitude,reader.unitInvX(),reader.unitInvY(),config::MapViewCodeMaxBytes,result.plan);
+            map::DecimatedViewport viewport;
+            result.info.error=map::planDecimatedViewport(request.latitude,request.longitude,reader.unitInvX(),reader.unitInvY(),
+                config::MapViewCodeMaxBytes,request.scale,viewport);
             if(result.info.error!=map::Error::None)return result;
+            result.plan=viewport.output;
             const auto& bounds=result.plan.source;
             result.pixels.reset(new map::RegionCode[size_t(bounds.width)*bounds.height]);
             reportMapHeap("source-allocated",request.token,result.view().count*sizeof(map::RegionCode));
-            reader.readRect({bounds.x,bounds.y,bounds.width,bounds.height},result.pixels.get());
+            const auto& input=viewport.input;
+            reader.readRectDecimated({input.x,input.y,input.width,input.height},request.scale,result.pixels.get());
             reportMapHeap("source-read",request.token,result.view().count*sizeof(map::RegionCode));
         }
         reportMapHeap("map-reader-closed",request.token,result.view().count*sizeof(map::RegionCode));

@@ -10,6 +10,10 @@ public:
                          std::shared_ptr<const galuchat::ReaderFactory> index)
         : info_(info),map_(std::move(map)),index_(std::move(index)) {}
     void readRect(const galuchat::Rect& target,uint32_t* pixels) const;
+    // Nearest-neighbor decimation anchored at target.x/y, before edge extraction.
+    // Caller supplies ceil(width/scale)*ceil(height/scale) uint32 pixels.
+    // Supports 1, 2, 4; preserves first-nonzero composition at sampled positions.
+    void readRectDecimated(const galuchat::Rect& target,unsigned scale,uint32_t* pixels) const;
     uint32_t chunkCount() const { return value(index_format::Header::ChunkCount); }
     int unitInvX() const { return static_cast<int>(value(index_format::Header::UnitInvX)); }
     int unitInvY() const { return static_cast<int>(value(index_format::Header::UnitInvY)); }

@@ -15,6 +15,7 @@ bool Application::begin(bool usb_mode) {
     if (!notifications_.initialize() || !results_.initialize() || !ui_.initialize()) return false;
     if (!ui_.start("UI", 8192, 1)) return false;
     data_.settings = defaultSettings();
+    data_.map.scale = config::MapViewScale;
     data_.revision = 1;
     if (usb_mode_) return beginUsb();
     data_.boot.set(BootItem::Display, BootCheckState::Passed, "240X135");
@@ -246,6 +247,12 @@ void Application::readUiContent() {
     }
     if (action.action_id == last_processed_action_) {
         if (!publishUiContent(action.action_id, ActionResult::Applied)) ui_changed_ = true;
+        return;
+    }
+    if(action.kind==ActionKind::MapScale) {
+        const bool accepted=changeMapScale(action.map_scale);
+        last_processed_action_=action.action_id;
+        if(!publishUiContent(action.action_id,accepted?ActionResult::Applied:ActionResult::Rejected))ui_changed_=true;
         return;
     }
     if (action.kind == ActionKind::Maintenance && !usb_mode_ && mode_ == DisplayMode::View &&

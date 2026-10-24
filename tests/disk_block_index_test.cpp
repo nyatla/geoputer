@@ -6,6 +6,7 @@
 #include <vector>
 #include "task/storage/galuchat/DiskIndexedMapReader.h"
 #include "galuchat/rle_fixture.h"
+#include "map/BoundaryExtractor.h"
 
 namespace {
 using Bytes = std::vector<uint8_t>;
@@ -25,12 +26,16 @@ struct Fixture {
     geoputer::DatasetMapIndex info{};
     size_t first=0;
     static constexpr size_t BlockBytes=16386, PerGroup=4, Total=24;
-    Fixture() {
+    explicit Fixture(bool patterned=false) {
         Bytes h(16);const std::string format="WGSMapSet/3";std::copy(format.begin(),format.end(),h.begin());
         h.insert(h.end(),{1,1,0,1,0,0});map=chunk("GLCH",h);
         const auto start=map.size();
         Bytes payload;mb(payload,768);mb(payload,512);payload.push_back(7);
-        for (size_t i=0;i<Total;++i) {payload.push_back(0);payload.push_back(0x70);payload.insert(payload.end(),16384,uint8_t(i+1));}
+        for (size_t i=0;i<Total;++i) {
+            payload.push_back(0);payload.push_back(0x70);
+            for(int y=0;y<128;++y)for(int x=0;x<128;++x)
+                payload.push_back(patterned?uint8_t((i*19+x*3+y*5)%251):uint8_t(i+1));
+        }
         const auto image=chunk("GI01",payload);map.insert(map.end(),image.begin(),image.end());
         first=map.size()-Total*BlockBytes;
         const uint32_t index_bytes=40+Total/PerGroup*16;
@@ -100,6 +105,56 @@ void rectangles() {
         }
     }
 }
+void decimation() {
+    Fixture f(true);
+    for (unsigned scale : {1u,2u,4u})
+    for (const galuchat::Rect rect : {galuchat::Rect{0,0,768,512},{1,3,259,133},{-7,-5,137,139},
+                                     {123,127,267,261},{757,503,17,13},{800,600,1,1},{0,0,1,1}}) {
+        Trace mt,it;
+        geoputer::DiskIndexedMapReader reader(f.info,std::make_shared<Factory>(f.map,mt),std::make_shared<Factory>(f.index,it));
+        const unsigned width=1+(unsigned(rect.width)-1)/scale,height=1+(unsigned(rect.height)-1)/scale;
+        std::vector<uint32_t> pixels(size_t(width)*height+2,0xdeadbeef);
+        reader.readRectDecimated(rect,scale,pixels.data()+1);
+        check(pixels.front()==0xdeadbeef && pixels.back()==0xdeadbeef,"decimation overran output capacity");
+        for(unsigned y=0;y<height;++y)for(unsigned x=0;x<width;++x) {
+            const int px=rect.x+int(x*scale),py=rect.y+int(y*scale);
+            uint32_t expected=0;
+            if(px>=0 && py>=0 && px<768 && py<512)
+                expected=uint32_t((size_t(py/128)*6+px/128)*19+(px%128)*3+(py%128)*5)%251;
+            check(pixels[1+size_t(y)*width+x]==expected,"decimation differs from independently sampled source");
+        }
+        check(it.opens.size()==1 && mt.opens.size()<=1,"decimation repeats index/map sessions");
+    }
+    Trace mt,it;
+    geoputer::DiskIndexedMapReader reader(f.info,std::make_shared<Factory>(f.map,mt),std::make_shared<Factory>(f.index,it));
+    for(unsigned scale:{0u,3u,8u}) {
+        uint32_t pixel=123;bool rejected=false;
+        try {reader.readRectDecimated({0,0,1,1},scale,&pixel);}catch(const std::invalid_argument&){rejected=true;}
+        check(rejected && pixel==123 && mt.opens.empty() && it.opens.empty(),"invalid scale started reading or changed output");
+    }
+    for(auto rect:{galuchat::Rect{0,0,0,1},galuchat::Rect{0,0,1,-1}}) {
+        uint32_t pixel=123;bool rejected=false;
+        try {reader.readRectDecimated(rect,4,&pixel);}catch(const std::invalid_argument&){rejected=true;}
+        check(rejected && pixel==123,"invalid sampled dimensions accepted");
+    }
+}
+void decimationBeforeEdges() {
+    Fixture f;
+    for(unsigned y=0;y<8;++y)for(unsigned x=0;x<8;++x)f.map[f.first+2+y*128+x]=7;
+    f.map[f.first+2+128+1]=99; // One-cell island between the scale-2 samples.
+    auto mf=std::make_shared<galuchat::BufferReaderFactory>(f.map),ix=std::make_shared<galuchat::BufferReaderFactory>(f.index);
+    geoputer::DiskIndexedMapReader reader(f.info,mf,ix);
+    uint32_t full[64]{},small[16]{};reader.readRect({0,0,8,8},full);
+    check(full[9]==99 && full[0]==7,"fine-island fixture has no island");
+    reader.readRectDecimated({0,0,8,8},2,small);
+    geoputer::map::ViewportPlan plan;plan.source={0,0,4,4};plan.width=4;plan.height=4;
+    plan.center_x=2;plan.center_y=1;plan.grid_rows_per_pixel=1;
+    geoputer::map::BoundaryImage edges;edges.resize(4,4);
+    check(geoputer::map::buildBoundaryRows({small,{0,0,4,4},16},plan,7,0,4,edges)==geoputer::map::Error::None,
+          "ordinary edge detector rejected the decimated image");
+    for(unsigned y=0;y<4;++y)for(unsigned x=0;x<4;++x)
+        check(small[y*4+x]==7 && edges.get(x,y)==0,"fine boundary was preserved instead of decimating codes first");
+}
 void failuresAndBypass() {
     Fixture f;
     // A corrupt skipped prefix proves that decoding actually restarts at group 2.
@@ -123,7 +178,7 @@ void rleComposition() {
     // and disk-indexed block groups, with transparent zeros and overlapping chunks.
     for (bool grouped : {false,true}) for (int mode=0;mode<4;++mode) {
         const int r=grouped?128:16, columns=grouped?2:1;
-        for (int invalid : {0,1,2}) for(int kind:{0,1,2}) {
+        for (int invalid : {0,1,2}) for(int kind:{0,1,2}) for(int compression:{0,1,2}) {
             Bytes h(16); const std::string format="WGSMapSet/3";
             std::copy(format.begin(),format.end(),h.begin());
             h.insert(h.end(),{1,1,0,2,0,0,0,0});
@@ -134,10 +189,10 @@ void rleComposition() {
                 Bytes cell;
                 if(!kind)cell=rle_fixture::cell(mode,0,rle_fixture::runs(r,2),value);
                 else {cell={0x28};rle_fixture::append(cell,rle_fixture::mb(value));}
-                std::vector<Bytes> blocks{rle_fixture::block(0,cell)};
+                std::vector<Bytes> blocks{rle_fixture::block(compression,cell)};
                 // Delta palette encoding turns byte 0x81 into -1.
                 if(invalid==2 && layer==1) blocks[0][0]|=0x80;
-                if(grouped) {Bytes raw{0x70};raw.insert(raw.end(),size_t(r)*r,layer?77:0);blocks.push_back(rle_fixture::block(0,raw));}
+                if(grouped) {Bytes raw{0x70};raw.insert(raw.end(),size_t(r)*r,layer?77:0);blocks.push_back(rle_fixture::block(compression,raw));}
                 const auto image=rle_fixture::image(r,blocks,columns);images.push_back(image);
                 const auto start=map.size();rle_fixture::append(map,image);
                 size_t first=map.size();for(const auto& b:blocks)first-=b.size();
@@ -171,8 +226,20 @@ void rleComposition() {
                     bool failed=false;
                     try {actual.readRect(rect,pixels.data());}catch(const std::runtime_error& e){failed=std::string(e.what())=="region code exceeds uint32 cache range";}
                     check(failed,"RLE/MONO uint32 range error accepted");
+                    failed=false;
+                    try {actual.readRectDecimated(rect,4,pixels.data());}catch(const std::runtime_error& e){failed=std::string(e.what())=="region code exceeds uint32 cache range";}
+                    check(failed,"sampled destination suppressed invalid region codes");
                 } else {
                     actual.readRect(rect,pixels.data());
+                    for(unsigned scale:{1u,2u,4u}) {
+                        const unsigned sw=1+(unsigned(rect.width)-1)/scale,sh=1+(unsigned(rect.height)-1)/scale;
+                        std::vector<uint32_t> sampled(size_t(sw)*sh+2,0xdeadbeef);
+                        actual.readRectDecimated(rect,scale,sampled.data()+1);
+                        check(sampled.front()==0xdeadbeef && sampled.back()==0xdeadbeef,"sampled RLE/MONO overran output");
+                        for(unsigned sy=0;sy<sh;++sy)for(unsigned sx=0;sx<sw;++sx)
+                            check(sampled[1+size_t(sy)*sw+sx]==pixels[size_t(sy*scale)*rect.width+sx*scale],
+                                  "sampled RLE/MONO/RAW composition or reverse span differs");
+                    }
                     for(int y=0;y<rect.height;++y)for(int x=0;x<rect.width;++x) {
                         const int px=rect.x+x,py=rect.y+y;int64_t expected=0;
                         if(px>=0 && px<columns*r && py>=0 && py<r) {
@@ -191,6 +258,6 @@ void rleComposition() {
 
 }
 int main() {
-    rectangles();failuresAndBypass();rleComposition();
+    rectangles();decimation();decimationBeforeEdges();failuresAndBypass();rleComposition();
     std::cout<<"disk block index: pixels, group/row boundaries, direct offsets, single open and failures OK\n";
 }

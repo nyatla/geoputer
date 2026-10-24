@@ -18,6 +18,7 @@ public:
 
 private:
     void processMap();
+    bool changeMapScale(uint8_t scale);
     void completeMap(const map::FrameInfo& info);
     void mapState(bool busy,map::Error error);
     map::Error mapAvailability() const;

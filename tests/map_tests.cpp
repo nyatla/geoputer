@@ -1,4 +1,5 @@
 #include "map/BoundaryExtractor.h"
+#include "map/DecimatedViewport.h"
 #include "map/MapFrameReceiver.h"
 #include "task/storage/MapBuildJob.h"
 #include "task/ui/UiModel.h"
@@ -58,6 +59,68 @@ void testBoundarySampling() {
         }
     }
 }
+void testDecimatedViewport() {
+    for(double latitude:{-70.0,-35.68,0.0,35.68,70.0})for(int uy:{10000,20000})
+    for(int width:{1,5,240})for(int height:{1,3,101})for(unsigned scale:{1u,2u,4u}) {
+        map::DecimatedViewport p;
+        check(map::planDecimatedViewport(latitude,-140,10000,uy,SIZE_MAX,scale,p,width,height)==map::Error::None,
+              "sampled viewport accepts supported scales and dimensions");
+        const auto& v=p.output;
+        check(p.input.width==(v.source.width-1)*int(scale)+1 && p.input.height==(v.source.height-1)*int(scale)+1,
+              "input includes exactly the selected sample lattice");
+        const int center_column=v.center_x-v.source.x,center_row=v.center_y-v.source.y;
+        check(p.input.x+center_column*int(scale)==v.center_x && p.input.y+center_row*int(scale)==v.center_y,
+              "decimation includes the exact current-location source cell");
+        check(v.sampleX(width/2)==v.center_x && v.sampleY(height/2)==v.center_y,
+              "current-location marker remains at screen center");
+        map::ViewportPlan normal;
+        map::planViewport(latitude,-140,10000,uy,SIZE_MAX,normal,width,height);
+        check(v.source.x==normal.source.x && v.source.y==normal.source.y &&
+              v.source.width==normal.source.width && v.source.height==normal.source.height &&
+              v.meters_per_pixel==normal.meters_per_pixel*scale,"output storage stays constant while scale bar grows");
+        const auto bytes=size_t(v.source.width)*v.source.height*4;
+        check(map::planDecimatedViewport(latitude,-140,10000,uy,bytes-1,scale,p,width,height)==map::Error::TooLarge,
+              "sampled viewport enforces the stored-image memory budget");
+    }
+    map::DecimatedViewport p;
+    check(map::planDecimatedViewport(0,0,10000,10000,SIZE_MAX,3,p)==map::Error::InvalidInput,
+          "unsupported viewport decimation rejected");
+    check(map::planDecimatedViewport(0,180,11930463,10000,SIZE_MAX,4,p)==map::Error::TooLarge,
+          "expanded source coordinate overflow rejected");
+
+}
+void testMapScaleKeys() {
+    UiData data{};data.settings=defaultSettings();data.dataset.generation=1;
+    data.recording.state=RecordingState::Recording;
+    UiModel model;model.setScreen({ScreenId::Map,DisplayMode::View,7,data,0,ActionResult::None});
+    model.keyPressed(UiKey::Up,1);
+    check(model.snapshot().action.kind==ActionKind::None,"map scale must stop at native resolution");
+    model.keyPressed(mapPhysicalKey('.',false),2);
+    const auto first=model.snapshot().action;
+    check(first.kind==ActionKind::MapScale && first.map_scale==2 && first.screen_generation==7,
+          "plain Down requests half-resolution through App");
+    check(model.data().map.scale==1,"UI must not commit a scale before App acknowledgement");
+    model.keyPressed(UiKey::Down,3);
+    check(model.snapshot().action.action_id==first.action_id && model.snapshot().action.map_scale==2,
+          "pending scale action is retained without duplicate or overwrite");
+    data.revision=1;model.updateContent({DisplayMode::View,7,data,first.action_id,ActionResult::Rejected});
+    check(model.data().map.scale==1 && model.snapshot().action.kind==ActionKind::None,"rejected zoom preserves the selected scale");
+    for(unsigned target:{2u,4u,2u,1u}) {
+        const bool up=target<model.data().map.scale;
+        model.keyPressed(mapPhysicalKey(up?';':'.',true),4+target);
+        const auto action=model.snapshot().action;
+        check(action.kind==ActionKind::MapScale && action.map_scale==target,"map zoom order differs for Fn/alias keys");
+        data.map.scale=target;data.map.busy=true;++data.revision;
+        model.updateContent({DisplayMode::View,7,data,action.action_id,ActionResult::Applied});
+        check(model.data().map.scale==target && model.data().recording.state==RecordingState::Recording,
+              "zoom acknowledgement changes scale without changing GPS recording");
+    }
+    data.map.scale=4;++data.revision;model.updateContent({DisplayMode::View,7,data,0,ActionResult::None});
+    model.keyPressed(UiKey::Down,20);model.keyPressed(UiKey::Left,21);model.keyPressed(UiKey::Right,22);
+    check(model.snapshot().action.kind==ActionKind::None,"map scale must stop at quarter resolution and ignore Left/Right");
+    model.setScreen({ScreenId::Map,DisplayMode::Background,8,data,0,ActionResult::None});model.keyPressed(UiKey::Up,23);
+    check(model.snapshot().action.kind==ActionKind::Wake && model.data().map.scale==4,"first key while dark only wakes the display");
+}
 MapSourceResult source(const map::Request& request) {
     MapSourceResult result;result.info.request=request;
     check(map::planViewport(35.681641,140.027194,10000,10000,96*1024,result.plan)==map::Error::None,"map plan succeeds within independent memory budget");
@@ -69,7 +132,7 @@ MapSourceResult source(const map::Request& request) {
 }
 }
 void testMaps() {
-    testBoundarySampling();
+    testBoundarySampling();testDecimatedViewport();testMapScaleKeys();
     map::BoundaryImage image;check(!image.resize(0,1) && !image.resize(241,101),"image rejects zero/oversized dimensions");
     check(image.resize(5,3) && image.bytes()==6,"odd image widths have padded rows");
     image.set(0,0,1);image.set(1,0,2);image.set(4,0,2);
@@ -131,6 +194,12 @@ void testMaps() {
     transfer={};transfer.info=job.info();check(model.beginMapFrame(transfer)==OperationStatus::Ok,"model accepts matching map frame");
     for(unsigned row=0;row<101;row+=8){request.row=row;job.read(request,transfer);check(model.writeMapRows(transfer)==OperationStatus::Ok,"model copies map rows");}
     check(model.commitMapFrame(transfer)==OperationStatus::Ok && model.mapFrame().image().bytes()==6060,"model commits complete independent frame");
+    data.map.scale=2;++data.revision;model.updateContent({DisplayMode::View,7,data,0,ActionResult::None});
+    check(model.beginMapFrame(transfer)==OperationStatus::StaleContent &&
+          model.writeMapRows(transfer)==OperationStatus::StaleContent && model.commitMapFrame(transfer)==OperationStatus::StaleContent &&
+          model.mapFrame().image().bytes()==6060 && model.mapFrame().info().request.scale==1,
+          "scale switch must reject late old-scale images without erasing the shown frame");
+    data.map.scale=1;++data.revision;model.updateContent({DisplayMode::View,7,data,0,ActionResult::None});
     auto stale=transfer;++stale.info.request.dataset_generation;
     check(model.beginMapFrame(stale)==OperationStatus::StaleContent,"old dataset result cannot overwrite Map");
     model.setScreen({ScreenId::Logs,DisplayMode::View,8,data,0,ActionResult::None});

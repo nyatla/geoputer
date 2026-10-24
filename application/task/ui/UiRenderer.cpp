@@ -648,7 +648,10 @@ void UiRenderer::drawMap(const UiModel& model) {
     for(unsigned y=0;y<image.height();++y)for(unsigned x=0;x<image.width();++x) {
         const auto pixel=image.get(x,y);if(pixel)frame_.drawPixel(x,y+18,pixel==2?TFT_WHITE:TFT_DARKGREY);
     }
-    frame_.fillRect(2,20,44,12,TFT_BLACK);text(4,22,"4 MAP",TFT_CYAN);
+    char title[20];
+    const auto shown_scale=image.bytes()?info.request.scale:data.map.scale;
+    std::snprintf(title,sizeof(title),"4 MAP %s",map::scaleText(shown_scale));
+    frame_.fillRect(2,20,80,12,TFT_BLACK);text(4,22,title,TFT_CYAN);
     frame_.fillRect(223,20,15,29,TFT_BLACK);text(227,22,"N");frame_.fillRect(230,35,1,11,TFT_LIGHTGREY);
     for(int i=0;i<4;++i){frame_.drawPixel(230-i,35+i,TFT_LIGHTGREY);frame_.drawPixel(230+i,35+i,TFT_LIGHTGREY);}
     if(image.bytes()) {
@@ -678,7 +681,9 @@ void UiRenderer::drawMap(const UiModel& model) {
     if(data.map.error!=map::Error::None) {
         frame_.fillRect(0,81,240,12,TFT_BLACK);text(4,83,map::errorText(data.map.error),TFT_RED);
     }else if(data.map.busy) {
-        frame_.fillRect(50,20,120,12,TFT_BLACK);text(52,22,image.bytes()?"UPDATING...":"READING MAP...",TFT_YELLOW);
+        char progress[24];
+        std::snprintf(progress,sizeof(progress),"%s %s",image.bytes()?"UPDATING":"READING",map::scaleText(data.map.scale));
+        frame_.fillRect(96,20,126,12,TFT_BLACK);text(98,22,progress,TFT_YELLOW);
     }
 }
 

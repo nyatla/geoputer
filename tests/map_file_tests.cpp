@@ -1,5 +1,7 @@
 #include "support/MapIndexFixture.h"
 #include "map/MapFrameReceiver.h"
+#include "map/DecimatedViewport.h"
+#include "task/storage/galuchat/ObservedFileReader.h"
 #include "task/storage/galuchat/MapSource.h"
 #include "task/storage/galuchat/PlaceLookup.h"
 #include "task/storage/MapBuildJob.h"
@@ -41,6 +43,7 @@ int main(int argc,char** argv) {
               after.misses==before.misses && after.bounds.x==before.bounds.x && after.bounds.y==before.bounds.y &&
               lookup.datasetInfo().generation==generation && observer.rg==rg,"map never invalidates, reuses or changes the 128 cache or RG state");
         const auto raw_bytes=result.view().count*4;const auto name=std::string(result.info.name);
+        const auto plan=result.plan;
         MapBuildJob job;job.start(request);job.loaded(std::move(result));
         unsigned steps=0;while(!job.complete() && ++steps<20)job.step();
         check(job.complete() && job.info().error==map::Error::None,"map renders in bounded steps");
@@ -53,6 +56,38 @@ int main(int argc,char** argv) {
         const auto repeated=lookup.search(point);
         check(repeated.state==PlaceState::Ready && repeated.region_code==place.region_code && observer.sd==accesses && lookup.cacheStats().fills==before.fills,
               "original map and name caches still hit without SD IO after independent rendering");
+        for(unsigned scale:{2u,4u}) {
+            auto scaled=request;scaled.scale=scale;++scaled.token;
+            auto small=readBoundaryMap(dir.string(),"ja",scaled,0,&observer);
+            check(small.info.error==map::Error::None && small.pixels,"sampled map source succeeds");
+            check(small.info.region==place.region_code && small.info.name==name,"sampled map retains current-location code and name");
+            check(small.view().count*4==raw_bytes && small.info.meters_per_pixel==plan.meters_per_pixel*scale,
+                  "sampled map uses constant code memory and a correctly scaled distance bar");
+            const auto info=DatasetIndex{}.loadMap((dir/"_mapindex.dat").string(),(dir/"map.glc").string());
+            DiskIndexedMapReader reader(info,std::make_shared<ObservedFileReaderFactory>((dir/"map.glc").string(),nullptr),
+                                       std::make_shared<ObservedFileReaderFactory>((dir/"_mapindex.dat").string(),nullptr));
+            map::DecimatedViewport viewport;
+            check(map::planDecimatedViewport(scaled.latitude,scaled.longitude,reader.unitInvX(),reader.unitInvY(),SIZE_MAX,
+                                             scale,viewport)==map::Error::None,"reference input plan succeeds");
+            const auto& b=viewport.input;std::vector<uint32_t> full(size_t(b.width)*b.height);
+            reader.readRect({b.x,b.y,b.width,b.height},full.data());
+            std::vector<uint32_t> expected(small.view().count);
+            for(int y=0;y<small.plan.source.height;++y)for(int x=0;x<small.plan.source.width;++x)
+                expected[size_t(y)*small.plan.source.width+x]=full[size_t(y*scale)*b.width+x*scale];
+            check(!std::memcmp(expected.data(),small.pixels.get(),expected.size()*4),"direct sampled result differs from full-resolution reference decimation");
+            map::BoundaryImage edges;edges.resize(240,101);
+            check(map::buildBoundaryRows({expected.data(),small.plan.source,expected.size()},small.plan,place.region_code,0,101,edges)==map::Error::None,
+                  "reference decimated image uses the ordinary edge detector");
+            MapBuildJob sampled_job;sampled_job.start(scaled);sampled_job.loaded(std::move(small));
+            while(!sampled_job.complete())sampled_job.step();
+            map::MapFrameReceiver sampled_frame;check(sampled_frame.begin(sampled_job.info()),"sampled UI receiver accepts frame");
+            for(unsigned row=0;row<101;row+=8){scaled.row=row;check(sampled_job.read(scaled,transfer)&&sampled_frame.write(transfer),"sampled map transfer succeeds");}
+            check(sampled_frame.commit(sampled_job.info()) && !std::memcmp(sampled_frame.image().data(),edges.data(),edges.bytes()),
+                  "actual boundary output differs from decimate-then-extract reference");
+            check(lookup.cacheStats().fills==before.fills && lookup.cacheStats().hits==before.hits+1 && observer.rg==rg,
+                  "sampled maps alter the independent point cache");
+            std::cout<<"PASS: decimate first scale="<<scale<<", raw_input="<<b.width<<'x'<<b.height<<", work_bytes="<<expected.size()*4<<", name="<<sampled_job.info().name<<'\n';
+        }
         fs::remove(dir/"_mapindex.dat");
         check(readBoundaryMap(dir.string(),"ja",request,0,&observer).info.error==map::Error::ReadError,"missing index becomes a map error");
         check(lookup.cacheStats().fills==before.fills && lookup.datasetInfo().generation==generation && lookup.search(point).state==PlaceState::Ready,

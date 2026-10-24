@@ -1,8 +1,25 @@
+#include "utils/Console.h"
 #include "Application.h"
 #include "task/storage/PlaceTypes.h"
 #include <cmath>
 
 namespace geoputer {
+bool Application::changeMapScale(uint8_t scale) {
+    if(usb_mode_ || data_.boot.maintenance || screen_!=ScreenId::Map || mode_!=DisplayMode::View ||
+       !map::supportedScale(scale))return false;
+    if(scale==data_.map.scale)return true;
+    data_.map.scale=scale;
+    // A scale change is a fresh request even with the same GPS sample. Keep
+    // the displayed frame until the new image has been received completely.
+    map_started_=false;map_retry_at_=0;
+    if(map_request_.token)map_cancel_=true;
+    const auto error=mapAvailability();
+    data_.map.busy=error==map::Error::None;data_.map.error=error;
+    ++data_.revision;ui_data_dirty_=true;
+    Console.printf("[MAP] scale=1/%u\n",unsigned(scale));
+    return true;
+}
+
 map::Error Application::mapAvailability() const {
     if(data_.storage.card_state!=CardState::Mounted)return map::Error::NoCard;
     if(!data_.settings.dataset || datasetInactive(data_.dataset.state))return map::Error::NoDataset;
@@ -12,12 +29,13 @@ map::Error Application::mapAvailability() const {
 }
 void Application::mapState(bool busy,map::Error error) {
     if(data_.map.busy==busy && data_.map.error==error)return;
-    data_.map={busy,error};++data_.revision;ui_data_dirty_=true;
+    data_.map.busy=busy;data_.map.error=error;++data_.revision;ui_data_dirty_=true;
 }
 void Application::completeMap(const map::FrameInfo& info) {
     if(!map_request_.token || info.request.token!=map_request_.token ||
        info.request.screen_generation!=map_request_.screen_generation ||
-       info.request.dataset_generation!=map_request_.dataset_generation)return;
+       info.request.dataset_generation!=map_request_.dataset_generation || info.request.scale!=map_request_.scale ||
+       info.request.scale!=data_.map.scale)return;
     map_info_=info;map_ready_=true;map_begun_=false;map_row_=0;
 }
 bool Application::mapStorageCommand(MessageKind kind,const map::Request& command) {
@@ -36,7 +54,7 @@ void Application::processMap() {
     const bool visible=!usb_mode_ && !data_.boot.maintenance && screen_==ScreenId::Map && mode_==DisplayMode::View;
     const auto available=mapAvailability();
     if(map_request_.token && (!visible || available!=map::Error::None || map_request_.screen_generation!=generation_ ||
-        map_request_.dataset_generation!=data_.dataset.generation))map_cancel_=true;
+        map_request_.dataset_generation!=data_.dataset.generation || map_request_.scale!=data_.map.scale))map_cancel_=true;
     if(map_cancel_ && map_request_.token) {
         if(!mapStorageCommand(MessageKind::CancelMap,map_request_))return;
         map_request_={};map_cancel_=map_ready_=map_begun_=false;map_started_=false;
@@ -75,6 +93,7 @@ void Application::processMap() {
     map_request_={};map_request_.token=map_token_;map_request_.screen_generation=generation_;
     map_request_.dataset_generation=data_.dataset.generation;map_request_.sample_seq=data_.gps.sample_seq;
     map_request_.latitude=data_.gps.fix.latitude;map_request_.longitude=data_.gps.fix.longitude;
+    map_request_.scale=data_.map.scale;
     if(!mapStorageCommand(MessageKind::RequestMap,map_request_)) {
         map_request_={};map_retry_at_=now+config::MapViewRetryMs;return;
     }

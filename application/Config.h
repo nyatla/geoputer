@@ -37,6 +37,7 @@ inline constexpr uint32_t PlaceSearchIntervalMs = 5000;
 // Independent boundary-map buffers; the 128x128 point cache is untouched.
 inline constexpr size_t MapViewCodeMaxBytes = 96 * 1024;
 inline constexpr unsigned MapViewRowsPerStep = 8;
+inline constexpr uint8_t MapViewScale = 1; // Boot scale; Map Up/Down selects 1, 2, 4 for this session.
 inline constexpr uint32_t MapViewUpdateMs = 5000;
 inline constexpr uint32_t MapViewRetryMs = 1000;
 inline constexpr bool MapHeapDiagnostics = true; // Phase snapshots; no extra map buffers or sampling task.
@@ -50,6 +51,7 @@ inline constexpr uint32_t ExportProgressIntervalMs = 200;
 
 static_assert(IndexReadBufferBytes > 0 && IndexMinChunkBytes > 0 && IndexGroupTargetBytes > 0 && IndexMaxDepth > 0,
               "Index resource limits must be nonzero");
+static_assert(MapViewScale == 1 || MapViewScale == 2 || MapViewScale == 4, "Supported map decimation");
 static_assert(MaxDatasetChunks > 0, "A dataset must allow at least one chunk");
 static_assert(UiColorDepth == 4 || UiColorDepth == 16, "Supported UI frame formats");
 static_assert(SdMaxOpenFiles >= 2, "Map header validation opens two readers");

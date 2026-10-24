@@ -60,7 +60,8 @@ OperationStatus UiModel::updateContent(const UpdateUiContent& command) {
 
 bool UiModel::acceptsMap(const map::FrameInfo& info) const {
     return screen_==ScreenId::Map && mode_==DisplayMode::View && info.request.screen_generation==generation_ &&
-        info.request.dataset_generation==data_.dataset.generation && info.width==map::MaxWidth && info.height==map::MaxHeight &&
+        info.request.dataset_generation==data_.dataset.generation && info.request.scale==data_.map.scale &&
+        map::supportedScale(info.request.scale) && info.width==map::MaxWidth && info.height==map::MaxHeight &&
         std::isfinite(info.meters_per_pixel) && info.meters_per_pixel>0;
 }
 OperationStatus UiModel::beginMapFrame(const map::Transfer& transfer) {
@@ -205,7 +206,11 @@ void UiModel::keyPressed(UiKey key, uint32_t now_ms) {
         }
     }
     if (screen_ == ScreenId::Map) {
-        if(key==UiKey::Escape)action(ActionKind::ChangeScreen);
+        const auto scale=data_.map.scale;
+        if(map::supportedScale(scale) && ((key==UiKey::Up && scale>1) || (key==UiKey::Down && scale<4))) {
+            action(ActionKind::MapScale);
+            action_.map_scale=key==UiKey::Up ? scale/2 : scale*2;
+        } else if(key==UiKey::Escape)action(ActionKind::ChangeScreen);
         return;
     }
     if (screen_ == ScreenId::LivePlace) {

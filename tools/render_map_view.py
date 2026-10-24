@@ -13,21 +13,22 @@ SCENE = r'''
 #include "task/storage/MapBuildJob.h"
 #include "support/MapIndexFixture.h"
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <stdexcept>
 using namespace geoputer;
 void check(bool ok){if(!ok)throw std::runtime_error("map preview contract failed");}
 int main(int argc,char** argv) {
-    if(argc!=3)return 2;
+    if(argc!=4)return 2;
     const char* mode=argv[1];
     test_index::generate(argv[2],"map.glc","names.giswordbook");
     map::Request request{};request.token=1;request.screen_generation=1;request.dataset_generation=1;
-    request.latitude=35.681641;request.longitude=140.027194;
+    request.latitude=35.681641;request.longitude=140.027194;request.scale=std::atoi(argv[3]);
     MapBuildJob job;check(job.start(request));job.loaded(readBoundaryMap(argv[2],"ja",request,0,nullptr));
     for(int n=0;n<20&&!job.complete();++n)job.step();
     check(job.complete() && job.info().error==map::Error::None);
     M5GFX display;UiRenderer renderer(display);check(renderer.begin(previewColorDepth()));
-    UiData data{};data.settings=defaultSettings();data.settings.dataset=1;data.dataset.generation=1;
+    UiData data{};data.settings=defaultSettings();data.settings.dataset=1;data.dataset.generation=1;data.map.scale=request.scale;
     data.storage.card_state=CardState::Mounted;data.storage.rg.state=RgCacheState::Ready;
     data.recording.state=RecordingState::Paused;data.place_state=PlaceState::Ready;
     data.gps.reception=GpsReception::Fix;data.gps.fix={request.latitude,request.longitude,19921000,true};
@@ -39,7 +40,7 @@ int main(int argc,char** argv) {
         request.row=row;check(job.read(request,transfer));check(model.writeMapRows(transfer)==OperationStatus::Ok);
     }
     check(model.commitMapFrame(transfer)==OperationStatus::Ok);
-    if(!std::strcmp(mode,"updating"))data.map.busy=true;
+    if(!std::strcmp(mode,"updating")){data.map.busy=true;data.map.scale=request.scale==4?2:request.scale*2;}
     if(!std::strcmp(mode,"no-fix"))data.map.error=map::Error::NoFix;
     if(!std::strcmp(mode,"read-error"))data.map.error=map::Error::ReadError;
     data.revision=1;check(model.updateContent({DisplayMode::View,1,data,0,ActionResult::None})==OperationStatus::Ok);
@@ -55,6 +56,8 @@ int main(int argc,char** argv) {
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('map',type=Path);parser.add_argument('wordbook',type=Path)
+    parser.add_argument('--scales',type=int,nargs='+',choices=(1,2,4),default=[1])
+    parser.add_argument('--output',type=Path,default=ROOT/'doc/画面・操作/place-view')
     args=parser.parse_args()
     enum_source=(M5GFX/'v1/misc/enum.hpp').read_text()
     renderer_source=(ROOT/'application/task/ui/UiRenderer.cpp').read_text()+(ROOT/'application/task/ui/UiCanvas.h').read_text()
@@ -77,11 +80,13 @@ def main():
             '-I',str(work),'-I',str(ROOT/'tests'),'-I',str(ROOT/'tests/support'),'-I',str(ROOT/'application'),
             '-I',str(ROOT/'third_party/galuchat/include'),'-I',str(M5GFX/'Fonts'),str(work/'scene.cpp'),
             *[str(ROOT/'application'/s) for s in sources],'-o',str(executable)],check=True,timeout=180)
-        output=ROOT/'doc/画面・操作/place-view';output.mkdir(exist_ok=True)
-        for mode in ('ready','updating','no-fix','read-error'):
-            ppm=work/f'{mode}.ppm';ppm.write_bytes(reference_frame(executable,mode,str(data)))
-            with Image.open(ppm) as source:
-                image=source.convert('RGB');image.save(output/f'map-view-{mode}.png')
-                image.resize((960,540),Image.Resampling.NEAREST).save(output/f'map-view-{mode}-preview.png')
-            print(f'PASS: {mode}, indexed and RGB565 renderers match at native 240x135')
+        output=args.output;output.mkdir(parents=True,exist_ok=True)
+        for scale in args.scales:
+            for mode in ('ready','updating','no-fix','read-error'):
+                suffix='' if scale==1 else f'1-{scale}-'
+                ppm=work/f'{scale}-{mode}.ppm';ppm.write_bytes(reference_frame(executable,mode,str(data),str(scale)))
+                with Image.open(ppm) as source:
+                    image=source.convert('RGB');image.save(output/f'map-view-{suffix}{mode}.png')
+                    image.resize((960,540),Image.Resampling.NEAREST).save(output/f'map-view-{suffix}{mode}-preview.png')
+                print(f'PASS: scale=1/{scale} {mode}, indexed and RGB565 renderers match at native 240x135')
 if __name__=='__main__':main()

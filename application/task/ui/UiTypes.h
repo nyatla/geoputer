@@ -14,7 +14,7 @@ enum class DisplayMode : uint8_t { Background, View };
 enum class LogAction : uint8_t { Start, Pause, Resume, Stop };
 struct BatteryStatus { int8_t percent = -1; bool charging = false; bool charge_known = false; };
 
-enum class ActionKind : uint8_t { None, ChangeScreen, SaveSettings, ResetSettings, Storage, Sleep, Wake, Logging, Browse, Dataset, UsbExport, Maintenance, RestartLogger };
+enum class ActionKind : uint8_t { None, ChangeScreen, SaveSettings, ResetSettings, Storage, Sleep, Wake, Logging, Browse, Dataset, UsbExport, Maintenance, RestartLogger, MapScale };
 enum class UsbPage : uint8_t { Menu, WaitEject, Files, Format, Progress, Complete, Error, Busy };
 enum class UsbAction : uint8_t { Begin, Start, Publish, Older, Newer };
 enum class BrowseAction : uint8_t { OpenFile, Older, Newer, Points, Reload, Point, Delete };
@@ -44,6 +44,7 @@ struct UiAction {
     uint32_t browse_index, browse_revision;
     UsbAction usb_action;
     ExportFormat export_format;
+    uint8_t map_scale;
 };
 
 // Fixed-size value copies. No pointers into another task's mutable data.

@@ -28,8 +28,8 @@ if args.compare_stdio:
     shutil.copyfile(root/'tests/performance/baseline/ObservedFileReaderStdio.h',bench/'ObservedFileReaderStdio.h')
 p=work/'application/task/storage/galuchat/DiskIndexedMapReader.cpp'
 s=p.read_text().replace('#include "DiskIndexedMapReader.h"','#include "DiskIndexedMapReader.h"\n#include "../../../benchmark/DecodeProfile.h"')
-s=s.replace('''            auto stream = map_->createRange(start, bytes);''','''            benchmark::DecodeScope decode_scope;
-            auto stream = map_->createRange(start, bytes);''')
+s=s.replace('''            auto stream = map.createRange(start, bytes);''','''            benchmark::DecodeScope decode_scope;
+            auto stream = map.createRange(start, bytes);''')
 s=s.replace('''                galuchat::GaluchatImageDataChunk01Reader::readRectFromBlockRange(''','''                { benchmark::DecodeScope decode_scope;
                 galuchat::GaluchatImageDataChunk01Reader::readRectFromBlockRange(''')
 s=s.replace('''*stream, {int(width), int(height), int(square), number, count, length}, x, y, view);''','''*stream, {int(width), int(height), int(square), number, count, length}, x, y, view); }''')

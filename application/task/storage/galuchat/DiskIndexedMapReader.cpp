@@ -38,6 +38,45 @@ struct Destination {
     }
 };
 
+// Logical dimensions still describe the full-resolution intersection. Only the
+// chosen sample lattice is stored; never fold multiple source codes into one pixel.
+struct DecimatedDestination {
+    int width, height, dx, dy, pitch;
+    unsigned scale;
+    uint32_t* pixels;
+    static void validate(int64_t value) {
+        if (value < 0 || uint64_t(value) > UINT32_MAX)
+            throw std::runtime_error("region code exceeds uint32 cache range");
+    }
+    void set(int x, int y, int64_t value) {
+        validate(value);
+        x += dx; y += dy;
+        if (unsigned(x) % scale || unsigned(y) % scale || !value) return;
+        auto& pixel = pixels[size_t(unsigned(y) / scale) * pitch + unsigned(x) / scale];
+        if (!pixel) pixel = static_cast<uint32_t>(value);
+    }
+    void setSpan(int x, int y, int count, int step_x, int step_y, int64_t value) {
+        validate(value);
+        if (!value || count <= 0) return;
+        x += dx; y += dy;
+        const unsigned along = unsigned(step_x ? x : y);
+        const unsigned across = unsigned(step_x ? y : x);
+        if (across % scale) return;
+        const int direction = step_x ? step_x : step_y;
+        const unsigned remainder = along % scale;
+        const unsigned skip = direction > 0 ? (scale - remainder) % scale : remainder;
+        if (skip >= unsigned(count)) return;
+        x += int(skip) * step_x; y += int(skip) * step_y;
+        auto* pixel = pixels + size_t(unsigned(y) / scale) * pitch + unsigned(x) / scale;
+        const std::ptrdiff_t stride = std::ptrdiff_t(step_y) * pitch + step_x;
+        unsigned selected = 1 + (unsigned(count) - skip - 1) / scale;
+        while (selected) {
+            if (!*pixel) *pixel = static_cast<uint32_t>(value);
+            if (--selected) pixel += stride;
+        }
+    }
+};
+
 // Find the first requested block at or after the group's beginning. This avoids
 // reading groups that fall in the gaps between requested rows of a rectangle.
 bool intersectsBlocks(uint32_t first, uint32_t count, uint64_t columns,
@@ -47,20 +86,18 @@ bool intersectsBlocks(uint32_t first, uint32_t count, uint64_t columns,
     if (column > x1) { ++row; column = x0; }
     return row <= y1 && row * columns + column < uint64_t(first) + count;
 }
-} // namespace
-
-uint32_t DiskIndexedMapReader::value(size_t offset) const { return index_format::get(info_.header.data() + offset); }
-
-void DiskIndexedMapReader::readRect(const galuchat::Rect& target, uint32_t* pixels) const {
-    check(target.width > 0 && target.height > 0 && pixels);
-    std::fill_n(pixels, size_t(target.width) * target.height, 0);
+template<class MakeDestination>
+void readRectangle(const DatasetMapIndex& info, const galuchat::ReaderFactory& map,
+                   const galuchat::ReaderFactory& index_factory, const galuchat::Rect& target,
+                   MakeDestination make_destination) {
+    auto value = [&](size_t offset) { return index_format::get(info.header.data() + offset); };
     const uint64_t map_end = uint64_t(64) + value(index_format::Header::MapIndexBytes);
     check(map_end <= SIZE_MAX);
-    auto index = index_->createRange(0, static_cast<size_t>(map_end));
+    auto index = index_factory.createRange(0, static_cast<size_t>(map_end));
     const auto header = readRecord<Header::Bytes>(*index);
-    check(header == info_.header);
+    check(header == info.header);
     uint64_t previous_end = 0;
-    for (uint32_t i = 0; i < chunkCount(); ++i) {
+    for (uint32_t i = 0; i < value(Header::ChunkCount); ++i) {
         check(uint64_t(index->pos()) + 40 <= map_end);
         const auto record = readRecord<ChunkRecord::Bytes>(*index);
         const auto* p = record.data();
@@ -87,11 +124,11 @@ void DiskIndexedMapReader::readRect(const galuchat::Rect& target, uint32_t* pixe
             previous_end = end;
             continue;
         }
-        Destination view{int(right - left), int(top - bottom), int(left - target.x),
-                         int(bottom - target.y), target.width, pixels};
+        auto view = make_destination(int(right - left), int(top - bottom),
+                                     int(left - target.x), int(bottom - target.y));
         const int x = int(left - west), y = int(bottom - south);
         if (!groups) {
-            auto stream = map_->createRange(start, bytes);
+            auto stream = map.createRange(start, bytes);
             galuchat::GaluchatImageDataChunk01Reader chunk(*stream);
             check(chunk.width == int(width) && chunk.height == int(height)
                   && chunk.square_unit == int(square) && uint64_t(start) + stream->pos() == first);
@@ -112,7 +149,7 @@ void DiskIndexedMapReader::readRect(const galuchat::Rect& target, uint32_t* pixe
                 next_offset += length;
                 if (!intersectsBlocks(number, count, columns, x0, x1, y0, y1)) continue;
                 if (!stream) {
-                    stream = map_->createRange(offset, static_cast<size_t>(end - offset));
+                    stream = map.createRange(offset, static_cast<size_t>(end - offset));
                     stream_base = offset;
                 } else {
                     const uint64_t position = stream_base + stream->pos();
@@ -129,5 +166,32 @@ void DiskIndexedMapReader::readRect(const galuchat::Rect& target, uint32_t* pixe
         previous_end = end;
     }
     check(index->pos() == map_end && previous_end == value(index_format::Header::MapBytes));
+}
+} // namespace
+
+uint32_t DiskIndexedMapReader::value(size_t offset) const { return index_format::get(info_.header.data() + offset); }
+
+void DiskIndexedMapReader::readRect(const galuchat::Rect& target, uint32_t* pixels) const {
+    if (target.width <= 0 || target.height <= 0 || !pixels ||
+        uint64_t(target.width) * target.height > SIZE_MAX / sizeof(uint32_t))
+        throw std::invalid_argument("invalid map rectangle");
+    std::fill_n(pixels, size_t(target.width) * target.height, 0);
+    readRectangle(info_, *map_, *index_, target, [&](int width, int height, int dx, int dy) {
+        return Destination{width, height, dx, dy, target.width, pixels};
+    });
+}
+
+void DiskIndexedMapReader::readRectDecimated(const galuchat::Rect& target, unsigned scale, uint32_t* pixels) const {
+    if (scale == 1) { readRect(target, pixels); return; }
+    if ((scale != 2 && scale != 4) || target.width <= 0 || target.height <= 0 || !pixels)
+        throw std::invalid_argument("invalid decimated map rectangle");
+    const int width = 1 + (target.width - 1) / int(scale);
+    const int height = 1 + (target.height - 1) / int(scale);
+    if (uint64_t(width) * height > SIZE_MAX / sizeof(uint32_t))
+        throw std::invalid_argument("decimated map rectangle too large");
+    std::fill_n(pixels, size_t(width) * height, 0);
+    readRectangle(info_, *map_, *index_, target, [&](int w, int h, int dx, int dy) {
+        return DecimatedDestination{w, h, dx, dy, width, scale, pixels};
+    });
 }
 } // namespace geoputer
