@@ -14,6 +14,14 @@ public:
     void draw(const UiModel& model);
 
 private:
+    void drawMap(const UiModel& model);
+    void drawScreenGuide(ScreenId screen);
+    void drawBoot(const UiModel& model, const UiSnapshot& content, const Settings& settings);
+    void drawLivePlace(const UiModel& model, const UiSnapshot& content, const Settings& settings);
+    void drawLogBrowser(const UiModel& model, const UiSnapshot& content, const Settings& settings);
+    void drawGpsLogger(const UiModel& model, const UiSnapshot& content, const Settings& settings);
+    void drawSettings(const UiModel& model, const UiSnapshot& content, const Settings& settings);
+
     void text(int x, int y, const char* value, uint16_t color = TFT_WHITE);
     void largeText(int x, int y, const char* value, uint16_t color = TFT_WHITE);
     void speedText(const char* value);

@@ -23,7 +23,7 @@ bool UsbStorage::begin(SPIClass& spi) {
     msc_ = &registerInterface();
     msc_->vendorID("GeoPuter"); msc_->productID("SD Card"); msc_->productRevision("1.0");
     msc_->onRead(read); msc_->onWrite(write); msc_->onStartStop(startStop);
-    drive_ = sdcard_init(12, &spi, 4000000);
+    drive_ = sdcard_init(12, &spi, config::SdSpiHz);
     if (drive_ == 0xff || disk_initialize(drive_) != 0 || !(sectors_ = sdcard_num_sectors(drive_))) {
         error_ = true; return false;
     }
@@ -66,7 +66,7 @@ bool UsbStorage::publish() {
     // also releases that registration, so another export can mount /sd again.
     if(ok) {
         if(drive_!=0xff)sdcard_uninit(drive_);
-        drive_=sdcard_init(12,spi_,4000000);
+        drive_=sdcard_init(12,spi_,config::SdSpiHz);
         ok=drive_!=0xff && disk_initialize(drive_)==0 && disk_ioctl(drive_,CTRL_SYNC,nullptr)==RES_OK;
     }
     if(ok) {

@@ -1,4 +1,5 @@
 #include "DiskIndexedMapReader.h"
+#include "../dataset/DatasetIndexFormat.h"
 #include <algorithm>
 #include <array>
 #include <limits>
@@ -6,9 +7,8 @@
 
 namespace geoputer {
 namespace {
-uint32_t get(const uint8_t* p) {
-    return uint32_t(p[0]) | uint32_t(p[1]) << 8 | uint32_t(p[2]) << 16 | uint32_t(p[3]) << 24;
-}
+using namespace index_format;
+
 void check(bool value) {
     if (!value) throw std::runtime_error("Map index changed or invalid; revalidate dataset");
 }
@@ -34,32 +34,30 @@ bool intersectsBlocks(uint32_t first, uint32_t count, uint64_t columns,
 }
 } // namespace
 
-uint32_t DiskIndexedMapReader::value(size_t offset) const { return get(info_.header.data() + offset); }
+uint32_t DiskIndexedMapReader::value(size_t offset) const { return index_format::get(info_.header.data() + offset); }
 
 void DiskIndexedMapReader::readRect(const galuchat::Rect& target, uint32_t* pixels) const {
     check(target.width > 0 && target.height > 0 && pixels);
     std::fill_n(pixels, size_t(target.width) * target.height, 0);
-    const uint64_t map_end = uint64_t(64) + value(60);
+    const uint64_t map_end = uint64_t(64) + value(index_format::Header::MapIndexBytes);
     check(map_end <= SIZE_MAX);
     auto index = index_->createRange(0, static_cast<size_t>(map_end));
-    std::array<uint8_t, 64> header{};
-    for (auto& b : header) b = index->readByte();
+    const auto header = readRecord<Header::Bytes>(*index);
     check(header == info_.header);
     uint64_t previous_end = 0;
     for (uint32_t i = 0; i < chunkCount(); ++i) {
         check(uint64_t(index->pos()) + 40 <= map_end);
-        std::array<uint8_t, 40> record{};
-        for (auto& b : record) b = index->readByte();
+        const auto record = readRecord<ChunkRecord::Bytes>(*index);
         const auto* p = record.data();
-        const int64_t west = static_cast<int32_t>(get(p)), south = static_cast<int32_t>(get(p + 4));
-        const uint32_t width = get(p + 8), height = get(p + 12), square = get(p + 16);
-        const uint32_t start = get(p + 20), bytes = get(p + 24), first = get(p + 28);
-        const uint32_t blocks = get(p + 32), groups = get(p + 36);
+        const int64_t west = static_cast<int32_t>(get(p)), south = static_cast<int32_t>(get(p + ChunkRecord::South));
+        const uint32_t width = get(p + ChunkRecord::Width), height = get(p + ChunkRecord::Height), square = get(p + ChunkRecord::SquareUnit);
+        const uint32_t start = get(p + ChunkRecord::ChunkOffset), bytes = get(p + ChunkRecord::ChunkBytes), first = get(p + ChunkRecord::FirstBlockOffset);
+        const uint32_t blocks = get(p + ChunkRecord::BlockCount), groups = get(p + ChunkRecord::GroupCount);
         const uint64_t end = uint64_t(start) + bytes;
         check(width > 0 && height > 0 && width <= INT32_MAX && height <= INT32_MAX
               && square && square <= uint32_t(1) << 30 && !(square & (square - 1)));
         check(west + width <= INT32_MAX && south + height <= INT32_MAX && bytes
-              && end <= value(20) && first > start && first < end);
+              && end <= value(index_format::Header::MapBytes) && first > start && first < end);
         check(start >= previous_end && (!i || start == previous_end));
         const uint64_t columns = (uint64_t(width) + square - 1) / square;
         check(uint64_t(blocks) == columns * ((uint64_t(height) + square - 1) / square));
@@ -90,10 +88,9 @@ void DiskIndexedMapReader::readRect(const galuchat::Rect& target, uint32_t* pixe
             std::unique_ptr<galuchat::ByteReader> stream;
             uint64_t stream_base = 0;
             for (uint32_t g = 0; g < groups; ++g) {
-                std::array<uint8_t, 16> entry{};
-                for (auto& b : entry) b = index->readByte();
-                const uint32_t number = get(entry.data()), count = get(entry.data() + 4);
-                const uint32_t offset = get(entry.data() + 8), length = get(entry.data() + 12);
+                const auto entry = readRecord<Group::Bytes>(*index);
+                const uint32_t number = get(entry.data()), count = get(entry.data() + Group::BlockCount);
+                const uint32_t offset = get(entry.data() + Group::DataOffset), length = get(entry.data() + Group::DataBytes);
                 check(number == next_block && count && uint64_t(number) + count <= blocks
                       && offset == next_offset && length && uint64_t(offset) + length <= end);
                 next_block += count;
@@ -116,6 +113,6 @@ void DiskIndexedMapReader::readRect(const galuchat::Rect& target, uint32_t* pixe
         }
         previous_end = end;
     }
-    check(index->pos() == map_end && previous_end == value(20));
+    check(index->pos() == map_end && previous_end == value(index_format::Header::MapBytes));
 }
 } // namespace geoputer

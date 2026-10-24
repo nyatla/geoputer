@@ -47,6 +47,10 @@ struct DatasetView {
 inline bool datasetLogStopped(const RecordingSnapshot& recording,const LogSnapshot& log) {
     return loggerStopped(recording, log);
 }
+inline bool datasetRecoverable(DatasetError error) {
+    return error==DatasetError::None || error==DatasetError::NotStopped || error==DatasetError::SaveFailed || error==DatasetError::IndexFailed || error==DatasetError::IndexRestoreFailed;
+}
+
 inline PlaceState datasetErrorState(DatasetError error) {
     switch(error) {
         case DatasetError::Missing:return PlaceState::DatasetMissing;

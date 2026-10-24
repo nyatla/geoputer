@@ -20,6 +20,7 @@ with tempfile.TemporaryDirectory(prefix="geoputer-native-") as directory:
         str(root / "application/task/storage/log/LogReader.cpp"),
         str(root / "application/task/storage/log/LogWriter.cpp"),
         str(root / "tests/gps_tests.cpp"),
+        str(root / "tests/map_tests.cpp"),
         str(root / "tests/settings_tests.cpp"),
         str(root / "tests/settings_language_tests.cpp"),
         str(root / "tests/dialog_tests.cpp"),

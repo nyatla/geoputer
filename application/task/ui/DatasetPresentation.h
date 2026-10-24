@@ -82,9 +82,6 @@ inline void datasetSingleLine(const char* text,bool ja,char* out,size_t capacity
 inline unsigned datasetDetailRows(const DatasetView& view,bool ja) {
     char unused[1];return 1+datasetTextLines(view.info.description,ja,UINT32_MAX,unused,sizeof(unused))+7;
 }
-inline bool datasetRecoverable(DatasetError error) {
-    return error==DatasetError::None || error==DatasetError::NotStopped || error==DatasetError::SaveFailed || error==DatasetError::IndexFailed || error==DatasetError::IndexRestoreFailed;
-}
 inline bool datasetDetailLine(const DatasetView& view,unsigned row,bool ja,char* out,size_t size) {
     char unused[1];const auto lines=datasetTextLines(view.info.description,ja,UINT32_MAX,unused,sizeof(unused));
     if(!row) {datasetSingleLine(view.info.title,ja,out,size);return false;}

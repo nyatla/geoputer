@@ -89,6 +89,7 @@ bool Application::setScreen(ScreenId target, uint32_t action_id, ActionResult ac
     const uint32_t sent_revision = data_.revision;
     SyncReturn result{};
     if (!callUi(request, result) || result.status != OperationStatus::Ok) return false;
+    if(target!=screen_) {map_started_=false;map_retry_at_=0;}
     screen_ = target;
     mode_ = DisplayMode::View;
     ++generation_;
@@ -96,13 +97,14 @@ bool Application::setScreen(ScreenId target, uint32_t action_id, ActionResult ac
     ui_data_dirty_ = data_.revision != sent_revision;
     if (action_id) last_processed_action_ = action_id;
     Console.printf("[APP] screen=%s generation=%lu action=%lu stack_free=%u\n",
-                  target == ScreenId::LivePlace ? "LivePlace" : target == ScreenId::Boot ? "Boot" : target==ScreenId::Logs?"Logs":target==ScreenId::LogDetail?"LogDetail":target==ScreenId::LogPoint?"LogPoint":target==ScreenId::GpsLogger?"GpsLogger":target==ScreenId::UsbStorage?"UsbStorage":"Settings",
+                  target==ScreenId::Map ? "Map" : target == ScreenId::LivePlace ? "LivePlace" : target == ScreenId::Boot ? "Boot" : target==ScreenId::Logs?"Logs":target==ScreenId::LogDetail?"LogDetail":target==ScreenId::LogPoint?"LogPoint":target==ScreenId::GpsLogger?"GpsLogger":target==ScreenId::UsbStorage?"UsbStorage":"Settings",
                   static_cast<unsigned long>(generation_), static_cast<unsigned long>(action_id),
                   static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)));
     return true;
 }
 
 void Application::handleNotification(const AppNotification& event) {
+    if(event.source==TaskId::Storage && event.kind==MessageKind::MapCompleted) {completeMap(event.payload.map);return;}
     if(event.source==TaskId::Storage && event.kind==MessageKind::DatasetProgress) {
         if(dataset_applying_ && dataset_waiting_ && event.payload.index_progress.token==dataset_waiting_) {
             data_.datasets.progress=event.payload.index_progress;++data_.datasets.revision;++data_.revision;ui_data_dirty_=true;
@@ -696,6 +698,7 @@ void Application::runOnce() {
     advanceBoot();
     processDatasetCheck();
     processBrowser();
+    processMap();
     requestPlace();
     if (ui_data_dirty_) {
         if (!publishUiContent()) vTaskDelay(pdMS_TO_TICKS(10));
@@ -719,6 +722,7 @@ void Application::runOnce() {
         const auto remaining = place_flow_.waitMs(taskTimeMs(), data_.gps.sample_seq);
         if (remaining != UINT32_MAX) wait = pdMS_TO_TICKS(remaining ? remaining : 50);
     }
+    if(screen_==ScreenId::Map || map_request_.token) {if(wait==portMAX_DELAY || wait>pdMS_TO_TICKS(20))wait=pdMS_TO_TICKS(20);}
     if (data_.recording.state != RecordingState::Stopped || log_pending_ || log_control_.action_id) {
         const TickType_t log_wait = pdMS_TO_TICKS(100);
         if (wait == portMAX_DELAY || wait > log_wait) wait = log_wait;

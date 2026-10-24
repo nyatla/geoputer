@@ -72,7 +72,7 @@ bool Application::operateDataset(const UiAction& action) {
             if(!request.number || request.number>99 || view.rows[action.browse_index].error!=DatasetError::None)return false;
             return requestDataset(request);
         case DatasetAction::Language:case DatasetAction::Apply:
-            if(!view.detail || (view.error!=DatasetError::None && view.error!=DatasetError::NotStopped && view.error!=DatasetError::SaveFailed && view.error!=DatasetError::IndexFailed && view.error!=DatasetError::IndexRestoreFailed)) return false;
+            if(!view.detail || !datasetRecoverable(view.error)) return false;
             request.number=view.number;
             std::snprintf(request.language,sizeof(request.language),"%s",view.info.language);
             if(!request.language[0]) return false;

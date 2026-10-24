@@ -1,4 +1,5 @@
 #include "DatasetIndex.h"
+#include "DatasetIndexFormat.h"
 #include "../log/LogFile.h"
 #include "../galuchat/ReadTiming.h"
 #include <galuchat/wgsmap3_reader.hpp>
@@ -16,13 +17,11 @@
 
 namespace geoputer {
 namespace {
+using namespace index_format;
 using galuchat::ByteReader;
 void require(bool value) { if (!value) throw std::runtime_error("Invalid dataset index or source"); }
 uint32_t u32(uint64_t value) { require(value<=UINT32_MAX); return static_cast<uint32_t>(value); }
-uint32_t get(const uint8_t* p) { return uint32_t(p[0]) | uint32_t(p[1])<<8 | uint32_t(p[2])<<16 | uint32_t(p[3])<<24; }
-uint16_t get16(const uint8_t* p) { return uint16_t(p[0]) | uint16_t(p[1])<<8; }
-void put(uint8_t* p,uint32_t v) { for (unsigned i=0;i<4;++i) p[i]=static_cast<uint8_t>(v>>(8*i)); }
-void put16(uint8_t* p,uint16_t v) { p[0]=static_cast<uint8_t>(v); p[1]=static_cast<uint8_t>(v>>8); }
+
 uint32_t crcUpdate(uint32_t crc,const uint8_t* data,size_t size) {
     for (size_t i=0;i<size;++i) {
         crc^=data[i];
@@ -248,7 +247,7 @@ void mapIndex(Output& out,Source& source,std::array<uint8_t,64>& header,Progress
     galuchat::detail::LimitedReader payload(source,glch.bytes);
     require(galuchat::detail::readBStrAscii(payload,16)=="WGSMapSet/3");
     const auto unit_x=u32(payload.readMbUInt()),unit_y=u32(payload.readMbUInt());
-    require(unit_x && unit_y && unit_x<=INT32_MAX && unit_y<=INT32_MAX); put(header.data()+40,unit_x); put(header.data()+44,unit_y);
+    require(unit_x && unit_y && unit_x<=INT32_MAX && unit_y<=INT32_MAX); put(header.data() + Header::UnitInvX,unit_x); put(header.data() + Header::UnitInvY,unit_y);
     const auto metadata=u32(payload.readMbUInt()); require(metadata<=payload.remaining()); payload.skipInByte(metadata);
     const auto count=u32(payload.readMbUInt());
     require(count && count<=config::MaxDatasetChunks && count<=payload.remaining()/2);
@@ -259,7 +258,7 @@ void mapIndex(Output& out,Source& source,std::array<uint8_t,64>& header,Progress
         require(x>=INT32_MIN && x<=INT32_MAX && y>=INT32_MIN && y<=INT32_MAX);
         origins.push_back({static_cast<int32_t>(x),static_cast<int32_t>(y)});
     }
-    require(payload.atEnd()); put(header.data()+36,count);
+    require(payload.atEnd()); put(header.data() + Header::ChunkCount,count);
     const auto next=u32(source.pos());
     if (tag(source)=="LAYO") { const auto bytes=source.number(); source.skipInByte(bytes); }
     else source.seek(next);
@@ -270,17 +269,17 @@ void mapIndex(Output& out,Source& source,std::array<uint8_t,64>& header,Progress
         require(int64_t(origins[i].x)+image.width<=INT32_MAX && int64_t(origins[i].y)+image.height<=INT32_MAX);
         const auto first=u32(source.pos());
         const auto blocks=u32(uint64_t(image.hus)*image.vus);
-        std::array<uint8_t,40> record{};
-        put(record.data(),static_cast<uint32_t>(origins[i].x)); put(record.data()+4,static_cast<uint32_t>(origins[i].y));
-        put(record.data()+8,image.width); put(record.data()+12,image.height); put(record.data()+16,image.square_unit);
-        put(record.data()+20,c.start); put(record.data()+24,c.end-c.start); put(record.data()+28,first); put(record.data()+32,blocks);
+        std::array<uint8_t,ChunkRecord::Bytes> record{};
+        put(record.data(),static_cast<uint32_t>(origins[i].x)); put(record.data() + ChunkRecord::South,static_cast<uint32_t>(origins[i].y));
+        put(record.data() + ChunkRecord::Width,image.width); put(record.data() + ChunkRecord::Height,image.height); put(record.data() + ChunkRecord::SquareUnit,image.square_unit);
+        put(record.data() + ChunkRecord::ChunkOffset,c.start); put(record.data() + ChunkRecord::ChunkBytes,c.end-c.start); put(record.data() + ChunkRecord::FirstBlockOffset,first); put(record.data() + ChunkRecord::BlockCount,blocks);
         const auto record_offset=out.pos(); out.placeholder(record);
         uint32_t groups=0,group_first=0,group_offset=first,group_bytes=0,group_count=0;
         const bool indexed=c.end-c.start>=config::IndexMinChunkBytes;
         auto emit=[&]() {
-            std::array<uint8_t,16> group{};
-            put(group.data(),group_first); put(group.data()+4,group_count);
-            put(group.data()+8,group_offset); put(group.data()+12,group_bytes); out.write(group);
+            std::array<uint8_t,Group::Bytes> group{};
+            put(group.data(),group_first); put(group.data() + Group::BlockCount,group_count);
+            put(group.data() + Group::DataOffset,group_offset); put(group.data() + Group::DataBytes,group_bytes); out.write(group);
             ++groups; group_first+=group_count; group_offset=u32(uint64_t(group_offset)+group_bytes); group_count=group_bytes=0;
         };
         image.visitBlockPositions([&](size_t index,size_t relative,size_t bytes) {
@@ -294,9 +293,9 @@ void mapIndex(Output& out,Source& source,std::array<uint8_t,64>& header,Progress
         require(source.pos()==c.end);
         if (indexed && group_count) emit();
         if (indexed) require(group_first==blocks && group_offset==c.end);
-        const auto end=out.pos(); put(record.data()+36,groups); out.seek(record_offset); out.write(record); out.seek(end);
+        const auto end=out.pos(); put(record.data() + ChunkRecord::GroupCount,groups); out.seek(record_offset); out.write(record); out.seek(end);
     }
-    require(source.atEnd()); put(header.data()+60,out.pos()-begin);
+    require(source.atEnd()); put(header.data() + Header::MapIndexBytes,out.pos()-begin);
 }
 // Skips a complete TI00 node, preserving bit alignment. The depth bound limits
 // recursion even when a PrefixContainer uses payload_bits=0.
@@ -321,15 +320,15 @@ void wordbookIndex(Output& out,Source& source,const DatasetMetadata& metadata,co
     require(source.atEnd()); source.seek(chunks[0].data);
     require(galuchat::detail::readBStrAscii(source,16)=="GisWordBook/0");
     const auto gw_metadata=source.number(); require(uint64_t(source.pos())+gw_metadata==chunks[0].end);
-    std::array<uint8_t,128> record{};
+    std::array<uint8_t,Wordbook::Bytes> record{};
     require(!metadata.language.empty() && metadata.language.size()<32);
     for (unsigned char c:metadata.language) require(c>=0x21 && c<0x7f);
     std::memcpy(record.data(),metadata.language.data(),metadata.language.size());
-    setStamp(record.data()+32,metadata.wordbook,stamp);
-    put(record.data()+52,chunks[3].data); put(record.data()+56,chunks[3].bytes);
-    put(record.data()+60,chunks[2].data); put(record.data()+64,chunks[2].bytes);
-    put(record.data()+68,chunks[1].data); put(record.data()+72,chunks[1].bytes);
-    put16(record.data()+104,16); put16(record.data()+106,8); put16(record.data()+108,16); put16(record.data()+110,128);
+    setStamp(record.data() + Wordbook::NameCrc32,metadata.wordbook,stamp);
+    put(record.data() + Wordbook::TiDataOffset,chunks[3].data); put(record.data() + Wordbook::TiDataBytes,chunks[3].bytes);
+    put(record.data() + Wordbook::TtDataOffset,chunks[2].data); put(record.data() + Wordbook::TtDataBytes,chunks[2].bytes);
+    put(record.data() + Wordbook::TmDataOffset,chunks[1].data); put(record.data() + Wordbook::TmDataBytes,chunks[1].bytes);
+    put16(record.data() + Wordbook::TiRecordBytes,16); put16(record.data() + Wordbook::TtRecordBytes,8); put16(record.data() + Wordbook::TmRecordBytes,16); put16(record.data() + Wordbook::HeaderBytes,128);
     const auto start=out.pos(); out.placeholder(record);
     // TI00 roots are bit aligned; pos*8-bitOffset identifies the next unread bit.
     source.seek(chunks[3].data);
@@ -337,14 +336,14 @@ void wordbookIndex(Output& out,Source& source,const DatasetMetadata& metadata,co
     const auto depth=u32(ti.readMbUInt()),records=u32(ti.readMbUInt()),bits=u32(ti.readMbUInt());
     const auto roots=u32(ti.readMbUInt()),stream=u32(ti.readMbUInt());
     require(depth>0 && depth<=config::IndexMaxDepth && records && bits>0 && bits<=31 && roots>0 && roots<=records && stream==ti.remaining());
-    put(record.data()+76,records); put16(record.data()+88,depth); record[90]=static_cast<uint8_t>(bits); put(record.data()+92,roots);
+    put(record.data() + Wordbook::RecordCount,records); put16(record.data() + Wordbook::Depth,depth); record[Wordbook::CodeBits]=static_cast<uint8_t>(bits); put(record.data() + Wordbook::RootCount,roots);
     uint32_t first_index=0;
     for (uint32_t i=0;i<roots;++i) {
         const auto position=(uint64_t(chunks[3].data)+ti.pos())*8-ti.bitOffset();
         if(progress)progress->report(IndexPhase::TI,i,roots,metadata.language);
         const auto leaves=indexNode(ti,0,depth,bits); require(leaves<=records-first_index);
-        std::array<uint8_t,16> root{}; put(root.data(),first_index); put(root.data()+4,leaves);
-        put(root.data()+8,u32(position/8)); root[12]=static_cast<uint8_t>(position%8); out.write(root); first_index+=leaves;
+        std::array<uint8_t,TiRoot::Bytes> root{}; put(root.data(),first_index); put(root.data() + TiRoot::RecordCount,leaves);
+        put(root.data() + TiRoot::DataOffset,u32(position/8)); root[TiRoot::StartBit]=static_cast<uint8_t>(position%8); out.write(root); first_index+=leaves;
     }
     require(first_index==records);
     if (ti.bitOffset()) require(ti.readBitsAsInt32(ti.bitOffset())==0);
@@ -354,14 +353,14 @@ void wordbookIndex(Output& out,Source& source,const DatasetMetadata& metadata,co
     galuchat::detail::LimitedReader tt(source,chunks[2].bytes);
     const auto components=u32(tt.readMbUInt()),page_size=u32(tt.readMbUInt()),pages=u32(tt.readMbUInt()),token_bits=u32(tt.readMbUInt());
     require(components && page_size && pages && pages<=components && token_bits>0 && token_bits<=16 && uint64_t(components)<=(uint64_t(1)<<bits));
-    put(record.data()+80,components); record[91]=static_cast<uint8_t>(token_bits); put(record.data()+96,pages);
+    put(record.data() + Wordbook::ComponentCount,components); record[Wordbook::TokenBits]=static_cast<uint8_t>(token_bits); put(record.data() + Wordbook::TextPageCount,pages);
     uint32_t first_code=0,previous_tokens=0;
     for (uint32_t i=0;i<pages;++i) {
         if(progress)progress->report(IndexPhase::TT,i,pages,metadata.language);
         const auto position=u32(source.pos()); require(tt.readByte()==0);
         const auto tokens=u32(tt.readMbUInt()),count=u32(tt.readMbUInt()),bytes=u32(tt.readMbUInt());
         require(tokens>=previous_tokens && count>0 && count<=page_size && count<=components-first_code && bytes>0 && bytes<=tt.remaining());
-        std::array<uint8_t,8> page{}; put(page.data(),first_code); put(page.data()+4,position); out.write(page);
+        std::array<uint8_t,TtPage::Bytes> page{}; put(page.data(),first_code); put(page.data() + TtPage::DataOffset,position); out.write(page);
         tt.skipInByte(bytes); first_code+=count; previous_tokens=tokens;
     }
     require(first_code==components && tt.atEnd());
@@ -370,18 +369,18 @@ void wordbookIndex(Output& out,Source& source,const DatasetMetadata& metadata,co
     galuchat::detail::LimitedReader tm(source,chunks[1].bytes);
     const auto tokens=u32(tm.readMbUInt()),token_pages=u32(tm.readMbUInt());
     require(tokens && token_pages && token_pages<=tokens && uint64_t(tokens)<=(uint64_t(1)<<token_bits));
-    put(record.data()+84,tokens); put(record.data()+100,token_pages);
+    put(record.data() + Wordbook::TokenCount,tokens); put(record.data() + Wordbook::TokenPageCount,token_pages);
     uint32_t first_token=0,previous_bytes=0;
     for (uint32_t i=0;i<token_pages;++i) {
         if(progress)progress->report(IndexPhase::TM,i,token_pages,metadata.language);
         require(tm.readByte()==0);
         const auto bytes=u32(tm.readMbUInt()),count=u32(tm.readMbUInt()),stream_bytes=u32(tm.readMbUInt());
         require(bytes>0 && bytes>=previous_bytes && count>0 && count<=tokens-first_token && uint64_t(bytes)*count==stream_bytes && stream_bytes<=tm.remaining());
-        std::array<uint8_t,16> page{}; put(page.data(),first_token); put(page.data()+4,count); put(page.data()+8,bytes); put(page.data()+12,u32(source.pos())); out.write(page);
+        std::array<uint8_t,TmPage::Bytes> page{}; put(page.data(),first_token); put(page.data() + TmPage::TokenCount,count); put(page.data() + TmPage::TokenBytes,bytes); put(page.data() + TmPage::DataOffset,u32(source.pos())); out.write(page);
         tm.skipInByte(stream_bytes); first_token+=count; previous_bytes=bytes;
     }
     require(first_token==tokens && tm.atEnd());
-    const auto end=out.pos(); put(record.data()+48,end-start); out.seek(start); out.write(record); out.seek(end);
+    const auto end=out.pos(); put(record.data() + Wordbook::SectionBytes,end-start); out.seek(start); out.write(record); out.seek(end);
 }
 struct BookSource {std::string language,name;Stamp stamp;};
 std::vector<BookSource> bookSources(uint8_t drive,const std::string& directory,
@@ -419,36 +418,31 @@ void generatePlanned(uint8_t drive,const std::string& path,const std::string& di
     std::unique_ptr<Source> old;
     if(reuse.use_map || std::any_of(reuse.books.begin(),reuse.books.end(),[](const auto& b){return b.section_offset!=0;}))
         old=std::make_unique<Source>(drive,reuse.path,observer);
-    std::array<uint8_t,64> header{};std::memcpy(header.data(),"RGPMIDX",8);
-    put16(header.data()+8,1);put16(header.data()+10,64);put16(header.data()+12,40);put16(header.data()+14,16);
-    put(header.data()+20,map_stamp.bytes);put(header.data()+24,map_stamp.mtime);
-    put(header.data()+28,nameCrc(metadata.map));put(header.data()+32,map_stamp.header_crc);
-    put(header.data()+48,config::IndexMinChunkBytes);put(header.data()+52,config::IndexGroupTargetBytes);put(header.data()+56,u32(books.size()));
+    std::array<uint8_t,Header::Bytes> header{};std::memcpy(header.data(),"RGPMIDX",8);
+    put16(header.data() + Header::Version,1);put16(header.data() + Header::HeaderBytes,64);put16(header.data() + Header::ChunkRecordBytes,40);put16(header.data() + Header::GroupRecordBytes,16);
+    put(header.data() + Header::MapBytes,map_stamp.bytes);put(header.data() + Header::MapFatMtime,map_stamp.mtime);
+    put(header.data() + Header::MapNameCrc32,nameCrc(metadata.map));put(header.data() + Header::MapHeaderCrc32,map_stamp.header_crc);
+    put(header.data() + Header::IndexedChunkMinBytes,config::IndexMinChunkBytes);put(header.data() + Header::GroupTargetBytes,config::IndexGroupTargetBytes);put(header.data() + Header::WordbookCount,u32(books.size()));
     out.placeholder(header);
     if(progress)progress->report(IndexPhase::Map,0,1);
     if(reuse.use_map) {
         for(size_t offset:{size_t(36),size_t(40),size_t(44),size_t(60)})put(header.data()+offset,get(reuse.map.header.data()+offset));
-        copyIndex(out,*old,64,get(header.data()+60));
+        copyIndex(out,*old,64,get(header.data() + Header::MapIndexBytes));
     } else {Source source(drive,directory+"/"+metadata.map,observer,true);source.setProgress(progress);mapIndex(out,source,header,progress);}
     if(progress)progress->report(IndexPhase::Map,1,1);
     for(size_t i=0;i<books.size();++i) {
         const auto& book=books[i];
         if(i<reuse.books.size() && reuse.books[i].section_offset) {
             if(progress)progress->report(IndexPhase::TM,1,1,book.language);
-            copyIndex(out,*old,reuse.books[i].section_offset,get(reuse.books[i].header.data()+48));
+            copyIndex(out,*old,reuse.books[i].section_offset,get(reuse.books[i].header.data() + Header::IndexedChunkMinBytes));
         } else {
             DatasetMetadata selected;selected.language=book.language;selected.wordbook=book.name;
             Source source(drive,directory+"/"+book.name,observer);wordbookIndex(out,source,selected,book.stamp,progress);
             if(progress)progress->report(IndexPhase::TM,1,1,book.language);
         }
     }
-    put(header.data()+16,u32(uint64_t(out.pos())+4));out.seek(0);out.write(header);
-    out.seek(get(header.data()+16)-4);out.finish();
-}
-// Kept for the standalone generation benchmark; product builds use the planned path.
-[[maybe_unused]] void generate(uint8_t drive,const std::string& path,const std::string& directory,const DatasetMetadata& metadata,
-              const Stamp& map_stamp,const Stamp&,StorageObserver* observer) {
-    generatePlanned(drive,path,directory,metadata,map_stamp,bookSources(drive,directory,metadata,observer),observer,{});
+    put(header.data() + Header::FileBytes,u32(uint64_t(out.pos())+4));out.seek(0);out.write(header);
+    out.seek(get(header.data() + Header::FileBytes)-4);out.finish();
 }
 // A forward-only validator: fixed-size records, bounded counters, no table arrays.
 class Validation {
@@ -457,48 +451,48 @@ public:
     template<size_t N> std::array<uint8_t,N> read() {
         std::array<uint8_t,N> bytes{};
         require(uint64_t(source_.pos())+N<=source_.length()-4);
-        for (auto& byte:bytes) byte=source_.readByte();
+        bytes=readRecord<N>(source_);
         crc_=crcUpdate(crc_,bytes.data(),N); return bytes;
     }
     void run(DatasetMapIndex* summary=nullptr,DatasetWordBookIndex* book=nullptr,const std::string& selected_language="") {
         if (book) *book={};
         require(source_.length()>=68);
-        const auto header=read<64>(); const auto* h=header.data();
-        require(std::memcmp(h,"RGPMIDX",8)==0 && get16(h+8)==1 && get16(h+10)==64 && get16(h+12)==40 && get16(h+14)==16);
-        require(get(h+16)==source_.length() && get(h+20)>0 && get(h+36)>0 && get(h+36)<=config::MaxDatasetChunks && get(h+40) && get(h+44));
-        require(get(h+48)==config::IndexMinChunkBytes && get(h+52)==config::IndexGroupTargetBytes && get(h+56)>0);
-        const auto map_end=uint64_t(64)+get(h+60); require(map_end<=source_.length()-4);
+        const auto header=read<Header::Bytes>(); const auto* h=header.data();
+        require(std::memcmp(h,"RGPMIDX",8)==0 && get16(h + Header::Version)==1 && get16(h + Header::HeaderBytes)==64 && get16(h + Header::ChunkRecordBytes)==40 && get16(h + Header::GroupRecordBytes)==16);
+        require(get(h + Header::FileBytes)==source_.length() && get(h + Header::MapBytes)>0 && get(h + Header::ChunkCount)>0 && get(h + Header::ChunkCount)<=config::MaxDatasetChunks && get(h + Header::UnitInvX) && get(h + Header::UnitInvY));
+        require(get(h + Header::IndexedChunkMinBytes)==config::IndexMinChunkBytes && get(h + Header::GroupTargetBytes)==config::IndexGroupTargetBytes && get(h + Header::WordbookCount)>0);
+        const auto map_end=uint64_t(64)+get(h + Header::MapIndexBytes); require(map_end<=source_.length()-4);
         if (summary) summary->header=header;
         int64_t west=INT32_MAX,south=INT32_MAX,east=INT32_MIN,north=INT32_MIN;
         uint64_t previous_chunk_end=0;
-        for (uint32_t i=0;i<get(h+36);++i) {
-            const auto record=read<40>(); const auto* c=record.data();
-            const auto width=get(c+8),height=get(c+12),square=get(c+16),start=get(c+20),bytes=get(c+24),first=get(c+28),blocks=get(c+32),groups=get(c+36);
+        for (uint32_t i=0;i<get(h + Header::ChunkCount);++i) {
+            const auto record=read<ChunkRecord::Bytes>(); const auto* c=record.data();
+            const auto width=get(c + ChunkRecord::Width),height=get(c + ChunkRecord::Height),square=get(c + ChunkRecord::SquareUnit),start=get(c + ChunkRecord::ChunkOffset),bytes=get(c + ChunkRecord::ChunkBytes),first=get(c + ChunkRecord::FirstBlockOffset),blocks=get(c + ChunkRecord::BlockCount),groups=get(c + ChunkRecord::GroupCount);
             const auto end=uint64_t(start)+bytes;
-            const int64_t x=static_cast<int32_t>(get(c)),y=static_cast<int32_t>(get(c+4));
+            const int64_t x=static_cast<int32_t>(get(c)),y=static_cast<int32_t>(get(c + ChunkRecord::South));
             require(width<=INT32_MAX && height<=INT32_MAX && x+width<=INT32_MAX && y+height<=INT32_MAX);
             west=std::min(west,x); south=std::min(south,y); east=std::max(east,x+width); north=std::max(north,y+height);
-            require(width && height && square && square<=uint32_t(1)<<30 && !(square&(square-1)) && bytes>0 && end<=get(h+20));
+            require(width && height && square && square<=uint32_t(1)<<30 && !(square&(square-1)) && bytes>0 && end<=get(h + Header::MapBytes));
             require(first>start && first<end && start>=previous_chunk_end && (!i || start==previous_chunk_end));
             require(blocks==((uint64_t(width)+square-1)/square)*((uint64_t(height)+square-1)/square));
             require(bytes<config::IndexMinChunkBytes ? groups==0 : groups>0 && groups<=blocks);
             require(uint64_t(source_.pos())+uint64_t(groups)*16<=map_end);
             uint64_t block=0,offset=first;
             for (uint32_t g=0;g<groups;++g) {
-                const auto group=read<16>(); const auto* p=group.data();
-                require(get(p)==block && get(p+4)>0 && get(p+4)<=blocks-block && get(p+8)==offset && get(p+12)>0 && offset+get(p+12)<=end);
-                require(g+1==groups || get(p+12)>=config::IndexGroupTargetBytes);
-                block+=get(p+4); offset+=get(p+12);
+                const auto group=read<Group::Bytes>(); const auto* p=group.data();
+                require(get(p)==block && get(p + Group::BlockCount)>0 && get(p + Group::BlockCount)<=blocks-block && get(p + Group::DataOffset)==offset && get(p + Group::DataBytes)>0 && offset+get(p + Group::DataBytes)<=end);
+                require(g+1==groups || get(p + Group::DataBytes)>=config::IndexGroupTargetBytes);
+                block+=get(p + Group::BlockCount); offset+=get(p + Group::DataBytes);
             }
             if (groups) require(block==blocks && offset==end);
             previous_chunk_end=end;
         }
-        require(source_.pos()==map_end && previous_chunk_end==get(h+20));
+        require(source_.pos()==map_end && previous_chunk_end==get(h + Header::MapBytes));
         require(east-west<=INT32_MAX && north-south<=INT32_MAX);
         if (summary) { summary->west=west; summary->south=south; summary->width=east-west; summary->height=north-south; }
         std::string previous_language;
-        for (uint32_t section=0;section<get(h+56);++section) {
-            const auto begin=source_.pos(); const auto record=read<128>(); const auto* w=record.data();
+        for (uint32_t section=0;section<get(h + Header::WordbookCount);++section) {
+            const auto begin=source_.pos(); const auto record=read<Wordbook::Bytes>(); const auto* w=record.data();
             size_t language_bytes=0;
             while (language_bytes<32 && w[language_bytes]) { require(w[language_bytes]>=0x21 && w[language_bytes]<0x7f); ++language_bytes; }
             require(language_bytes && language_bytes<32);
@@ -508,39 +502,39 @@ public:
             if (book && ((selected_language.empty() && section==0) || language==selected_language)) {
                 book->header=record; book->section_offset=u32(begin);
             }
-            for (unsigned i=112;i<128;++i) require(w[i]==0);
-            require(get16(w+104)==16 && get16(w+106)==8 && get16(w+108)==16 && get16(w+110)==128);
-            const uint64_t ti_end=uint64_t(get(w+52))+get(w+56),tt_end=uint64_t(get(w+60))+get(w+64),tm_end=uint64_t(get(w+68))+get(w+72);
-            require(get(w+68)>0 && get(w+72)>0 && get(w+64)>0 && get(w+56)>0 && tm_end<get(w+60) && tt_end<get(w+52) && ti_end==get(w+36));
-            const auto records=get(w+76),components=get(w+80),tokens=get(w+84),roots=get(w+92),pages=get(w+96),token_pages=get(w+100);
+            for (unsigned i=Wordbook::Reserved;i<Wordbook::Bytes;++i) require(w[i]==0);
+            require(get16(w + Wordbook::TiRecordBytes)==16 && get16(w + Wordbook::TtRecordBytes)==8 && get16(w + Wordbook::TmRecordBytes)==16 && get16(w + Wordbook::HeaderBytes)==128);
+            const uint64_t ti_end=uint64_t(get(w + Wordbook::TiDataOffset))+get(w + Wordbook::TiDataBytes),tt_end=uint64_t(get(w + Wordbook::TtDataOffset))+get(w + Wordbook::TtDataBytes),tm_end=uint64_t(get(w + Wordbook::TmDataOffset))+get(w + Wordbook::TmDataBytes);
+            require(get(w + Wordbook::TmDataOffset)>0 && get(w + Wordbook::TmDataBytes)>0 && get(w + Wordbook::TtDataBytes)>0 && get(w + Wordbook::TiDataBytes)>0 && tm_end<get(w + Wordbook::TtDataOffset) && tt_end<get(w + Wordbook::TiDataOffset) && ti_end==get(w + Wordbook::SourceBytes));
+            const auto records=get(w + Wordbook::RecordCount),components=get(w + Wordbook::ComponentCount),tokens=get(w + Wordbook::TokenCount),roots=get(w + Wordbook::RootCount),pages=get(w + Wordbook::TextPageCount),token_pages=get(w + Wordbook::TokenPageCount);
             require(records && components && tokens && roots && roots<=records && pages && pages<=components && token_pages && token_pages<=tokens);
-            require(get16(w+88)>0 && get16(w+88)<=config::IndexMaxDepth && w[90]>0 && w[90]<=31 && w[91]>0 && w[91]<=16);
-            require(uint64_t(components)<=(uint64_t(1)<<w[90]) && uint64_t(tokens)<=(uint64_t(1)<<w[91]));
+            require(get16(w + Wordbook::Depth)>0 && get16(w + Wordbook::Depth)<=config::IndexMaxDepth && w[Wordbook::CodeBits]>0 && w[Wordbook::CodeBits]<=31 && w[Wordbook::TokenBits]>0 && w[Wordbook::TokenBits]<=16);
+            require(uint64_t(components)<=(uint64_t(1)<<w[Wordbook::CodeBits]) && uint64_t(tokens)<=(uint64_t(1)<<w[Wordbook::TokenBits]));
             const auto section_bytes=uint64_t(128)+uint64_t(roots)*16+uint64_t(pages)*8+uint64_t(token_pages)*16;
-            require(section_bytes==get(w+48) && begin+section_bytes<=source_.length()-4);
+            require(section_bytes==get(w + Wordbook::SectionBytes) && begin+section_bytes<=source_.length()-4);
             uint64_t index=0,previous_bit=0;
             for (uint32_t i=0;i<roots;++i) {
-                const auto root=read<16>(); const auto* p=root.data();
-                const auto bit=uint64_t(get(p+8))*8+p[12];
-                require(get(p)==index && get(p+4)>0 && get(p+4)<=records-index && p[12]<8 && !p[13] && !p[14] && !p[15]);
-                require(bit>=uint64_t(get(w+52))*8 && bit<ti_end*8 && (!i || bit>previous_bit));
-                index+=get(p+4); previous_bit=bit;
+                const auto root=read<TiRoot::Bytes>(); const auto* p=root.data();
+                const auto bit=uint64_t(get(p + TiRoot::DataOffset))*8+p[TiRoot::StartBit];
+                require(get(p)==index && get(p + TiRoot::RecordCount)>0 && get(p + TiRoot::RecordCount)<=records-index && p[TiRoot::StartBit]<8 && !p[13] && !p[14] && !p[15]);
+                require(bit>=uint64_t(get(w + Wordbook::TiDataOffset))*8 && bit<ti_end*8 && (!i || bit>previous_bit));
+                index+=get(p + TiRoot::RecordCount); previous_bit=bit;
             }
             require(index==records);
             uint32_t previous_code=0,previous_offset=0;
             for (uint32_t i=0;i<pages;++i) {
-                const auto page=read<8>(); const auto code=get(page.data()),offset=get(page.data()+4);
+                const auto page=read<TtPage::Bytes>(); const auto code=get(page.data()),offset=get(page.data() + TtPage::DataOffset);
                 require(code<components && (i ? code>previous_code : code==0));
-                require(offset>=get(w+60) && offset<tt_end && (!i || offset>previous_offset));
+                require(offset>=get(w + Wordbook::TtDataOffset) && offset<tt_end && (!i || offset>previous_offset));
                 previous_code=code; previous_offset=offset;
             }
             index=0; uint32_t previous_bytes=0; uint64_t previous_end=0;
             for (uint32_t i=0;i<token_pages;++i) {
-                const auto page=read<16>(); const auto* p=page.data();
-                const auto end=uint64_t(get(p+12))+uint64_t(get(p+4))*get(p+8);
-                require(get(p)==index && get(p+4)>0 && get(p+4)<=tokens-index && get(p+8)>0 && get(p+8)>=previous_bytes);
-                require(get(p+12)>=get(w+68) && get(p+12)>previous_end && end<=tm_end);
-                index+=get(p+4); previous_bytes=get(p+8); previous_end=end;
+                const auto page=read<TmPage::Bytes>(); const auto* p=page.data();
+                const auto end=uint64_t(get(p + TmPage::DataOffset))+uint64_t(get(p + TmPage::TokenCount))*get(p + TmPage::TokenBytes);
+                require(get(p)==index && get(p + TmPage::TokenCount)>0 && get(p + TmPage::TokenCount)<=tokens-index && get(p + TmPage::TokenBytes)>0 && get(p + TmPage::TokenBytes)>=previous_bytes);
+                require(get(p + TmPage::DataOffset)>=get(w + Wordbook::TmDataOffset) && get(p + TmPage::DataOffset)>previous_end && end<=tm_end);
+                index+=get(p + TmPage::TokenCount); previous_bytes=get(p + TmPage::TokenBytes); previous_end=end;
             }
             require(index==tokens && previous_end==tm_end && source_.pos()==begin+section_bytes);
         }
@@ -568,15 +562,15 @@ ReusePlan reusePlan(uint8_t drive,const std::string& directory,const DatasetMeta
         catch(const std::exception&) {if(target==IndexTarget::WordBooks)throw;}
     }
     if(target!=IndexTarget::WordBooks) {
-        Source source(drive,result.path,observer);source.seek(u32(uint64_t(64)+get(summary.header.data()+60)));
-        for(uint32_t i=0;i<get(summary.header.data()+56);++i) {
+        Source source(drive,result.path,observer);source.seek(u32(uint64_t(64)+get(summary.header.data() + Header::MapIndexBytes)));
+        for(uint32_t i=0;i<get(summary.header.data() + Header::WordbookCount);++i) {
             DatasetWordBookIndex section;section.section_offset=u32(source.pos());
             for(auto& b:section.header)b=source.readByte();
             for(size_t j=0;j<books.size();++j)if(books[j].language==reinterpret_cast<const char*>(section.header.data())) {
                 try {(void)DatasetIndex(drive,observer).checkWordBook(section,directory+"/"+books[j].name);result.books[j]=section;}
                 catch(const std::exception&) {if(target==IndexTarget::Map)throw;}
             }
-            source.seek(u32(uint64_t(section.section_offset)+get(section.header.data()+48)));
+            source.seek(u32(uint64_t(section.section_offset)+get(section.header.data() + Header::IndexedChunkMinBytes)));
         }
         if(target==IndexTarget::Map)for(const auto& b:result.books)require(b.section_offset!=0);
     }
@@ -621,8 +615,8 @@ DatasetMapIndex DatasetIndex::loadMap(const std::string& path,const std::string&
     catch(const std::exception&) { throw std::runtime_error("Invalid _mapindex.dat; reapply dataset"); }
     if (book && !book->section_offset) throw std::runtime_error("Missing Wordbook index; reapply dataset");
     const auto* h=info.header.data(); const auto slash=map.find_last_of('/');
-    if (!(get(h+20)==stamp.bytes && get(h+24)==stamp.mtime && get(h+28)==nameCrc(map.substr(slash==std::string::npos?0:slash+1)) && get(h+32)==stamp.header_crc &&
-          get(h+36)==metadata.count && get(h+40)==metadata.unit_x && get(h+44)==metadata.unit_y))
+    if (!(get(h + Header::MapBytes)==stamp.bytes && get(h + Header::MapFatMtime)==stamp.mtime && get(h + Header::MapNameCrc32)==nameCrc(map.substr(slash==std::string::npos?0:slash+1)) && get(h + Header::MapHeaderCrc32)==stamp.header_crc &&
+          get(h + Header::ChunkCount)==metadata.count && get(h + Header::UnitInvX)==metadata.unit_x && get(h + Header::UnitInvY)==metadata.unit_y))
         throw std::runtime_error("Stale _mapindex.dat; reapply dataset");
     return info;
 }
@@ -637,25 +631,25 @@ std::string DatasetIndex::checkWordBook(const DatasetWordBookIndex& info,const s
     require(source.atEnd());
     stamp.header_crc=source.crc(0,chunks[0].end);
     const auto* w=info.header.data();const auto slash=path.find_last_of('/');
-    if(!(info.section_offset && get(w+32)==nameCrc(path.substr(slash==std::string::npos?0:slash+1)) &&
-         get(w+36)==stamp.bytes && get(w+40)==stamp.mtime && get(w+44)==stamp.header_crc))
+    if(!(info.section_offset && get(w + Wordbook::NameCrc32)==nameCrc(path.substr(slash==std::string::npos?0:slash+1)) &&
+         get(w + Wordbook::SourceBytes)==stamp.bytes && get(w + Wordbook::FatMtime)==stamp.mtime && get(w + Wordbook::HeaderCrc32)==stamp.header_crc))
         throw std::runtime_error("Stale Wordbook index; reapply dataset");
-    require(chunks[1].data==get(w+68) && chunks[1].bytes==get(w+72) &&
-            chunks[2].data==get(w+60) && chunks[2].bytes==get(w+64) &&
-            chunks[3].data==get(w+52) && chunks[3].bytes==get(w+56));
+    require(chunks[1].data==get(w + Wordbook::TmDataOffset) && chunks[1].bytes==get(w + Wordbook::TmDataBytes) &&
+            chunks[2].data==get(w + Wordbook::TtDataOffset) && chunks[2].bytes==get(w + Wordbook::TtDataBytes) &&
+            chunks[3].data==get(w + Wordbook::TiDataOffset) && chunks[3].bytes==get(w + Wordbook::TiDataBytes));
     source.seek(chunks[0].data);
     require(galuchat::detail::readBStrAscii(source,16)=="GisWordBook/0");
     const auto length=source.number();require(uint64_t(source.pos())+length==chunks[0].end);
     const auto metadata=galuchat::detail::readAscii(source,length);
     source.seek(chunks[1].data);
     const auto tokens=source.number(),token_pages=source.number();
-    require(tokens==get(w+84) && token_pages==get(w+100) && source.pos()<chunks[1].end);
+    require(tokens==get(w + Wordbook::TokenCount) && token_pages==get(w + Wordbook::TokenPageCount) && source.pos()<chunks[1].end);
     source.seek(chunks[2].data);
     const auto components=source.number(),page_size=source.number(),pages=source.number(),token_bits=source.number();
-    require(components==get(w+80) && page_size>0 && pages==get(w+96) && token_bits==w[91] && source.pos()<chunks[2].end);
+    require(components==get(w + Wordbook::ComponentCount) && page_size>0 && pages==get(w + Wordbook::TextPageCount) && token_bits==w[Wordbook::TokenBits] && source.pos()<chunks[2].end);
     source.seek(chunks[3].data);
     const auto depth=source.number(),records=source.number(),bits=source.number(),roots=source.number(),stream=source.number();
-    require(depth==get16(w+88) && records==get(w+76) && bits==w[90] && roots==get(w+92) &&
+    require(depth==get16(w + Wordbook::Depth) && records==get(w + Wordbook::RecordCount) && bits==w[Wordbook::CodeBits] && roots==get(w + Wordbook::RootCount) &&
             uint64_t(source.pos())+stream==chunks[3].end);
     return metadata;
 }
@@ -676,7 +670,7 @@ DatasetMapIndex DatasetIndex::inspectMap(const std::string& map) const {
         image.skipToEnd();
     }
     require(origins.pos()==metadata.chunk.end && chunks.atEnd() && east-west<=INT32_MAX && north-south<=INT32_MAX);
-    DatasetMapIndex info; put(info.header.data()+36,metadata.count); put(info.header.data()+40,metadata.unit_x); put(info.header.data()+44,metadata.unit_y);
+    DatasetMapIndex info; put(info.header.data() + Header::ChunkCount,metadata.count); put(info.header.data() + Header::UnitInvX,metadata.unit_x); put(info.header.data() + Header::UnitInvY,metadata.unit_y);
     info.west=west; info.south=south; info.width=east-west; info.height=north-south; return info;
 }
 

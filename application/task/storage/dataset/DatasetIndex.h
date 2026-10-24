@@ -1,16 +1,17 @@
 #pragma once
 #include "DatasetMetadata.h"
+#include "DatasetIndexFormat.h"
 #include <array>
 #include <stdexcept>
 
 namespace geoputer {
 struct FileIoTiming;
 struct DatasetMapIndex {
-    std::array<uint8_t,64> header{};
+    std::array<uint8_t,index_format::Header::Bytes> header{};
     int32_t west=0,south=0,width=0,height=0;
 };
 struct DatasetWordBookIndex {
-    std::array<uint8_t,128> header{};
+    std::array<uint8_t,index_format::Wordbook::Bytes> header{};
     uint32_t section_offset=0;
 };
 class MapChunkLimitExceeded : public std::runtime_error {

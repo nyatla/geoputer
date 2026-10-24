@@ -8,9 +8,18 @@
 inline void renderAndCheckDialog(geoputer::UiRenderer& renderer, geoputer::UiModel& model, M5GFX& display) {
     using namespace geoputer;
     if (!model.confirming()) { renderer.draw(model); return; }
-    UiModel background = model;
-    background.keyPressed(UiKey::Escape, 100);
-    renderer.draw(background);
+    // UiModel owns noncopyable map buffers. Hide only the optional dialog in
+    // this host fixture; restore it even when rendering throws. Cancellation
+    // itself is covered by the native input tests.
+    auto drawBackground = [&] {
+        auto& dialog = const_cast<ChoiceDialog&>(model.dialog());
+        const auto saved = dialog;
+        dialog.close();
+        try { renderer.draw(model); }
+        catch (...) { dialog = saved; throw; }
+        dialog = saved;
+    };
+    drawBackground();
     const auto original = display.pixels;
     renderer.draw(model);
     int top = 38, bottom = 102;
@@ -31,7 +40,7 @@ inline void renderAndCheckDialog(geoputer::UiRenderer& renderer, geoputer::UiMod
             throw std::runtime_error("modal backdrop must preserve and dim the original screen");
     }
     const auto modal = display.pixels;
-    renderer.draw(background);
+    drawBackground();
     if (display.pixels != original) throw std::runtime_error("closing a dialog must restore the base screen colors");
     renderer.draw(model);
     if (display.pixels != modal) throw std::runtime_error("modal redraw must be deterministic");

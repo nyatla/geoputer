@@ -3,6 +3,7 @@
 #include "UiTypes.h"
 #include "DisplayClock.h"
 #include "ChoiceDialog.h"
+#include "../../map/MapFrameReceiver.h"
 #include "../../TaskMessages.h"
 
 namespace geoputer {
@@ -12,6 +13,10 @@ class UiModel {
 public:
     OperationStatus setScreen(const SetUiScreen& command);
     OperationStatus updateContent(const UpdateUiContent& command);
+    OperationStatus beginMapFrame(const map::Transfer& transfer);
+    OperationStatus writeMapRows(const map::Transfer& transfer);
+    OperationStatus commitMapFrame(const map::Transfer& transfer);
+    const map::MapFrameReceiver& mapFrame() const { return map_frame_; }
     void keyPressed(UiKey key, uint32_t now_ms);
     void tick(uint32_t now_ms);
     UiSnapshot snapshot() const;
@@ -51,6 +56,11 @@ public:
     }
 
 private:
+    void livePlaceKey(UiKey key);
+    void gpsLoggerKey(UiKey key);
+    void logBrowserKey(UiKey key);
+    void settingsKey(UiKey key);
+
     void copyData(const UiData& data);
     void acknowledge(uint32_t action_id, ActionResult result);
     void changed();
@@ -61,6 +71,8 @@ private:
     void usbKey(UiKey key);
     void usbAction(UsbAction action);
 
+    map::MapFrameReceiver map_frame_;
+    bool acceptsMap(const map::FrameInfo& info) const;
     ScreenId screen_ = ScreenId::LivePlace;
     DisplayMode mode_ = DisplayMode::View;
     uint32_t generation_ = 0;

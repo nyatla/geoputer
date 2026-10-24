@@ -147,7 +147,7 @@ void testClockRolloverAndUiIsolation() {
     reply.kind = MessageKind::SyncReturn;
     reply.source = TaskId::GPS;
     reply.request_id = request.request_id;
-    reply.payload.result = {request.kind, OperationStatus::Ok, {}, receiver.snapshot(), {}};
+    reply.payload.result = {request.kind, OperationStatus::Ok, {}, receiver.snapshot(), {}, {}};
     results.send(reply);
     SyncReturn returned{};
     check(client.receiveSyncResult(returned, 0) == SyncReceiveResult::Returned,

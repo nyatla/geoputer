@@ -15,6 +15,7 @@ inline constexpr uint32_t LoraSpiHz = 1000000;
 inline constexpr uint32_t BootMaintenanceWindowMs = 1500; // After settings load; held ESC bypasses this wait.
 
 inline constexpr uint8_t UiColorDepth = 4;       // 16-color palette; 16 selects the RGB565 reference path.
+inline constexpr uint32_t SdSpiHz = 25'000'000; // Requested SD SPI limit; current 80MHz APB divider selects 20MHz. Shared by all SD paths.
 inline constexpr uint8_t SdMaxOpenFiles = 3;     // GIS initialization needs two simultaneous VFS readers.
 
 // Galuchat resource limits and access tuning. These are firmware settings;
@@ -33,6 +34,12 @@ inline constexpr uint32_t IndexGroupTargetBytes = 65536;
 inline constexpr uint16_t IndexMaxDepth = 32; // Bounds recursive TI00 parsing during generation.
 inline constexpr size_t WordBookCacheEntries = 16;
 inline constexpr uint32_t PlaceSearchIntervalMs = 5000;
+// Independent boundary-map buffers; the 128x128 point cache is untouched.
+inline constexpr size_t MapViewCodeMaxBytes = 96 * 1024;
+inline constexpr unsigned MapViewRowsPerStep = 8;
+inline constexpr uint32_t MapViewUpdateMs = 5000;
+inline constexpr uint32_t MapViewRetryMs = 1000;
+inline constexpr bool MapHeapDiagnostics = true; // Phase snapshots; no extra map buffers or sampling task.
 inline constexpr size_t DatasetLineBytes = 256;  // 255 UTF-8 bytes plus NUL.
 inline constexpr size_t DatasetLanguageBytes = 32;
 inline constexpr unsigned DatasetPageRows = 4;

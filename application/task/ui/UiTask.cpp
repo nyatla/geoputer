@@ -1,5 +1,6 @@
 #include "../../utils/Console.h"
 #include "UiTask.h"
+#include "../../utils/HeapDiagnostics.h"
 #include <M5Cardputer.h>
 #include "UiRenderer.h"
 #include "KeyBindings.h"
@@ -18,11 +19,23 @@ void UiTask::handle(const UiRequest& request, bool ready) {
     auto& result = pending_return_.payload.result;
     if (ready) {
         switch (request.kind) {
-            case MessageKind::SetUiScreen:
+            case MessageKind::SetUiScreen: {
+                const auto old_map_token=model_.mapFrame().info().request.token;
                 result.status = model_.setScreen(request.payload.screen);
+                if(result.status==OperationStatus::Ok && old_map_token)reportMapHeap("ui-released",old_map_token);
                 break;
+            }
             case MessageKind::UpdateUiContent:
                 result.status = model_.updateContent(request.payload.update);
+                break;
+            case MessageKind::BeginMapFrame:
+                result.status=model_.beginMapFrame(request.payload.map);
+                if(result.status==OperationStatus::Ok)reportMapHeap("ui-begin",request.payload.map.info.request.token);
+                break;
+            case MessageKind::WriteMapRows: result.status=model_.writeMapRows(request.payload.map); break;
+            case MessageKind::CommitMapFrame:
+                result.status=model_.commitMapFrame(request.payload.map);
+                if(result.status==OperationStatus::Ok)reportMapHeap("ui-commit",request.payload.map.info.request.token);
                 break;
             case MessageKind::GetUiContent:
                 result.status = OperationStatus::Ok;
@@ -87,7 +100,7 @@ void UiTask::run() {
     Console.println(ready ? "[UI] ready (240x135)" : "[UI] initialization failed");
     bool was_one = false, was_gps = false, was_logs = false, was_escape = startup_escape || M5Cardputer.Keyboard.keysState().del, was_up = false, was_down = false;
     bool was_left = false, was_right = false, was_enter = false, was_any = false;
-    bool was_delete = false, was_pause = false;
+    bool was_delete = false, was_pause = false, was_map = false;
     uint32_t repeat_at = 0;
     bool clock_reported = false;
     uint32_t battery_at = 0;
@@ -107,7 +120,7 @@ void UiTask::run() {
         const bool back = keys.del;
         bool f1 = false, live = false, gps = false, logs = false, escape = false, up = false, down = false;
         bool left = false, right = false;
-        bool delete_log = false, pause_log = false;
+        bool delete_log = false, pause_log = false, open_map = false;
         for (const auto& position : M5Cardputer.Keyboard.keyList()) {
             const auto value = M5Cardputer.Keyboard.getKeyValue(position).value_first;
             const auto key = model_.viewingLicenses() ? mapLicenseKey(value, keys.fn, keys.shift) : mapPhysicalKey(value, keys.fn);
@@ -116,6 +129,7 @@ void UiTask::run() {
             gps |= key == UiKey::OpenGpsLogger;
             live |= key == UiKey::OpenLivePlace;
             logs |= key == UiKey::OpenLogs;
+            open_map |= key == UiKey::OpenMap;
             delete_log |= key == UiKey::DeleteLog;
             escape |= key == UiKey::Escape;
             up |= key == UiKey::Up;
@@ -137,6 +151,7 @@ void UiTask::run() {
             if (one && !was_one) model_.keyPressed(f1 ? UiKey::F1 : UiKey::OpenLivePlace, now);
             if (pause_log && !was_pause) model_.keyPressed(UiKey::PauseLog, now);
             if (gps && !was_gps) model_.keyPressed(UiKey::OpenGpsLogger, now);
+            if(open_map && !was_map)model_.keyPressed(UiKey::OpenMap,now);
             if (logs && !was_logs) model_.keyPressed(UiKey::OpenLogs, now);
             if (delete_log && !was_delete) model_.keyPressed(UiKey::DeleteLog, now);
             if ((escape || back) && !was_escape) model_.keyPressed(escape ? UiKey::Escape : UiKey::Back, now);
@@ -145,7 +160,7 @@ void UiTask::run() {
             if (left && !was_left) model_.keyPressed(UiKey::Left, now);
             if (right && !was_right) model_.keyPressed(UiKey::Right, now);
             if (enter && !was_enter) model_.keyPressed(UiKey::Enter, now);
-            if (any && !was_any && !one && !pause_log && !gps && !logs && !delete_log && !escape && !back && !up && !down && !left && !right && !enter) model_.keyPressed(UiKey::Other, now);
+            if (any && !was_any && !one && !pause_log && !gps && !logs && !open_map && !delete_log && !escape && !back && !up && !down && !left && !right && !enter) model_.keyPressed(UiKey::Other, now);
             if ((up && !was_up) || (down && !was_down)) repeat_at = now + 400;
             else if ((up || down) && repeat_at && static_cast<int32_t>(now - repeat_at) >= 0) {
                 model_.keyPressed(up ? UiKey::Up : UiKey::Down, now);
@@ -162,7 +177,7 @@ void UiTask::run() {
         was_one = one;
         was_pause = pause_log;
         was_gps = gps;
-        was_logs = logs;
+        was_logs = logs;was_map=open_map;
         was_delete = delete_log;
         was_escape = escape || back;
         was_up = up;

@@ -1,5 +1,6 @@
 #include "../../utils/Console.h"
 #include "StorageTask.h"
+#include "../../utils/HeapDiagnostics.h"
 #include "DatasetSelection.h"
 #include "dataset/DatasetIndex.h"
 #include <SD.h>
@@ -21,6 +22,7 @@ LogError StorageTask::tryAppendLog(const LogCommand& command, LogSnapshot& snaps
 
 void StorageTask::closeCard() {
     SdAccessScope access(this);
+    map_job_.release(map_job_.info().request);
     place_lookup_.close();
     if (drive_ == 0xFF) return;
     sdcard_unmount(drive_);
@@ -35,7 +37,7 @@ void StorageTask::mountCard() {
     state_.card_state = CardState::NoCard;
     state_.card_bytes = state_.total_bytes = state_.free_bytes = 0;
     state_.fat_type = 0;
-    drive_ = sdcard_init(12, &spi_, 4000000);
+    drive_ = sdcard_init(12, &spi_, config::SdSpiHz);
     if (drive_ == 0xFF) { state_.sd_error = state_.error = -10; return; }
     place_lookup_.setDrive(drive_);
     log_writer_.setDrive(drive_);
@@ -67,7 +69,7 @@ bool StorageTask::formatCard() {
     SdAccessScope access(this);
     // Only reached via a confirmed command. No automatic formatting or NVS erasure.
     closeCard();
-    drive_ = sdcard_init(12, &spi_, 4000000);
+    drive_ = sdcard_init(12, &spi_, config::SdSpiHz);
     if (drive_ == 0xFF) { state_.sd_error = state_.error = -10; return false; }
     char volume[] = {static_cast<char>('0' + drive_), ':', '\0'};
     uint8_t work[4096];
@@ -133,7 +135,7 @@ void StorageTask::handle(const StorageRequest& request) {
     }
     if (request.kind == MessageKind::LoadSettings || request.kind == MessageKind::SearchPlace ||
         request.kind == MessageKind::CheckDataset) {
-        if (!hasJob() && !has_completion_) {
+        if (!hasJob() && !has_completion_ && !map_job_.occupied()) {
             job_kind_ = request.kind == MessageKind::LoadSettings ? JobKind::LoadSettings :
                         request.kind == MessageKind::SearchPlace ? JobKind::SearchPlace : JobKind::CheckDataset;
             place_request_ = request.kind == MessageKind::SearchPlace ? request.payload.place_request : PlaceRequest{};
@@ -144,10 +146,27 @@ void StorageTask::handle(const StorageRequest& request) {
     }
     prepareSyncReturn(pending_return_, TaskId::Storage, request, ++sequence_);
     auto& result = pending_return_.payload.result;
-    if(request.kind==MessageKind::UsbExportOperation) {
+    if(request.kind==MessageKind::RequestMap) {
+        if(!usb_mode_ && initialized_ && !hasJob() && !has_completion_ && !has_read_ && !map_job_.occupied()) {
+            const auto& command=request.payload.map;
+            if(map_job_.start(command)) {
+                if(state_.card_state!=CardState::Mounted)map_job_.fail(map::Error::NoCard);
+                else if(!state_.settings.dataset)map_job_.fail(map::Error::NoDataset);
+                else if(command.dataset_generation!=place_lookup_.datasetInfo().generation)map_job_.fail(map::Error::Stale);
+                result.status=OperationStatus::Ok;
+            }
+        }
+    } else if(request.kind==MessageKind::ReadMapRows) {
+        if(map_job_.read(request.payload.map,result.map))result.status=OperationStatus::Ok;
+    } else if(request.kind==MessageKind::ReleaseMap || request.kind==MessageKind::CancelMap) {
+        if(map_job_.release(request.payload.map)) {
+            result.status=OperationStatus::Ok;
+            reportMapHeap(request.kind==MessageKind::ReleaseMap?"released":"cancelled",request.payload.map.token);
+        }
+    } else if(request.kind==MessageKind::UsbExportOperation) {
         handleUsbExport(request,result);
     } else if (request.kind == MessageKind::DatasetOperation) {
-        if (!usb_mode_ && initialized_ && !has_read_ && !hasJob() && !has_completion_) {
+        if (!usb_mode_ && initialized_ && !has_read_ && !hasJob() && !has_completion_ && !map_job_.occupied()) {
             dataset_request_ = request.payload.dataset;
             dataset_request_.language[sizeof(dataset_request_.language)-1] = 0;
             job_kind_ = JobKind::BrowseDatasets;
@@ -177,13 +196,13 @@ void StorageTask::handle(const StorageRequest& request) {
             } else mountCard();
             state_.revision = 1;
             initialized_ = true;
-            Console.printf("[STORAGE] NVS=%s SD=%s\n", nvs_ready_ ? "ready" : "error", cardStateName(state_.card_state));
+            Console.printf("[STORAGE] NVS=%s SD=%s spi_hz=%lu spi_actual_hz=%lu\n", nvs_ready_ ? "ready" : "error", cardStateName(state_.card_state), static_cast<unsigned long>(config::SdSpiHz), static_cast<unsigned long>(spiClockDivToFrequency(spi_.getClockDivider())));
         }
         result.status = OperationStatus::Ok;  // Individual backend outcomes are in the snapshot.
     } else if (request.kind == MessageKind::GetStorageStatus) {
         result.status = initialized_ ? OperationStatus::Ok : OperationStatus::Unavailable;
     } else if(request.kind==MessageKind::ListLogs || request.kind==MessageKind::ReadLogSummary || request.kind==MessageKind::ReadLogRecords || request.kind==MessageKind::DeleteLog) {
-        if(initialized_ && !has_read_ && !hasJob() && !has_completion_ &&
+        if(initialized_ && !has_read_ && !hasJob() && !has_completion_ && !map_job_.occupied() &&
            (!usb_mode_ || (usb_.local() && state_.card_state==CardState::Mounted &&
                            state_.export_job.phase==ExportPhase::Selecting && request.kind==MessageKind::ListLogs))) {
             auto read=request.payload.log_read;
@@ -208,7 +227,7 @@ void StorageTask::handle(const StorageRequest& request) {
         state_.log_result = error;
         ++state_.revision;
         result.status = error == LogError::None ? OperationStatus::Ok : OperationStatus::Unavailable;
-    } else if (initialized_ && !hasJob() && !has_completion_ &&
+    } else if (initialized_ && !hasJob() && !has_completion_ && !map_job_.occupied() &&
                (request.kind == MessageKind::SaveSettings || request.kind == MessageKind::OperateStorage)) {
         const auto command = request.payload.storage_command;
         const bool saving = request.kind == MessageKind::SaveSettings &&
@@ -238,84 +257,101 @@ void StorageTask::sendReturn() {
     if (has_return_ && sendSpeculative(results_, pending_return_) == SpeculativeResult::Queued) has_return_ = false;
 }
 
+void StorageTask::completeDatasetJob() {
+    DatasetView view{};view.purpose=dataset_request_.purpose;view.number=dataset_request_.number;
+    const bool listing=dataset_request_.action==DatasetAction::Open || dataset_request_.action==DatasetAction::Older || dataset_request_.action==DatasetAction::Newer;
+    const bool maintenance=dataset_request_.action==DatasetAction::RebuildIndex || dataset_request_.action==DatasetAction::VerifyIndex;
+    const bool clearing = dataset_request_.action == DatasetAction::Clear;
+    const bool applying = clearing || dataset_request_.action == DatasetAction::Apply || maintenance;
+    index_started_at_=taskTimeMs();index_progress_={};index_progress_.token=dataset_request_.token;
+    index_progress_.verifying=dataset_request_.action==DatasetAction::VerifyIndex;
+    if (applying && log_writer_.hasRetainedSession()) view.error = DatasetError::NotStopped;
+    else if (clearing) {
+        clearDatasetSelection(view);
+    } else if (maintenance && (!dataset_request_.number || dataset_request_.number>99)) view.error = DatasetError::Unselected;
+    else if(listing && dataset_request_.purpose==DatasetPurpose::Select && (!mounted_ || state_.card_state!=CardState::Mounted)) view.count=1;
+    else if (!mounted_ || state_.card_state != CardState::Mounted) view.error = DatasetError::Missing;
+    else if(maintenance) {
+        maintainDatasetIndex(view);
+    } else {
+        view = DatasetCatalog("/sd/dataset", this, drive_).read(dataset_request_, state_.settings.language);
+    }
+    if(!usb_mode_ && state_.card_state!=CardState::Mounted) releaseDataset(PlaceState::NoCard);
+    if (applying && !maintenance && !clearing && view.error == DatasetError::None) {
+        applyDatasetSelection(view);
+    }
+    if(applying) {
+        index_progress_.phase=view.error==DatasetError::None?IndexPhase::Complete:IndexPhase::Failed;
+        index_progress_.percent=view.error==DatasetError::None?100:index_progress_.percent;
+        index_progress_.elapsed_ms=taskTimeMs()-index_started_at_;view.progress=index_progress_;
+        index_progress_dirty_=false;
+    }
+    view.applying = applying; view.revision = dataset_request_.token;
+    state_.busy = has_read_; ++state_.revision;
+    completion_ = {}; completion_.kind = view.error == DatasetError::None ? MessageKind::ReadCompleted : MessageKind::ReadFailed;
+    completion_.source = TaskId::Storage; completion_.request_id = job_request_id_;
+    completion_.sequence = ++sequence_; completion_.sent_at_ms = taskTimeMs();
+    auto& result = completion_.payload.storage_completion;
+    result.request_id = job_request_id_; result.snapshot = state_;
+    result.read_kind = StorageReadKind::DatasetBrowser; result.dataset_view = view;
+    has_completion_ = true; job_kind_ = JobKind::None;
+    return;
+}
+
+void StorageTask::clearDatasetSelection(DatasetView& view) {
+    Settings candidate = dataset_request_.reset_settings ? defaultSettings() : state_.settings;
+    candidate.dataset = 0;
+    std::memset(candidate.wordbook_language, 0, sizeof(candidate.wordbook_language));
+    if (!saveSettings(candidate)) view.error = DatasetError::SaveFailed;
+}
+
+void StorageTask::maintainDatasetIndex(DatasetView& view) {
+    const bool active=dataset_request_.number==state_.settings.dataset;
+    if(active)place_lookup_.close();
+    const auto directory=DatasetCatalog{}.directory(dataset_request_.number);
+    const auto metadata=readDatasetMetadata(directory,state_.settings.language,"",this);
+    view.error=metadata.error;
+    if(view.error==DatasetError::None) {
+        DatasetIndex index(drive_,this,indexProgress,this);
+        view.error=dataset_request_.action==DatasetAction::RebuildIndex?
+            index.rebuild(directory,metadata,dataset_request_.index_target):
+            index.verifyAgainstDataset(directory,metadata,dataset_request_.index_target);
+    }
+    if(active && view.error!=DatasetError::None)releaseDataset(datasetErrorState(view.error));
+    Console.printf("[DATASET CACHE] action=%s target=%02u result=%u elapsed_ms=%lu\n",
+        dataset_request_.action==DatasetAction::RebuildIndex?"REBUILD":"VERIFY",dataset_request_.number,
+        static_cast<unsigned>(view.error),static_cast<unsigned long>(taskTimeMs()-index_started_at_));
+}
+
+void StorageTask::applyDatasetSelection(DatasetView& view) {
+    Settings candidate = dataset_request_.reset_settings ? defaultSettings() : state_.settings;
+    candidate.dataset = dataset_request_.number;
+    std::snprintf(candidate.wordbook_language, sizeof(candidate.wordbook_language), "%s", view.info.language);
+    const auto directory = DatasetCatalog{}.directory(candidate.dataset);
+    const auto metadata = readDatasetMetadata(directory, candidate.language, candidate.wordbook_language, this);
+    if (metadata.error != DatasetError::None) view.error = metadata.error;
+    else {
+        struct ApplyContext { StorageTask* task; const Settings* settings; } context{this, &candidate};
+        const auto index_started = taskTimeMs();
+        Console.printf("[DATASET INDEX] generating %02u lang=%s\n", candidate.dataset, candidate.wordbook_language);
+        view.error = DatasetIndex(drive_, this,indexProgress,this).apply(directory, metadata, [](void* pointer) {
+            const auto& apply = *static_cast<ApplyContext*>(pointer);
+            return apply.task->saveSettings(*apply.settings);
+        }, &context);
+        Console.printf("[DATASET INDEX] result=%u elapsed_ms=%lu\n", static_cast<unsigned>(view.error),
+                       static_cast<unsigned long>(taskTimeMs() - index_started));
+    }
+    if (view.error == DatasetError::None)
+        place_lookup_.configure(DatasetCatalog{}.directory(candidate.dataset), candidate.wordbook_language);
+}
+
 void StorageTask::completeJob() {
     const bool load_job = job_kind_ == JobKind::LoadSettings;
     const bool search_job = job_kind_ == JobKind::SearchPlace;
     const bool dataset_job = job_kind_ == JobKind::CheckDataset;
     const bool read_job = load_job || search_job || dataset_job;
     if (job_kind_ == JobKind::BrowseDatasets) {
-        DatasetView view{};view.purpose=dataset_request_.purpose;view.number=dataset_request_.number;
-        const bool listing=dataset_request_.action==DatasetAction::Open || dataset_request_.action==DatasetAction::Older || dataset_request_.action==DatasetAction::Newer;
-        const bool maintenance=dataset_request_.action==DatasetAction::RebuildIndex || dataset_request_.action==DatasetAction::VerifyIndex;
-        const bool clearing = dataset_request_.action == DatasetAction::Clear;
-        const bool applying = clearing || dataset_request_.action == DatasetAction::Apply || maintenance;
-        index_started_at_=taskTimeMs();index_progress_={};index_progress_.token=dataset_request_.token;
-        index_progress_.verifying=dataset_request_.action==DatasetAction::VerifyIndex;
-        if (applying && log_writer_.hasRetainedSession()) view.error = DatasetError::NotStopped;
-        else if (clearing) {
-            Settings candidate = dataset_request_.reset_settings ? defaultSettings() : state_.settings;
-            candidate.dataset = 0;
-            std::memset(candidate.wordbook_language, 0, sizeof(candidate.wordbook_language));
-            if (!saveSettings(candidate)) view.error = DatasetError::SaveFailed;
-        } else if (maintenance && (!dataset_request_.number || dataset_request_.number>99)) view.error = DatasetError::Unselected;
-        else if(listing && dataset_request_.purpose==DatasetPurpose::Select && (!mounted_ || state_.card_state!=CardState::Mounted)) view.count=1;
-        else if (!mounted_ || state_.card_state != CardState::Mounted) view.error = DatasetError::Missing;
-        else if(maintenance) {
-            const bool active=dataset_request_.number==state_.settings.dataset;
-            if(active)place_lookup_.close();
-            const auto directory=DatasetCatalog{}.directory(dataset_request_.number);
-            const auto metadata=readDatasetMetadata(directory,state_.settings.language,"",this);
-            view.error=metadata.error;
-            if(view.error==DatasetError::None) {
-                DatasetIndex index(drive_,this,indexProgress,this);
-                view.error=dataset_request_.action==DatasetAction::RebuildIndex?
-                    index.rebuild(directory,metadata,dataset_request_.index_target):
-                    index.verifyAgainstDataset(directory,metadata,dataset_request_.index_target);
-            }
-            if(active && view.error!=DatasetError::None)releaseDataset(datasetErrorState(view.error));
-            Console.printf("[DATASET CACHE] action=%s target=%02u result=%u elapsed_ms=%lu\n",
-                dataset_request_.action==DatasetAction::RebuildIndex?"REBUILD":"VERIFY",dataset_request_.number,
-                static_cast<unsigned>(view.error),static_cast<unsigned long>(taskTimeMs()-index_started_at_));
-        } else {
-            view = DatasetCatalog("/sd/dataset", this, drive_).read(dataset_request_, state_.settings.language);
-        }
-        if(!usb_mode_ && state_.card_state!=CardState::Mounted) releaseDataset(PlaceState::NoCard);
-        if (applying && !maintenance && !clearing && view.error == DatasetError::None) {
-            Settings candidate = dataset_request_.reset_settings ? defaultSettings() : state_.settings;
-            candidate.dataset = dataset_request_.number;
-            std::snprintf(candidate.wordbook_language, sizeof(candidate.wordbook_language), "%s", view.info.language);
-            const auto directory = DatasetCatalog{}.directory(candidate.dataset);
-            const auto metadata = readDatasetMetadata(directory, candidate.language, candidate.wordbook_language, this);
-            if (metadata.error != DatasetError::None) view.error = metadata.error;
-            else {
-                struct ApplyContext { StorageTask* task; const Settings* settings; } context{this, &candidate};
-                const auto index_started = taskTimeMs();
-                Console.printf("[DATASET INDEX] generating %02u lang=%s\n", candidate.dataset, candidate.wordbook_language);
-                view.error = DatasetIndex(drive_, this,indexProgress,this).apply(directory, metadata, [](void* pointer) {
-                    const auto& apply = *static_cast<ApplyContext*>(pointer);
-                    return apply.task->saveSettings(*apply.settings);
-                }, &context);
-                Console.printf("[DATASET INDEX] result=%u elapsed_ms=%lu\n", static_cast<unsigned>(view.error),
-                               static_cast<unsigned long>(taskTimeMs() - index_started));
-            }
-            if (view.error == DatasetError::None)
-                place_lookup_.configure(DatasetCatalog{}.directory(candidate.dataset), candidate.wordbook_language);
-        }
-        if(applying) {
-            index_progress_.phase=view.error==DatasetError::None?IndexPhase::Complete:IndexPhase::Failed;
-            index_progress_.percent=view.error==DatasetError::None?100:index_progress_.percent;
-            index_progress_.elapsed_ms=taskTimeMs()-index_started_at_;view.progress=index_progress_;
-            index_progress_dirty_=false;
-        }
-        view.applying = applying; view.revision = dataset_request_.token;
-        state_.busy = has_read_; ++state_.revision;
-        completion_ = {}; completion_.kind = view.error == DatasetError::None ? MessageKind::ReadCompleted : MessageKind::ReadFailed;
-        completion_.source = TaskId::Storage; completion_.request_id = job_request_id_;
-        completion_.sequence = ++sequence_; completion_.sent_at_ms = taskTimeMs();
-        auto& result = completion_.payload.storage_completion;
-        result.request_id = job_request_id_; result.snapshot = state_;
-        result.read_kind = StorageReadKind::DatasetBrowser; result.dataset_view = view;
-        has_completion_ = true; job_kind_ = JobKind::None;
+        completeDatasetJob();
         return;
     }
     bool ok = false;
@@ -537,6 +573,29 @@ void StorageTask::stepLogRead() {
                   static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)));
 }
 
+void StorageTask::stepMap() {
+    if(map_job_.reading()) {
+        const auto request=map_job_.info().request;
+        const auto started=taskTimeMs();
+        reportMapHeap("read-begin",request.token);
+        map_job_.loaded(readBoundaryMap(DatasetCatalog{}.directory(state_.settings.dataset),
+            state_.settings.wordbook_language,request,drive_,this));
+        Console.printf("[MAP] read token=%lu error=%u elapsed_ms=%lu heap=%u\n",
+            static_cast<unsigned long>(request.token),static_cast<unsigned>(map_job_.info().error),
+            static_cast<unsigned long>(taskTimeMs()-started),ESP.getFreeHeap());
+        reportMapHeap("render-begin",request.token);
+    } else {
+        const bool was_complete=map_job_.complete();
+        map_job_.step();
+        if(!was_complete && map_job_.complete())reportMapHeap("render-done",map_job_.info().request.token);
+    }
+    if(map_job_.notificationPending()) {
+        AppNotification event{};event.kind=MessageKind::MapCompleted;event.source=TaskId::Storage;
+        event.request_id=map_job_.info().request.token;event.payload.map=map_job_.info();
+        if(sendSpeculative(notifications_,event)==SpeculativeResult::Queued)map_job_.notificationSent();
+    }
+}
+
 void StorageTask::run() {
     for (;;) {
         sendReturn();
@@ -552,6 +611,7 @@ void StorageTask::run() {
             if(usb_mode_ && usb_work_==UsbWork::PublishMenu) log_reader_.cancel();
             stepLogRead();
         }
+        if(!usb_mode_ && !has_return_ && !hasJob() && !has_completion_ && !has_read_) stepMap();
         if (usb_mode_) {
             if(!has_return_ && !hasJob() && !has_read_ && !has_completion_) stepUsbExport();
             const auto view = usb_.snapshot();

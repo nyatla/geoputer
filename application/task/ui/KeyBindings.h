@@ -12,6 +12,7 @@ inline UiKey mapPhysicalKey(char key, bool fn) {
         case '1': return fn ? UiKey::F1 : UiKey::OpenLivePlace;
         case '2': return UiKey::OpenGpsLogger;
         case '3': return UiKey::OpenLogs;
+        case '4': return UiKey::OpenMap;
         case 'd': return UiKey::DeleteLog;
         case ';': return UiKey::Up;
         case '.': return UiKey::Down;

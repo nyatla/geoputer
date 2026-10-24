@@ -5,6 +5,7 @@
 #include "task/ui/UiModel.h"
 
 using namespace geoputer;
+void testMaps();
 void testGps();
 void testSettings();
 void testPlace();
@@ -300,6 +301,7 @@ int main() {
         testSyncCallerEnvelopeAndQueuedSnapshot();
         testUiActionOwnershipAndStaleUpdates();
         testRepeatedUiRoundTripsAndValueCopies();
+        testMaps();
         testGps();
         testSettings();
         testSettingsLanguage();

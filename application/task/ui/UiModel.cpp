@@ -5,6 +5,7 @@
 #include "ScreenNavigation.h"
 #include "DatasetPresentation.h"
 #include <cstring>
+#include <cmath>
 
 namespace geoputer {
 
@@ -15,7 +16,7 @@ static bool switchingMode(const UiData& data) {
 
 OperationStatus UiModel::setScreen(const SetUiScreen& command) {
     if (command.screen != ScreenId::LivePlace && command.screen != ScreenId::Settings && command.screen != ScreenId::Boot &&
-        command.screen != ScreenId::GpsLogger && command.screen != ScreenId::UsbStorage && !isLogBrowser(command.screen)) {
+        command.screen != ScreenId::Map && command.screen != ScreenId::GpsLogger && command.screen != ScreenId::UsbStorage && !isLogBrowser(command.screen)) {
         return OperationStatus::InvalidRequest;
     }
     if (command.generation <= generation_) return OperationStatus::StaleContent;
@@ -26,6 +27,7 @@ OperationStatus UiModel::setScreen(const SetUiScreen& command) {
     }
     acknowledge(command.processed_action_id, command.action_result);
     if (screen_ == ScreenId::Boot || command.screen == ScreenId::Boot) last_input_ms_ = 0;
+    map_frame_.clear();
     screen_ = command.screen;
     mode_ = command.mode;
     generation_ = command.generation;
@@ -56,6 +58,25 @@ OperationStatus UiModel::updateContent(const UpdateUiContent& command) {
     return OperationStatus::Ok;
 }
 
+bool UiModel::acceptsMap(const map::FrameInfo& info) const {
+    return screen_==ScreenId::Map && mode_==DisplayMode::View && info.request.screen_generation==generation_ &&
+        info.request.dataset_generation==data_.dataset.generation && info.width==map::MaxWidth && info.height==map::MaxHeight &&
+        std::isfinite(info.meters_per_pixel) && info.meters_per_pixel>0;
+}
+OperationStatus UiModel::beginMapFrame(const map::Transfer& transfer) {
+    if(!acceptsMap(transfer.info))return OperationStatus::StaleContent;
+    return map_frame_.begin(transfer.info)?OperationStatus::Ok:OperationStatus::Unavailable;
+}
+OperationStatus UiModel::writeMapRows(const map::Transfer& transfer) {
+    if(!acceptsMap(transfer.info))return OperationStatus::StaleContent;
+    return map_frame_.write(transfer)?OperationStatus::Ok:OperationStatus::InvalidRequest;
+}
+OperationStatus UiModel::commitMapFrame(const map::Transfer& transfer) {
+    if(!acceptsMap(transfer.info))return OperationStatus::StaleContent;
+    if(!map_frame_.commit(transfer.info))return OperationStatus::InvalidRequest;
+    redraw_=true;return OperationStatus::Ok;
+}
+
 void UiModel::copyData(const UiData& data) {
     if (data.gps.fix.valid) clock_.setInitialUtc(data.gps.fix.utc_ms, last_tick_ms_);
     const auto previous_sd = data_.storage.sd;
@@ -69,6 +90,7 @@ void UiModel::copyData(const UiData& data) {
     const auto old_browse=data_.browse.revision;
     const auto old_dataset_revision=data_.datasets.revision;
     const auto old_export=data_.storage.export_job.phase;
+    if(data.dataset.generation!=data_.dataset.generation)map_frame_.clear();
     data_ = data;
     // Activity is global; an older job snapshot cannot roll it back.
     if (newerRevision(previous_sd.revision, data_.storage.sd.revision)) data_.storage.sd = previous_sd;
@@ -182,65 +204,87 @@ void UiModel::keyPressed(UiKey key, uint32_t now_ms) {
             return;
         }
     }
+    if (screen_ == ScreenId::Map) {
+        if(key==UiKey::Escape)action(ActionKind::ChangeScreen);
+        return;
+    }
     if (screen_ == ScreenId::LivePlace) {
-        if (key == UiKey::PauseLog && data_.recording.state == RecordingState::Recording) {
-            dialog_.open(DialogKind::PauseLog); changed();
-        }
+        livePlaceKey(key);
         return;
     }
     if (screen_ == ScreenId::GpsLogger) {
-        const auto state = data_.recording.state;
-        const unsigned count = state == RecordingState::Paused ? 2 : 1;
-        if (selection_ >= count) selection_ = 0;
-        if (key == UiKey::Escape) action(ActionKind::ChangeScreen);
-        else if (key == UiKey::Up && selection_) { --selection_; changed(); }
-        else if (key == UiKey::Down && selection_ + 1u < count) { ++selection_; changed(); }
-        else if (key == UiKey::Enter && !data_.storage.log.closing) {
-            if (state == RecordingState::Stopped || (state == RecordingState::Paused && !selection_)) {
-                action(ActionKind::Logging);
-                action_.log_action = state == RecordingState::Stopped ? LogAction::Start : LogAction::Resume;
-            } else {
-                dialog_.open(DialogKind::StopLog); changed();
-            }
-        }
+        gpsLoggerKey(key);
         return;
     }
     if(isLogBrowser(screen_)) {
-        const auto& view=data_.browse;
-        if(view.deleting) return; // Accepted deletion must finish before leaving/sleeping.
-        if(key==UiKey::Escape) {
-            action(ActionKind::ChangeScreen,screen_==ScreenId::Logs?ScreenId::LivePlace:screen_==ScreenId::LogDetail?ScreenId::Logs:ScreenId::LogDetail);
-            return;
-        }
-        if(screen_==ScreenId::LogPoint) {
-            if(key==UiKey::Up && view.target) browseAction(BrowseAction::Point,view.target-1);
-            if(key==UiKey::Down && view.target+1<view.summary.records) browseAction(BrowseAction::Point,view.target+1);
-            return;
-        }
-        if(view.loading) return;
-        if(screen_==ScreenId::Logs) {
-            if(key==UiKey::DeleteLog && selection_<view.count) {
-                dialog_.open(DialogKind::DeleteLog, !(view.active_mask & (1u << selection_))); changed();
-            } else if(key==UiKey::Up) {
-                if(selection_) { --selection_; changed(); }
-                else if(view.has_newer) browseAction(BrowseAction::Newer);
-            } else if(key==UiKey::Down) {
-                if(selection_+1<view.count) { ++selection_; changed(); }
-                else if(view.has_older) browseAction(BrowseAction::Older);
-            } else if(key==UiKey::Enter) {
-                if(view.count) browseAction(BrowseAction::OpenFile,selection_);
-                else browseAction(BrowseAction::Reload);
-            }
-        } else {
-            if(key==UiKey::Up && selection_) { --selection_; changed(); }
-            if(key==UiKey::Down && selection_<1) { ++selection_; changed(); }
-            if(key==UiKey::Enter) {
-                if(selection_ || !view.summary.session_id) browseAction(BrowseAction::Reload);
-                else if(view.summary.records) browseAction(BrowseAction::Points);
-            }
-        }
+        logBrowserKey(key);
         return;
     }
+    settingsKey(key);
+}
+
+void UiModel::livePlaceKey(UiKey key) {
+    if (key == UiKey::PauseLog && data_.recording.state == RecordingState::Recording) {
+        dialog_.open(DialogKind::PauseLog); changed();
+    }
+    return;
+}
+
+void UiModel::gpsLoggerKey(UiKey key) {
+    const auto state = data_.recording.state;
+    const unsigned count = state == RecordingState::Paused ? 2 : 1;
+    if (selection_ >= count) selection_ = 0;
+    if (key == UiKey::Escape) action(ActionKind::ChangeScreen);
+    else if (key == UiKey::Up && selection_) { --selection_; changed(); }
+    else if (key == UiKey::Down && selection_ + 1u < count) { ++selection_; changed(); }
+    else if (key == UiKey::Enter && !data_.storage.log.closing) {
+        if (state == RecordingState::Stopped || (state == RecordingState::Paused && !selection_)) {
+            action(ActionKind::Logging);
+            action_.log_action = state == RecordingState::Stopped ? LogAction::Start : LogAction::Resume;
+        } else {
+            dialog_.open(DialogKind::StopLog); changed();
+        }
+    }
+    return;
+}
+
+void UiModel::logBrowserKey(UiKey key) {
+    const auto& view=data_.browse;
+    if(key==UiKey::Escape) {
+        action(ActionKind::ChangeScreen,screen_==ScreenId::Logs?ScreenId::LivePlace:screen_==ScreenId::LogDetail?ScreenId::Logs:ScreenId::LogDetail);
+        return;
+    }
+    if(screen_==ScreenId::LogPoint) {
+        if(key==UiKey::Up && view.target) browseAction(BrowseAction::Point,view.target-1);
+        if(key==UiKey::Down && view.target+1<view.summary.records) browseAction(BrowseAction::Point,view.target+1);
+        return;
+    }
+    if(view.loading) return;
+    if(screen_==ScreenId::Logs) {
+        if(key==UiKey::DeleteLog && selection_<view.count) {
+            dialog_.open(DialogKind::DeleteLog, !(view.active_mask & (1u << selection_))); changed();
+        } else if(key==UiKey::Up) {
+            if(selection_) { --selection_; changed(); }
+            else if(view.has_newer) browseAction(BrowseAction::Newer);
+        } else if(key==UiKey::Down) {
+            if(selection_+1<view.count) { ++selection_; changed(); }
+            else if(view.has_older) browseAction(BrowseAction::Older);
+        } else if(key==UiKey::Enter) {
+            if(view.count) browseAction(BrowseAction::OpenFile,selection_);
+            else browseAction(BrowseAction::Reload);
+        }
+    } else {
+        if(key==UiKey::Up && selection_) { --selection_; changed(); }
+        if(key==UiKey::Down && selection_<1) { ++selection_; changed(); }
+        if(key==UiKey::Enter) {
+            if(selection_ || !view.summary.session_id) browseAction(BrowseAction::Reload);
+            else if(view.summary.records) browseAction(BrowseAction::Points);
+        }
+    }
+    return;
+}
+
+void UiModel::settingsKey(UiKey key) {
     if (screen_ == ScreenId::Settings && (page_ == SettingsPage::DatasetList || page_ == SettingsPage::DatasetDetail)) {
         const auto& view = data_.datasets;
         if (view.applying) return;
@@ -485,7 +529,7 @@ void UiModel::acceptDialog(DialogKind kind) {
             datasetAction(DatasetAction::Clear);break;
         case DialogKind::RebuildIndex:case DialogKind::VerifyIndex:
             datasetAction(kind==DialogKind::RebuildIndex?DatasetAction::RebuildIndex:DatasetAction::VerifyIndex,selection_);
-            action_.index_target=IndexTarget::All;page_=SettingsPage::DatasetIndex;changed();break;
+            page_=SettingsPage::DatasetIndex;changed();break;
         case DialogKind::None: return;
     }
     action_.confirmed = true;

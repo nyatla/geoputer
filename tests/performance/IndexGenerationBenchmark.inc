@@ -15,7 +15,7 @@ IndexGenerationMeasurement measureIndexGeneration(const std::string& directory,
         result.map_bytes=map_stamp.bytes;result.book_bytes=book_stamp.bytes;
         if(stage)stage("generate");
         start=monotonicMicros();created=true;
-        generate(drive,scratch,directory,metadata,map_stamp,book_stamp,observer);
+        generatePlanned(drive,scratch,directory,metadata,map_stamp,bookSources(drive,directory,metadata,observer),observer,{});
         result.generate_us=monotonicMicros()-start;
         result.index_bytes=statFile(drive,scratch).bytes;
         DatasetIndex index(drive,observer);

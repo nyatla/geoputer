@@ -10,9 +10,9 @@ public:
                          std::shared_ptr<const galuchat::ReaderFactory> index)
         : info_(info),map_(std::move(map)),index_(std::move(index)) {}
     void readRect(const galuchat::Rect& target,uint32_t* pixels) const;
-    uint32_t chunkCount() const { return value(36); }
-    int unitInvX() const { return static_cast<int>(value(40)); }
-    int unitInvY() const { return static_cast<int>(value(44)); }
+    uint32_t chunkCount() const { return value(index_format::Header::ChunkCount); }
+    int unitInvX() const { return static_cast<int>(value(index_format::Header::UnitInvX)); }
+    int unitInvY() const { return static_cast<int>(value(index_format::Header::UnitInvY)); }
     galuchat::DoubleRect coverage() const {
         return {double(info_.west)/unitInvX(),double(info_.south)/unitInvY(),
                 double(info_.width)/unitInvX(),double(info_.height)/unitInvY()};

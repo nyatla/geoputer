@@ -17,6 +17,12 @@ public:
     void runOnce();
 
 private:
+    void processMap();
+    void completeMap(const map::FrameInfo& info);
+    void mapState(bool busy,map::Error error);
+    map::Error mapAvailability() const;
+    [[gnu::noinline]] bool mapStorageCommand(MessageKind kind,const map::Request& command);
+    [[gnu::noinline]] bool mapUiCommand(MessageKind kind,const map::Transfer& transfer);
     bool callUi(UiRequest& request, SyncReturn& result);
     template <typename Request>
     bool callTask(TaskId peer, Queue<Request, 1>& destination, Request& request, SyncReturn& result) {
@@ -87,6 +93,12 @@ private:
     uint32_t browse_token_=0, browse_waiting_=0, browse_retry_at_=0, browse_cache_start_=0;
     uint8_t browse_cache_count_=0;
     bool browse_need_=false, browse_cancel_=false, browse_single_=false;
+    map::Request map_request_{};
+    map::FrameInfo map_info_{};
+    map::Transfer map_transfer_{};
+    uint32_t map_token_=0xa0000000u,map_started_at_=0,map_retry_at_=0,map_last_sample_=0;
+    uint16_t map_row_=0;
+    bool map_cancel_=false,map_ready_=false,map_begun_=false,map_started_=false;
     PlaceSearchFlow place_flow_;
     uint32_t dataset_token_ = 0, dataset_waiting_ = 0;
     bool dataset_applying_ = false, restart_pending_ = false;

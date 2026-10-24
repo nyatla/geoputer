@@ -9,6 +9,7 @@
 #include "usb/UsbStorage.h"
 #include "export/LogExporter.h"
 #include "../../TaskMessages.h"
+#include "MapBuildJob.h"
 #include "../../utils/Task.h"
 
 namespace geoputer {
@@ -23,6 +24,13 @@ public:
 protected:
     void run() override;
 private:
+    void stepMap();
+    MapBuildJob map_job_;
+    void completeDatasetJob();
+    void clearDatasetSelection(DatasetView& view);
+    void maintainDatasetIndex(DatasetView& view);
+    void applyDatasetSelection(DatasetView& view);
+
     enum class JobKind : uint8_t { None, LoadSettings, SearchPlace, CheckDataset, BrowseDatasets, Operation };
     bool hasJob() const { return job_kind_ != JobKind::None; }
     void handle(const StorageRequest& request);

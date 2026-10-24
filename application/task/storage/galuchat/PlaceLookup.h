@@ -24,7 +24,6 @@ public:
     void setDrive(uint8_t drive) { drive_=drive; }
     const std::string& selectedLanguage() const { return language_; }
     PlaceResult prepare();  // Validate file pair/headers/encoding without requiring GPS.
-    void invalidate() { reject(PlaceState::DataError); }
     void close(); // Explicit revalidation boundary; clears a latched failure.
     DatasetInfo datasetInfo() const { return dataset_; }
     MapCacheStats cacheStats() const { return map_ ? map_->stats() : MapCacheStats{}; }

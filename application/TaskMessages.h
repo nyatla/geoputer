@@ -43,6 +43,8 @@ enum class MessageKind : uint8_t {
     DatasetProgress,
     UsbStorageChanged,
     UsbExportOperation,
+    RequestMap, ReadMapRows, ReleaseMap, CancelMap, MapCompleted,
+    BeginMapFrame, WriteMapRows, CommitMapFrame,
     SyncReturn,
 };
 enum class OperationStatus : uint8_t { Ok, InvalidRequest, StaleContent, Unavailable };
@@ -53,6 +55,7 @@ struct SyncReturn {
     UiSnapshot content;
     GpsSnapshot gps;
     StorageSnapshot storage;
+    map::Transfer map;
 };
 
 struct UiContentChanged {
@@ -75,6 +78,7 @@ struct Message : MessageHeader { Payload payload; };
 union UiRequestPayload {
     SetUiScreen screen;
     UpdateUiContent update;
+    map::Transfer map;
 };
 union StorageRequestPayload {
     StorageCommand storage_command;
@@ -83,8 +87,10 @@ union StorageRequestPayload {
     LogReadRequest log_read;
     DatasetRequest dataset;
     ExportRequest export_request;
+    map::Request map;
 };
 union AppNotificationPayload {
+    map::FrameInfo map;
     IndexProgress index_progress;
     StorageSnapshot usb_storage;
     UiContentChanged changed;

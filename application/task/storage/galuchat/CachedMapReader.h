@@ -38,7 +38,6 @@ public:
     void invalidate() { stats_.valid = false; if (observer_) observer_->cacheState(RgCacheState::Unprepared); }
     const MapCacheStats& stats() const { return stats_; }
     size_t chunkCount() const { return reader_.chunkCount(); }
-    galuchat::DoubleRect coverage() const { return reader_.coverage(); }
     int unitInvX() const { return reader_.unitInvX(); }
     int unitInvY() const { return reader_.unitInvY(); }
 

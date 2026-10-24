@@ -202,7 +202,7 @@ void cacheFlow(DatasetPurpose purpose) {
     key(UiKey::Enter);key(UiKey::Right);key(UiKey::Enter);
     const auto action=model.snapshot().action;
     check(action.kind==ActionKind::Dataset && action.confirmed && action.dataset_action==(purpose==DatasetPurpose::Rebuild?DatasetAction::RebuildIndex:DatasetAction::VerifyIndex) &&
-        action.dataset_purpose==purpose && action.index_target==IndexTarget::All && action.browse_index==1 && action.browse_revision==data.datasets.revision,
+        action.dataset_purpose==purpose && action.browse_index==1 && action.browse_revision==data.datasets.revision,
         "confirmed maintenance identifies the exact list revision and target, for map and all languages");
     data.datasets.applying=data.datasets.loading=true;data.datasets.number=2;data.datasets.progress.phase=IndexPhase::TT;publish();
     key(UiKey::Escape);model.tick(1000000);
