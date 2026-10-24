@@ -32,6 +32,20 @@ Galuchat coreとSDKには未反映であり、SDKから再コピーすると試�
 - `GaluchatImageDataChunk01Reader::readRectFromBlockRange(source, range, x, y, dest)`は、外部索引で位置決めしたByteReaderから矩形の必要部分を復号する静的APIである。`BlockRange{width,height,square_unit,first_block,block_count,data_bytes}`を渡す。sourceは群先頭のBlockHeader・バイト境界へ置く。GI01ヘッダーを読まず、画像全体の座標で描画し、最後の必要ブロックで停止する。長さは群のバイト範囲に制限し、全群を消費した場合は末尾位置も照合する。RAWの構造・ビット整列・RAWS/LZSSの終端検証は既存の復号処理で行う。
 - 既存のGI01コンストラクタ・矩形メソッドと逐次Readerは変更せず、追加APIを明示的に呼んだ場合だけ群の途中再開を使用する。逐次Readerのトレースは従来の黄金値と照合する。
 
+## アプリ限定のRLE区間描画
+
+RLEの出力先が`setSpan(x, y, count, step_x, step_y, value)`を持つ場合、
+ランを行または列の境界で分割し、矩形との交差を区間単位で計算する。
+`count`は正数、`(step_x, step_y)`は`(1,0)`・`(-1,0)`・`(0,1)`・`(0,-1)`のいずれか、
+`value`は`int64_t`である。始点と区間内の全座標は出力先の有効範囲内となる。
+出力先は指定された順序で画素を書き込む。4種類の走査モードを維持し、追加バッファを確保しない。
+
+`set`のみを持つ出力先は従来の画素単位処理を使用する。既存の矩形API・入力ストリームの消費・
+RLEのラン復号と検証・RAW/MONO・LZSSは変更しない。
+アプリの`DiskIndexedMapReader`だけがこの追加能力を利用し、ゼロを透過し、
+先に得た非ゼロの区域コードを保持する。Core・SDKへの同期は別途行う。
+ホストの互換性検証と実機比較は[RLE区間描画の最適化](../../doc/検証/RLE区間描画の最適化.md)を参照する。
+
 ## アプリ限定のWordbook索引用API
 
 `gis_wordbook_reader.hpp`の既存コンストラクタ・逐次検索メソッドは変更せず、外部索引で位置決めしたByteReaderから読む静的APIを追加する。API自身は索引を保持しない。
@@ -47,7 +61,7 @@ Galuchat coreとSDKには未反映であり、SDKから再コピーすると試�
 | ヘッダ | SHA-256 |
 |---|---|
 | `gis_wordbook_reader.hpp` | `27018e7f168ac18ad8f9bf9751ca74be61342e57b275e5941e23a28f539af8aa` |
-| `wgsmap3_reader.hpp` | `7b8d289e08021ee8d248f37e77ed651842940678486465ef7d174657fabb9bcf` |
+| `wgsmap3_reader.hpp` | `267d0bf3a402f62b065b6a7fac4220e25e628b90167a2a36d873de5476f23f4c` |
 | `wgsmapset3_indexed_reader.hpp` | `bab035394f1b82c13511d8e2bfa7d9b0140c54ddcb9209e041c0e2534848287f` |
 
 ホスト検証はリポジトリのルートで`python3 tests/run_galuchat_ranges.py`を実行する。

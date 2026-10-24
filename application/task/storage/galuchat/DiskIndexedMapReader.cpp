@@ -2,6 +2,7 @@
 #include "../dataset/DatasetIndexFormat.h"
 #include <algorithm>
 #include <array>
+#include <cstddef>
 #include <limits>
 #include <stdexcept>
 
@@ -20,6 +21,20 @@ struct Destination {
             throw std::runtime_error("region code exceeds uint32 cache range");
         auto& pixel = pixels[size_t(y + dy) * pitch + x + dx];
         if (value && !pixel) pixel = static_cast<uint32_t>(value); // First nonzero chunk wins.
+    }
+    // Coordinates are clipped by the decoder; preserve first-nonzero composition.
+    void setSpan(int x, int y, int count, int step_x, int step_y, int64_t value) {
+        if (value < 0 || uint64_t(value) > UINT32_MAX)
+            throw std::runtime_error("region code exceeds uint32 cache range");
+        if (!value) return;
+        const auto code = static_cast<uint32_t>(value);
+        auto* pixel = pixels + size_t(y + dy) * pitch + x + dx;
+        const std::ptrdiff_t stride = std::ptrdiff_t(step_y) * pitch + step_x;
+        while (count > 0) {
+            if (!*pixel) *pixel = code;
+            // Do not form an out-of-array pointer after the last reverse write.
+            if (--count) pixel += stride;
+        }
     }
 };
 

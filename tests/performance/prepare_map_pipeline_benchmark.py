@@ -7,7 +7,9 @@ import re
 root=Path(__file__).resolve().parents[2]
 parser=argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--name',default='map-pipeline',help='Artifact directory name under .pio')
-parser.add_argument('--compare-stdio',action='store_true',help='Compare with the pre-FatFs Reader in the same firmware')
+comparison=parser.add_mutually_exclusive_group()
+comparison.add_argument('--compare-rle',action='store_true',help='Compare scalar and span RLE painting with the same FatFs Reader')
+comparison.add_argument('--compare-stdio',action='store_true',help='Compare with the pre-FatFs Reader in the same firmware')
 args=parser.parse_args()
 if not re.fullmatch(r'[a-z0-9-]+',args.name): parser.error('Invalid artifact name')
 work=root/'.pio'/args.name
@@ -29,6 +31,12 @@ s=s.replace('''                galuchat::GaluchatImageDataChunk01Reader::readRec
 s=s.replace('''*stream, {int(width), int(height), int(square), number, count, length}, x, y, view);''','''*stream, {int(width), int(height), int(square), number, count, length}, x, y, view); }''')
 assert s.count('benchmark::DecodeScope decode_scope;')==2
 p.write_text(s)
+if args.compare_rle:
+    # Same library, parser and file adapter. Only destination span opt-in differs.
+    base=p.with_name('ScalarDiskIndexedMapReader.cpp')
+    base.write_text(s.replace('DiskIndexedMapReader','ScalarDiskIndexedMapReader').replace('void setSpan(', 'void unusedSpan('))
+    header=p.with_suffix('.h')
+    header.with_name('ScalarDiskIndexedMapReader.h').write_text(header.read_text().replace('DiskIndexedMapReader','ScalarDiskIndexedMapReader'))
 p=work/'application/task/storage/StorageTask.cpp'
 s=p.read_text().replace('#include "StorageTask.h"','#include "StorageTask.h"\n#include "../../benchmark/MapPipelineBenchmark.h"')
 at=s.index('        vTaskDelay(pdMS_TO_TICKS(5));',s.index('void StorageTask::run()'))
@@ -48,6 +56,7 @@ s=s[:at]+'''        static bool pipeline_benchmark_ran=false;
 p.write_text(s)
 s=(root/'platformio.ini').read_text().replace('src_dir = application',f'src_dir = .pio/{args.name}/application\nbuild_dir = .pio/{args.name}/build')
 if args.compare_stdio: s=s.replace('    -Wall','    -Wall\n    -DGEOPUTER_COMPARE_STDIO')
+if args.compare_rle: s=s.replace('    -Wall','    -Wall\n    -DGEOPUTER_COMPARE_RLE')
 (root/'.pio'/f'{args.name}.ini').write_text(s)
 for name in ['flash.py','capture.py']:
     shutil.copyfile(root/'.pio/map-heap'/name,work/name)

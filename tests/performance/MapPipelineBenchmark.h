@@ -6,6 +6,9 @@
 #ifdef GEOPUTER_COMPARE_STDIO
 #include "ObservedFileReaderStdio.h"
 #endif
+#ifdef GEOPUTER_COMPARE_RLE
+#include "task/storage/galuchat/ScalarDiskIndexedMapReader.h"
+#endif
 namespace geoputer::benchmark {
 template<class Print> void runMapPipelineBenchmark(const std::string& directory, const char* language,
                                                    uint8_t drive, StorageObserver* parent, Print print) {
@@ -33,22 +36,27 @@ template<class Print> void runMapPipelineBenchmark(const std::string& directory,
     uint64_t hashes[3]{};
     bool have_hash[3]{};
     uint32_t current = 0;
+#ifdef GEOPUTER_COMPARE_RLE
+    ScalarDiskIndexedMapReader scalar_reader(info, map_factory, index_factory);
+#endif
 #ifdef GEOPUTER_COMPARE_STDIO
     auto stdio_map = std::make_shared<StdioObservedFileReaderFactory>(map_path, &observer, &map_io,
         FileReadOptions{config::MapRectReadBufferBytes, config::FileReadThroughSkipBytes}, drive);
     auto stdio_index = std::make_shared<StdioObservedFileReaderFactory>(index_path, &observer, &index_io,
         FileReadOptions{config::IndexReadBufferBytes, 0}, drive);
     DiskIndexedMapReader stdio_reader(info, stdio_map, stdio_index);
-    constexpr unsigned backends=2, rounds=6;
     print("[PIPE-READER] fil_bytes=%u direct_reader_bytes=%u stdio_reader_bytes=%u\n",
         unsigned(sizeof(FIL)),unsigned(sizeof(ObservedFileReader)),unsigned(sizeof(StdioObservedFileReader)));
+#endif
+#if defined(GEOPUTER_COMPARE_STDIO) || defined(GEOPUTER_COMPARE_RLE)
+    constexpr unsigned backends=2, rounds=6;
 #else
     constexpr unsigned backends=1, rounds=3;
 #endif
-#ifndef GEOPUTER_COMPARE_STDIO
+#if !defined(GEOPUTER_COMPARE_STDIO) && !defined(GEOPUTER_COMPARE_RLE)
     const unsigned order[3][3] = {{0,1,2},{2,0,1},{1,2,0}};
 #endif
-#ifdef GEOPUTER_COMPARE_STDIO
+#if defined(GEOPUTER_COMPARE_STDIO) || defined(GEOPUTER_COMPARE_RLE)
     // Each scale is a separate workload. Run larger work areas first so the
     // optional shrink prototypes do not fragment a later normal-size request.
     for (unsigned kind : {0u,2u,1u}) for (unsigned round=0;round<rounds;++round)
@@ -57,12 +65,21 @@ template<class Print> void runMapPipelineBenchmark(const std::string& directory,
 #endif
     for(unsigned slot=0;slot<backends;++slot) {
         const unsigned backend=(slot+round)%backends;
-        const char* backend_name=backend?"stdio":"fatfs";
-#ifdef GEOPUTER_COMPARE_STDIO
-        auto& active_reader=backend?stdio_reader:reader;
+#ifdef GEOPUTER_COMPARE_RLE
+        const char* backend_name=backend?"scalar":"span";
 #else
-        auto& active_reader=reader;
+        const char* backend_name=backend?"stdio":"fatfs";
 #endif
+        auto read_rect=[&](const galuchat::Rect& r,uint32_t* pixels) {
+#ifdef GEOPUTER_COMPARE_RLE
+            if(backend) scalar_reader.readRect(r,pixels);
+            else reader.readRect(r,pixels);
+#elif defined(GEOPUTER_COMPARE_STDIO)
+            (backend?stdio_reader:reader).readRect(r,pixels);
+#else
+            reader.readRect(r,pixels);
+#endif
+        };
         print("[PIPE-START] backend=%s round=%u scale=%u heap=%u largest=%u\n",backend_name,round+1,kind==0?1:kind==1?2:4,
             unsigned(heap_caps_get_free_size(MALLOC_CAP_8BIT)),unsigned(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT)));
         map_io={}; index_io={}; observer.reset();
@@ -80,7 +97,7 @@ template<class Print> void runMapPipelineBenchmark(const std::string& directory,
                 std::unique_ptr<uint32_t[]> pixels(new uint32_t[work_bytes/4]);
                 observer.sample();
                 auto tick=monotonicMicros();
-                active_reader.readRect({normal.source.x,normal.source.y,normal.source.width,normal.source.height},pixels.get());
+                read_rect({normal.source.x,normal.source.y,normal.source.width,normal.source.height},pixels.get());
                 read_us=monotonicMicros()-tick; read_calls=1;
                 observer.sample();
                 const map::RasterView view{pixels.get(),normal.source,work_bytes/4};
@@ -109,7 +126,7 @@ template<class Print> void runMapPipelineBenchmark(const std::string& directory,
                 // Both passes were executed, so total below is accounted by phases.
             } else {
                 const auto stats=renderStrips(kind==1?half:quarter,current,16,out,
-                    [&](const galuchat::Rect& r,uint32_t* dst){observer.sample();active_reader.readRect(r,dst);observer.sample();},
+                    [&](const galuchat::Rect& r,uint32_t* dst){observer.sample();read_rect(r,dst);observer.sample();},
                     [&]{observer.sample();vTaskDelay(1);});
                 read_us=stats.read_us;extract_us=stats.extract_us;yield_us=stats.yield_us;
                 read_calls=stats.calls;work_bytes=stats.work_bytes;
