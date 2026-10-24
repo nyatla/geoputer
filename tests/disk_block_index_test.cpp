@@ -123,18 +123,22 @@ void rleComposition() {
     // and disk-indexed block groups, with transparent zeros and overlapping chunks.
     for (bool grouped : {false,true}) for (int mode=0;mode<4;++mode) {
         const int r=grouped?128:16, columns=grouped?2:1;
-        for (int invalid : {0,1,2}) {
+        for (int invalid : {0,1,2}) for(int kind:{0,1,2}) {
             Bytes h(16); const std::string format="WGSMapSet/3";
             std::copy(format.begin(),format.end(),h.begin());
             h.insert(h.end(),{1,1,0,2,0,0,0,0});
             Bytes map=chunk("GLCH",h), records;
+            std::vector<Bytes> images;
             for (int layer=0;layer<2;++layer) {
-                std::vector<Bytes> blocks{rle_fixture::block(0,rle_fixture::cell(mode,0,
-                    rle_fixture::runs(r,2),invalid && layer==1 ? (invalid==1?uint64_t(UINT32_MAX)+1:0x81) : layer?99:0))};
+                const uint64_t value=invalid && layer==1 ? (invalid==1?uint64_t(UINT32_MAX)+1:0x81) : layer?99:kind==1?11:0;
+                Bytes cell;
+                if(!kind)cell=rle_fixture::cell(mode,0,rle_fixture::runs(r,2),value);
+                else {cell={0x28};rle_fixture::append(cell,rle_fixture::mb(value));}
+                std::vector<Bytes> blocks{rle_fixture::block(0,cell)};
                 // Delta palette encoding turns byte 0x81 into -1.
                 if(invalid==2 && layer==1) blocks[0][0]|=0x80;
                 if(grouped) {Bytes raw{0x70};raw.insert(raw.end(),size_t(r)*r,layer?77:0);blocks.push_back(rle_fixture::block(0,raw));}
-                const auto image=rle_fixture::image(r,blocks,columns);
+                const auto image=rle_fixture::image(r,blocks,columns);images.push_back(image);
                 const auto start=map.size();rle_fixture::append(map,image);
                 size_t first=map.size();for(const auto& b:blocks)first-=b.size();
                 std::array<uint8_t,40> c{};
@@ -155,17 +159,30 @@ void rleComposition() {
             auto mf=std::make_shared<galuchat::BufferReaderFactory>(map);
             auto ix=std::make_shared<galuchat::BufferReaderFactory>(index);
             geoputer::DiskIndexedMapReader actual(info,mf,ix);
-            galuchat::GaluchatWGSMapSet3Reader reference(map);
+            std::vector<galuchat::RawRaster> layers;
+            if(!invalid)for(const auto& bytes:images) {
+                galuchat::BufferReader source(bytes);galuchat::GaluchatImageDataChunk01Reader chunk(source);
+                layers.push_back(chunk.toRaster()); // Legacy set-only decoding of each layer.
+            }
             for(auto rect:std::vector<galuchat::Rect>{{0,0,columns*r,r},{-2,-3,r+5,r+6},{r/2,r/2,3,2}}) {
                 std::vector<uint32_t> pixels(size_t(rect.width)*rect.height,999);
                 if(invalid) {
                     if(rect.x || rect.y) continue; // Include the deliberately invalid run.
                     bool failed=false;
                     try {actual.readRect(rect,pixels.data());}catch(const std::runtime_error& e){failed=std::string(e.what())=="region code exceeds uint32 cache range";}
-                    check(failed,"RLE uint32 range error accepted");
+                    check(failed,"RLE/MONO uint32 range error accepted");
                 } else {
-                    actual.readRect(rect,pixels.data());const auto expected=reference.readWgsRect(rect);
-                    check(std::equal(pixels.begin(),pixels.end(),expected.data.begin()),"RLE destination composition differs");
+                    actual.readRect(rect,pixels.data());
+                    for(int y=0;y<rect.height;++y)for(int x=0;x<rect.width;++x) {
+                        const int px=rect.x+x,py=rect.y+y;int64_t expected=0;
+                        if(px>=0 && px<columns*r && py>=0 && py<r) {
+                            const size_t offset=size_t(py)*columns*r+px;
+                            // The app preserves the first nonzero layer. The SDK's
+                            // full-map rectangle wrapper instead permits overwrites.
+                            expected=layers[0].data[offset];if(!expected)expected=layers[1].data[offset];
+                        }
+                        check(pixels[size_t(y)*rect.width+x]==expected,"RLE/MONO destination composition differs");
+                    }
                 }
             }
         }

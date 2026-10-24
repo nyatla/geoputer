@@ -1,6 +1,7 @@
 #include "StorageTask.h"
 #include "../../utils/SyncClient.h"
 #include <cstring>
+#include <new>
 
 namespace geoputer {
 void StorageTask::handleUsbExport(const StorageRequest& request, SyncReturn& result) {
@@ -36,7 +37,7 @@ void StorageTask::stepUsbExport() {
         if(usbHostNeedsEject(usb_.snapshot()))return;
         job.phase=ExportPhase::Preparing;
         if(usb_.takeLocal()) {
-            log_reader_.setDrive(usb_.drive());exporter_.setDrive(usb_.drive());
+            log_reader_.setDrive(usb_.drive());
             state_.card_state=CardState::Mounted;state_.fat_type=32;
             job.phase=ExportPhase::Selecting;usb_work_=UsbWork::None;
         } else if(usbHostNeedsEject(usb_.snapshot()))job.phase=ExportPhase::WaitEject;
@@ -45,12 +46,21 @@ void StorageTask::stepUsbExport() {
         ++state_.revision;usb_dirty_=true;return;
     }
     if(usb_work_==UsbWork::Convert) {
+        if(!exporter_) {
+            try {
+                exporter_=std::make_unique<LogExporter>();
+                exporter_->setDrive(usb_.drive());
+            } catch(const std::bad_alloc&) {
+                job.error=ExportError::Memory;job.phase=ExportPhase::Publishing;
+                usb_work_=UsbWork::PublishResult;++state_.revision;usb_dirty_=true;return;
+            }
+        }
         if(!export_started_) {
-            export_started_=exporter_.begin(job.name,job.format);
+            export_started_=exporter_->begin(job.name,job.format);
             if(!export_started_) {job.error=ExportError::Close;job.phase=ExportPhase::Failed;usb_work_=UsbWork::None;}
-        } else exporter_.step();
-        const auto& progress=exporter_.snapshot();
-        const bool complete=export_started_ && !exporter_.running();
+        } else exporter_->step();
+        const auto& progress=exporter_->snapshot();
+        const bool complete=export_started_ && !exporter_->running();
         const auto now=taskTimeMs();
         if(!export_started_ || complete || job.total!=progress.total || now-export_progress_at_>=config::ExportProgressIntervalMs) {
             if(export_started_)job=progress;
@@ -62,10 +72,15 @@ void StorageTask::stepUsbExport() {
     }
     const bool menu=usb_work_==UsbWork::PublishMenu;
     log_reader_.cancel();
-    if(!exporter_.closeFiles()) {job.phase=ExportPhase::Failed;job.error=ExportError::Close;}
-    else if((!menu || usb_.local()) && !usb_.publish()) {job.phase=ExportPhase::Failed;job.error=ExportError::Publish;}
-    else if(menu)job={};
-    else job.phase=job.error==ExportError::None?ExportPhase::Complete:ExportPhase::Failed;
+    if(exporter_ && !exporter_->closeFiles()) {
+        // Retain the FILs after close failure so Publish can retry safely.
+        job.phase=ExportPhase::Failed;job.error=ExportError::Close;
+    } else {
+        exporter_.reset();
+        if((!menu || usb_.local()) && !usb_.publish()) {job.phase=ExportPhase::Failed;job.error=ExportError::Publish;}
+        else if(menu)job={};
+        else job.phase=job.error==ExportError::None?ExportPhase::Complete:ExportPhase::Failed;
+    }
     state_.card_state=usb_.local()?CardState::Mounted:CardState::Unmounted;
     if(!usb_.local())state_.fat_type=0;
     usb_work_=UsbWork::None;state_.busy=false;++state_.revision;usb_dirty_=true;

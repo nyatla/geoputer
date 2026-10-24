@@ -3,6 +3,7 @@
 #include <cstdio>
 #include <cstdint>
 #include <string>
+#include "../StoragePath.h"
 #ifdef ARDUINO_ARCH_ESP32
 #include <ff.h>
 #else
@@ -20,7 +21,7 @@ public:
     bool opened() const { return opened_; }
     bool open(const std::string& path, bool exclusive) {
 #ifdef ARDUINO_ARCH_ESP32
-        const auto native = std::to_string(drive_) + ":" + path.substr(3);
+        const auto native = fatFsPath(drive_, path);
         const auto result = f_open(&file_, native.c_str(), FA_READ | FA_WRITE | (exclusive ? FA_CREATE_NEW : FA_OPEN_EXISTING));
         if (result != FR_OK) { errno = result == FR_EXIST ? EEXIST : EIO; return false; }
 #else
@@ -41,7 +42,7 @@ public:
     }
     bool openRead(const std::string& path) {
 #ifdef ARDUINO_ARCH_ESP32
-        const auto native=std::to_string(drive_)+":"+path.substr(3);
+        const auto native=fatFsPath(drive_, path);
         if (f_open(&file_,native.c_str(),FA_READ)!=FR_OK) return false;
 #else
         file_=std::fopen(path.c_str(),"rb"); if (!file_) return false;

@@ -143,27 +143,49 @@ static void testDirectionalPayloadCopies() {
     for (unsigned n = 0; n < 8; ++n) check(notifications.send(event), "all eight notification slots remain available");
     check(!notifications.send(event), "notification capacity is still eight");
     ReturnMessage reply{};
-    reply.kind = MessageKind::SyncReturn; reply.source = TaskId::Storage;
+    prepareSyncReturn(reply, TaskId::Storage, request, 1, OperationStatus::Ok);
     reply.payload.result.storage.log.saved = 12345;
     check(returns.send(reply), "full notification queue does not block a Storage return");
     reply = {}; returns.receive(reply);
     check(reply.payload.result.storage.log.saved == 12345, "Storage return snapshot survives the compact return queue");
-    // Task-owned replies are reused across commands; no previous operation's
-    // UI/GPS/storage payload may survive initialization of a new result.
-    reply.payload.result.content.action.kind = ActionKind::Logging;
-    reply.payload.result.gps.fix.valid = true;
-    for (auto source : {TaskId::UI, TaskId::GPS, TaskId::Storage}) {
-        prepareSyncReturn(reply, source, request, 17, OperationStatus::Unavailable);
-        check(reply.kind == MessageKind::SyncReturn && reply.source == source &&
+    // Reuse one task-owned response through every alternative, including the
+    // map transfer's final byte. Only the member selected by the request is read.
+    const TaskId sources[]{TaskId::UI,TaskId::GPS,TaskId::Storage,TaskId::Storage,TaskId::UI};
+    const MessageKind kinds[]{MessageKind::GetUiContent,MessageKind::GetGpsStatus,
+        MessageKind::ReadMapRows,MessageKind::GetStorageStatus,MessageKind::GetUiContent};
+    for (unsigned i=0;i<5;++i) {
+        request.kind=kinds[i];
+        prepareSyncReturn(reply, sources[i], request, 17, OperationStatus::Ok);
+        auto& value=reply.payload.result;
+        check(reply.kind == MessageKind::SyncReturn && reply.source == sources[i] &&
               reply.request_id == request.request_id && reply.sequence == 17 && reply.sent_at_ms == taskTimeMs() &&
-              reply.payload.result.request_kind == request.kind && reply.payload.result.status == OperationStatus::Unavailable,
+              value.request_kind == request.kind && value.status == OperationStatus::Ok,
               "each subtask returns the current request identity and terminal status");
-        check(reply.payload.result.content.action.kind == ActionKind::None && !reply.payload.result.gps.fix.valid &&
-              reply.payload.result.storage.log.saved == 0,
-              "a reused reply cannot leak a previous operation's snapshots");
-        reply.payload.result.content.action.kind = ActionKind::Logging;
-        reply.payload.result.gps.fix.valid = true;
-        reply.payload.result.storage.log.saved = 12345;
+        if (sources[i]==TaskId::UI) {
+            check(value.content.action.kind==ActionKind::None,"new UI return starts with no stale action");
+            value.content.action.kind=ActionKind::Logging;value.content.content_revision=123;
+        } else if (sources[i]==TaskId::GPS) {
+            check(!value.gps.fix.valid,"new GPS return starts without a stale fix");
+            value.gps.fix.valid=true;value.gps.fix.latitude=35.681641;value.gps.fix.longitude=140.027194;
+        } else if (request.kind==MessageKind::ReadMapRows) {
+            check(!value.map.info.request.token && !value.map.pixels[map::TransferBytes-1],"new map return starts empty");
+            value.map.info.request.token=91;value.map.rows=map::TransferRows;
+            for (size_t b=0;b<map::TransferBytes;++b)value.map.pixels[b]=static_cast<uint8_t>(b);
+        } else {
+            check(!value.storage.log.saved,"new Storage return starts without stale counters");
+            value.storage.log.saved=23456;
+        }
+        check(returns.send(reply),"each response alternative fits the one-slot queue");
+        // FreeRTOS must own its copy even after the producer reuses its response.
+        prepareSyncReturn(reply,TaskId::UI,request,18);
+        ReturnMessage copied{};check(returns.receive(copied),"receive response alternative");
+        const auto& received_value=copied.payload.result;
+        if (sources[i]==TaskId::UI)check(received_value.content.action.kind==ActionKind::Logging && received_value.content.content_revision==123,"UI snapshot preserved");
+        else if(sources[i]==TaskId::GPS)check(received_value.gps.fix.valid && received_value.gps.fix.latitude==35.681641 && received_value.gps.fix.longitude==140.027194,"GPS snapshot preserved");
+        else if(request.kind==MessageKind::ReadMapRows) {
+            check(received_value.map.info.request.token==91 && received_value.map.rows==map::TransferRows,"map identity preserved");
+            for (size_t b=0;b<map::TransferBytes;++b)check(received_value.map.pixels[b]==static_cast<uint8_t>(b),"all map rows preserved");
+        } else check(received_value.storage.log.saved==23456,"Storage snapshot preserved");
     }
     while (notifications.receive(event)) {
         const auto& copied = event.payload.storage_completion.logs;

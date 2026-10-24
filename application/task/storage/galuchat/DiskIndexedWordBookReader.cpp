@@ -71,6 +71,9 @@ bool DiskIndexedWordBookReader::readStringSetByCode(int64_t code, std::vector<st
 
     // TT00: a two-entry window supplies each page's record and byte ranges.
     std::vector<std::pair<size_t,std::vector<size_t>>> token_sets;
+    token_sets.reserve(sorted.size());
+    // Reuse one page-selection buffer across TT00 and TM00. No persistent cache.
+    std::vector<size_t> targets;
     size_t position = 0;
     auto current = readRecord<TtPage::Bytes>(*index);
     for (uint32_t i = 0; i < pages; ++i) {
@@ -85,7 +88,7 @@ bool DiskIndexedWordBookReader::readStringSetByCode(int64_t code, std::vector<st
             check(sorted[position]>=first); ++position;
         }
         if (begin != position) {
-            std::vector<size_t> targets(sorted.begin()+begin, sorted.begin()+position);
+            targets.assign(sorted.begin()+begin, sorted.begin()+position);
             auto source = book_->createRange(offset, size(next_offset-offset));
             auto decoded = Decoder::readTokenIdSetsFromPage(*source, size(next_offset-offset),
                 first, size(next_code-first), w[Wordbook::TokenBits], targets);
@@ -103,6 +106,7 @@ bool DiskIndexedWordBookReader::readStringSetByCode(int64_t code, std::vector<st
 
     // TM00: token pages are fixed width, so start at the first requested fragment.
     std::vector<std::pair<size_t,std::string>> fragments;
+    fragments.reserve(tokens.size());
     position = 0; covered = 0;
     uint64_t previous_end = 0;
     uint32_t previous_width = 0;
@@ -121,13 +125,14 @@ bool DiskIndexedWordBookReader::readStringSetByCode(int64_t code, std::vector<st
             const size_t first_token=tokens[begin], span=tokens[position-1]-first_token+1;
             const uint64_t start=uint64_t(offset)+uint64_t(first_token-first)*width;
             auto source=book_->createRange(size(start),size(uint64_t(span)*width));
-            std::vector<size_t> targets(tokens.begin()+begin,tokens.begin()+position);
+            targets.assign(tokens.begin()+begin,tokens.begin()+position);
             auto decoded=Decoder::readTokensFromPage(*source,first_token,span,width,targets);
             for (auto& entry : decoded) fragments.push_back(std::move(entry));
         }
         covered+=count; previous_end=end; previous_width=width;
     }
     check(covered==get(w + Wordbook::TokenCount) && position==tokens.size() && previous_end==tm_end && index->atEnd());
+    result.reserve(codes.size());
     for (auto component : codes) {
         std::string text;
         for (auto token : find(token_sets,component)) text+=find(fragments,token);

@@ -1,4 +1,5 @@
 #include "DatasetMetadata.h"
+#include "../../../utils/Utf8.h"
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
@@ -7,22 +8,6 @@
 
 namespace geoputer {
 namespace {
-bool utf8(const std::string& text) {
-    for(size_t i=0;i<text.size();) {
-        const auto ch=static_cast<unsigned char>(text[i++]);
-        if(!ch) return false;
-        if(ch<0x80) continue;
-        unsigned n; uint32_t code;
-        if(ch>=0xc2 && ch<=0xdf) {n=1;code=ch&31;}
-        else if(ch>=0xe0 && ch<=0xef) {n=2;code=ch&15;}
-        else if(ch>=0xf0 && ch<=0xf4) {n=3;code=ch&7;}
-        else return false;
-        if(i+n>text.size()) return false;
-        for(unsigned k=0;k<n;++k) { const auto c=static_cast<unsigned char>(text[i++]); if((c&0xc0)!=0x80) return false; code=(code<<6)|(c&63); }
-        if((n==2 && code<0x800) || (n==3 && code<0x10000) || code>0x10ffff || (code>=0xd800 && code<=0xdfff)) return false;
-    }
-    return true;
-}
 void trim(std::string& s) {
     const auto first=s.find_first_not_of(" \t"),last=s.find_last_not_of(" \t");
     s=first==std::string::npos?std::string{}:s.substr(first,last-first+1);
@@ -82,7 +67,7 @@ DatasetMetadata readDatasetMetadata(const std::string& directory,UiLanguage ui,c
         int status;
         while((status=line(file.get(),buffer,observer))>0) {
             std::string value(buffer);
-            if(!utf8(value)) return fail();
+            if(!validUtf8(value)) return fail();
             trim(value);if(value.empty() || value[0]=='#') continue;
             if(value[0]=='[') {
                 if(value.back()!=']' || (!pass && !finish())) return fail();

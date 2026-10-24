@@ -249,7 +249,7 @@ void StorageTask::handle(const StorageRequest& request) {
         } else if (saving) result.status = OperationStatus::Unavailable;
     }
     state_.log = log_writer_.snapshot();
-    result.storage = state_;
+    if (request.kind != MessageKind::ReadMapRows) result.storage = state_;
     has_return_ = true;
 }
 

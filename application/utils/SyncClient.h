@@ -2,6 +2,7 @@
 
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
+#include <new>
 #include "Queue.h"
 #include "../TaskMessages.h"
 
@@ -24,7 +25,14 @@ inline void prepareSyncReturn(ReturnMessage& reply, TaskId source, const Message
     reply.sequence = sequence;
     reply.sent_at_ms = taskTimeMs();
     reply.payload.result.request_kind = request.kind;
-    reply.payload.result.status = status;
+    auto& result = reply.payload.result;
+    result.status = status;
+    // These snapshots have default member initializers. Explicit construction
+    // starts the selected union member's lifetime without another stack frame.
+    if (source == TaskId::Storage) {
+        if (request.kind == MessageKind::ReadMapRows) new (&result.map) map::Transfer{};
+        else new (&result.storage) StorageSnapshot{};
+    } else if (source == TaskId::GPS) new (&result.gps) GpsSnapshot{};
 }
 
 // Only the Application task uses this object. There is exactly one pending request.

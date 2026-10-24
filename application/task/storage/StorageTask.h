@@ -1,6 +1,7 @@
 #pragma once
 
 #include <SPI.h>
+#include <memory>
 #include "SettingsStore.h"
 #include "galuchat/PlaceLookup.h"
 #include "log/LogWriter.h"
@@ -58,7 +59,8 @@ private:
     Queue<ReturnMessage, 1>& results_;
     SettingsStore settings_store_;
     UsbStorage usb_;
-    LogExporter exporter_;
+    // Allocated only while USB export needs its two FILs and conversion buffers.
+    std::unique_ptr<LogExporter> exporter_;
     enum class UsbWork : uint8_t { None, Prepare, Convert, PublishMenu, PublishResult };
     UsbWork usb_work_ = UsbWork::None;
     bool export_started_ = false;

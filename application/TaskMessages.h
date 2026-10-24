@@ -52,10 +52,14 @@ enum class OperationStatus : uint8_t { Ok, InvalidRequest, StaleContent, Unavail
 struct SyncReturn {
     MessageKind request_kind;
     OperationStatus status;
-    UiSnapshot content;
-    GpsSnapshot gps;
-    StorageSnapshot storage;
-    map::Transfer map;
+    // Active member is selected by source and request_kind in prepareSyncReturn.
+    // ReadMapRows returns map; other Storage commands return storage.
+    union {
+        UiSnapshot content;
+        GpsSnapshot gps;
+        StorageSnapshot storage;
+        map::Transfer map;
+    };
 };
 
 struct UiContentChanged {

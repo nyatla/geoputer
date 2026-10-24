@@ -144,10 +144,8 @@ void testClockRolloverAndUiIsolation() {
     event.payload.gps = receiver.snapshot();
     notifications.send(event);
     ReturnMessage reply{};
-    reply.kind = MessageKind::SyncReturn;
-    reply.source = TaskId::GPS;
-    reply.request_id = request.request_id;
-    reply.payload.result = {request.kind, OperationStatus::Ok, {}, receiver.snapshot(), {}, {}};
+    prepareSyncReturn(reply, TaskId::GPS, request, 1, OperationStatus::Ok);
+    reply.payload.result.gps = receiver.snapshot();
     results.send(reply);
     SyncReturn returned{};
     check(client.receiveSyncResult(returned, 0) == SyncReceiveResult::Returned,

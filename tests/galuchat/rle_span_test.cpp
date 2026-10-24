@@ -24,8 +24,8 @@ struct Spans : Scalar {
     }
     void set(int, int, int64_t) { throw std::runtime_error("RLE used scalar destination"); }
 };
-static_assert(!galuchat::detail::HasRleSpan<Scalar>::value);
-static_assert(galuchat::detail::HasRleSpan<Spans>::value);
+static_assert(!galuchat::detail::HasSpan<Scalar>::value);
+static_assert(galuchat::detail::HasSpan<Spans>::value);
 void compare(const Bytes& bytes, int x, int y, int w, int h, bool tail) {
     galuchat::BufferReader a(bytes), b(bytes);
     galuchat::GaluchatImageDataChunk01Reader old(a), fast(b);
@@ -97,8 +97,43 @@ void nestedAndFailures() {
     Spans raster(128,128);reader.readRect(0,0,raster);
     require(raster.spans==128 && raster.writes==16384,"long-run span reduction");
 }
+void constantFills() {
+    for(int w:{-1,0,1,3,128}) for(int h:{-1,0,1,3,128}) for(int64_t v:{int64_t(-1),int64_t(0),int64_t(19)}) {
+        Scalar scalar(132,133);Spans span(132,133);
+        galuchat::detail::fillRect(scalar,2,3,w,h,v);
+        galuchat::detail::fillRect(span,2,3,w,h,v);
+        require(scalar.data==span.data && scalar.writes==span.writes,"constant fill differs");
+        require(span.spans==size_t(w>0 && h>0?h:0),"constant fill must emit one span per row");
+    }
+    // MONO, four constant quadrants, and a mixed node with a MONO child.
+    const std::vector<Bytes> cells{{0x28,7},{0x1f,0x1b,0,3,0,7},{0x0e,0x1e,0,3,7,0x28,9}};
+    for(int compression=0;compression<3;++compression) for(const auto& cell:cells) {
+        const auto part=block(compression,cell),bytes=image(16,{part,part,part,part},2);
+        for(auto rect:std::vector<galuchat::Rect>{{0,0,32,32},{7,7,5,5},{-2,-1,8,9},{15,15,3,3},{31,31,3,3}}) {
+            compare(bytes,rect.x,rect.y,rect.width,rect.height,false);
+            compare(bytes,rect.x,rect.y,rect.width,rect.height,true);
+        }
+    }
+}
+void clippedRuns() {
+    uint32_t random=12345;
+    auto next=[&] {random=random*1664525u+1013904223u;return random;};
+    for(int r:{1,2,4,16,128}) for(int mode=0;mode<4;++mode) for(int i=0;i<80;++i) {
+        const int start=int(next()%unsigned(r*r)),count=int(next()%unsigned(r*r-start))+1;
+        const galuchat::Rect target{int(next()%unsigned(r)),int(next()%unsigned(r)),
+            int(next()%unsigned(r))+1,int(next()%unsigned(r))+1};
+        Scalar expected(target.width+3,target.height+4);Spans actual(expected.width,expected.height);
+        for(int p=start;p<start+count;++p) {
+            const int mapped=galuchat::detail::mapIndex(r,mode,p),x=mapped%r,y=mapped/r;
+            if(galuchat::detail::insideRect(target,x,y))expected.set(x-target.x+3,y-target.y+4,17);
+        }
+        galuchat::detail::paintRleRun(actual,target,3,4,r,mode,start,count,17);
+        require(actual.data==expected.data && actual.writes==expected.writes,"clipped run/offset differs");
+    }
+}
+
 }
 int main() {
-    rectangles();nestedAndFailures();
-    std::cout << "RLE spans: four modes, four palettes, RAW/RAWS/LZSS, clipping, nesting, ranges and errors OK\n";
+    rectangles();nestedAndFailures();constantFills();clippedRuns();
+    std::cout << "constant fills and clipped RLE spans: four modes, four palettes, RAW/RAWS/LZSS, clipping, nesting, ranges and errors OK\n";
 }

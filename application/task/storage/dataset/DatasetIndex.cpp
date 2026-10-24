@@ -1,5 +1,6 @@
 #include "DatasetIndex.h"
 #include "DatasetIndexFormat.h"
+#include "../StoragePath.h"
 #include "../log/LogFile.h"
 #include "../galuchat/ReadTiming.h"
 #include <galuchat/wgsmap3_reader.hpp>
@@ -41,40 +42,32 @@ private:
     StorageObserver* observer_;
     FileIoTiming* timing_;
 };
-std::string nativePath(uint8_t drive,const std::string& path) {
-#ifdef ARDUINO_ARCH_ESP32
-    require(path.compare(0,4,"/sd/")==0);
-    return std::to_string(drive)+":"+path.substr(3);
-#else
-    (void)drive; return path;
-#endif
-}
 // Missing files and IO errors are distinct: never overwrite an unreadable old index.
 bool exists(uint8_t drive,const std::string& path) {
 #ifdef ARDUINO_ARCH_ESP32
-    FILINFO info{}; const auto result=f_stat(nativePath(drive,path).c_str(),&info);
+    FILINFO info{}; const auto result=f_stat(storageNativePath(drive,path).c_str(),&info);
     require(result==FR_OK || result==FR_NO_FILE || result==FR_NO_PATH);
     if (result==FR_OK) require(!(info.fattrib&AM_DIR));
     return result==FR_OK;
 #else
     struct stat info{};
-    if (::stat(nativePath(drive,path).c_str(),&info)==0) { require(S_ISREG(info.st_mode)); return true; }
+    if (::stat(storageNativePath(drive,path).c_str(),&info)==0) { require(S_ISREG(info.st_mode)); return true; }
     require(errno==ENOENT); return false;
 #endif
 }
 bool removeFile(uint8_t drive,const std::string& path) {
 #ifdef ARDUINO_ARCH_ESP32
-    const auto result=f_unlink(nativePath(drive,path).c_str());
+    const auto result=f_unlink(storageNativePath(drive,path).c_str());
     return result==FR_OK || result==FR_NO_FILE || result==FR_NO_PATH;
 #else
-    return std::remove(nativePath(drive,path).c_str())==0 || errno==ENOENT;
+    return std::remove(storageNativePath(drive,path).c_str())==0 || errno==ENOENT;
 #endif
 }
 bool renameFile(uint8_t drive,const std::string& from,const std::string& to) {
 #ifdef ARDUINO_ARCH_ESP32
-    return f_rename(nativePath(drive,from).c_str(),nativePath(drive,to).c_str())==FR_OK;
+    return f_rename(storageNativePath(drive,from).c_str(),storageNativePath(drive,to).c_str())==FR_OK;
 #else
-    return std::rename(nativePath(drive,from).c_str(),nativePath(drive,to).c_str())==0;
+    return std::rename(storageNativePath(drive,from).c_str(),storageNativePath(drive,to).c_str())==0;
 #endif
 }
 struct Stamp {
@@ -84,10 +77,10 @@ struct Stamp {
 Stamp statFile(uint8_t drive,const std::string& path) {
     Stamp result;
 #ifdef ARDUINO_ARCH_ESP32
-    FILINFO info{}; require(f_stat(nativePath(drive,path).c_str(),&info)==FR_OK && !(info.fattrib&AM_DIR));
+    FILINFO info{}; require(f_stat(storageNativePath(drive,path).c_str(),&info)==FR_OK && !(info.fattrib&AM_DIR));
     result.bytes=u32(info.fsize); result.mtime=uint32_t(info.fdate)<<16 | info.ftime;
 #else
-    struct stat info{}; require(::stat(nativePath(drive,path).c_str(),&info)==0 && S_ISREG(info.st_mode) && info.st_size>=0);
+    struct stat info{}; require(::stat(storageNativePath(drive,path).c_str(),&info)==0 && S_ISREG(info.st_mode) && info.st_size>=0);
     result.bytes=u32(static_cast<uint64_t>(info.st_size));
     // Host tests use local time, matching the FAT volume's wall-clock convention.
     std::tm time{}; require(localtime_r(&info.st_mtime,&time)!=nullptr && time.tm_year>=80 && time.tm_year<=207);

@@ -125,8 +125,7 @@ bool LogExporter::record(const uint8_t* b) {
 }
 bool LogExporter::moveComplete() {
 #ifdef ARDUINO_ARCH_ESP32
-    const auto native=[&](const std::string& p){return std::to_string(drive_)+":"+p.substr(3);};
-    return f_rename(native(partial_).c_str(),native(target_).c_str())==FR_OK;
+    return f_rename(fatFsPath(drive_,partial_).c_str(),fatFsPath(drive_,target_).c_str())==FR_OK;
 #else
     // link does not replace an existing target, unlike POSIX rename.
     if(::link(partial_.c_str(),target_.c_str()))return false;

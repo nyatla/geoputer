@@ -14,6 +14,7 @@
 #include <galuchat/wgsmap3_reader.hpp>
 #include "../StorageActivity.h"
 #include "ReadTiming.h"
+#include "../StoragePath.h"
 #include "../../../Config.h"
 
 namespace geoputer {
@@ -24,13 +25,6 @@ struct FileReadOptions {
         if (!buffer_bytes) throw std::invalid_argument("file read buffer must be nonempty");
     }
 };
-
-#ifdef ARDUINO_ARCH_ESP32
-inline std::string readerFatFsPath(const std::string& path, uint8_t drive) {
-    if (path.compare(0, 4, "/sd/") != 0) throw std::runtime_error("reader path is outside /sd");
-    return std::to_string(drive) + ":" + path.substr(3);
-}
-#endif
 
 // SDK-compatible ReaderFactory. ESP32 accesses the already mounted FatFs volume
 // directly; host tests retain stdio. Observe buffered operations, not each byte.
@@ -51,7 +45,7 @@ public:
             // Keep the Reader object small and allocate its large read buffer
             // before FIL. FIL includes a private sector cache on this SDK.
             file_ = std::make_unique<FIL>();
-            opened_ = f_open(file_.get(), readerFatFsPath(path, drive).c_str(), FA_READ) == FR_OK;
+            opened_ = f_open(file_.get(), fatFsPath(drive, path).c_str(), FA_READ) == FR_OK;
 #else
             (void)drive;
             file_ = std::fopen(path.c_str(), "rb");
@@ -188,7 +182,7 @@ public:
         {
             FileIoTime elapsed(timing_, &FileIoTiming::stat_us);
             if (timing_) ++timing_->stats;
-            stat_result = f_stat(readerFatFsPath(path_, drive_).c_str(), &status);
+            stat_result = f_stat(fatFsPath(drive_, path_).c_str(), &status);
         }
         if (stat_result != FR_OK || (status.fattrib & AM_DIR)) throw std::runtime_error("cannot stat: " + path_);
         size_ = status.fsize;

@@ -9,9 +9,21 @@
 #ifdef GEOPUTER_COMPARE_RLE
 #include "task/storage/galuchat/ScalarDiskIndexedMapReader.h"
 #endif
+#ifdef GEOPUTER_COMPARE_SPAN_FILL
+#include "task/storage/galuchat/BeforeSpanMapReader.h"
+#include "task/storage/galuchat/MonoSpanMapReader.h"
+#include "task/storage/galuchat/ClipSpanMapReader.h"
+#endif
+#ifdef GEOPUTER_COMPARE_RAW
+#include "RawCellBenchmark.h"
+#include "task/storage/galuchat/RawBeforeMapReader.h"
+#endif
 namespace geoputer::benchmark {
 template<class Print> void runMapPipelineBenchmark(const std::string& directory, const char* language,
                                                    uint8_t drive, StorageObserver* parent, Print print) {
+#ifdef GEOPUTER_COMPARE_RAW
+    runRawCellBenchmark(print,[]{vTaskDelay(1);});
+#endif
     // Match the previous SPI-clock measurements rather than GPS jitter.
     constexpr double latitude = 35.681641, longitude = 140.027194;
     const auto metadata = readDatasetMetadata(directory, UiLanguage::Japanese, language, parent);
@@ -26,6 +38,9 @@ template<class Print> void runMapPipelineBenchmark(const std::string& directory,
     auto index_factory = std::make_shared<ObservedFileReaderFactory>(index_path, &observer, &index_io,
         FileReadOptions{config::IndexReadBufferBytes, 0}, drive);
     DiskIndexedMapReader reader(info, map_factory, index_factory);
+#ifdef GEOPUTER_COMPARE_RAW
+    RawBeforeMapReader raw_before_reader(info,map_factory,index_factory);
+#endif
     const auto normal = scalePlan(latitude,longitude,reader.unitInvX(),reader.unitInvY(),1);
     const auto half = scalePlan(latitude,longitude,reader.unitInvX(),reader.unitInvY(),2);
     const auto quarter = scalePlan(latitude,longitude,reader.unitInvX(),reader.unitInvY(),4);
@@ -36,6 +51,11 @@ template<class Print> void runMapPipelineBenchmark(const std::string& directory,
     uint64_t hashes[3]{};
     bool have_hash[3]{};
     uint32_t current = 0;
+#ifdef GEOPUTER_COMPARE_SPAN_FILL
+    BeforeSpanMapReader before_reader(info,map_factory,index_factory);
+    MonoSpanMapReader mono_reader(info,map_factory,index_factory);
+    ClipSpanMapReader clip_reader(info,map_factory,index_factory);
+#endif
 #ifdef GEOPUTER_COMPARE_RLE
     ScalarDiskIndexedMapReader scalar_reader(info, map_factory, index_factory);
 #endif
@@ -48,15 +68,17 @@ template<class Print> void runMapPipelineBenchmark(const std::string& directory,
     print("[PIPE-READER] fil_bytes=%u direct_reader_bytes=%u stdio_reader_bytes=%u\n",
         unsigned(sizeof(FIL)),unsigned(sizeof(ObservedFileReader)),unsigned(sizeof(StdioObservedFileReader)));
 #endif
-#if defined(GEOPUTER_COMPARE_STDIO) || defined(GEOPUTER_COMPARE_RLE)
+#if defined(GEOPUTER_COMPARE_SPAN_FILL)
+    constexpr unsigned backends=4, rounds=6;
+#elif defined(GEOPUTER_COMPARE_STDIO) || defined(GEOPUTER_COMPARE_RLE) || defined(GEOPUTER_COMPARE_RAW)
     constexpr unsigned backends=2, rounds=6;
 #else
     constexpr unsigned backends=1, rounds=3;
 #endif
-#if !defined(GEOPUTER_COMPARE_STDIO) && !defined(GEOPUTER_COMPARE_RLE)
+#if !defined(GEOPUTER_COMPARE_STDIO) && !defined(GEOPUTER_COMPARE_RLE) && !defined(GEOPUTER_COMPARE_SPAN_FILL) && !defined(GEOPUTER_COMPARE_RAW)
     const unsigned order[3][3] = {{0,1,2},{2,0,1},{1,2,0}};
 #endif
-#if defined(GEOPUTER_COMPARE_STDIO) || defined(GEOPUTER_COMPARE_RLE)
+#if defined(GEOPUTER_COMPARE_STDIO) || defined(GEOPUTER_COMPARE_RLE) || defined(GEOPUTER_COMPARE_SPAN_FILL) || defined(GEOPUTER_COMPARE_RAW)
     // Each scale is a separate workload. Run larger work areas first so the
     // optional shrink prototypes do not fragment a later normal-size request.
     for (unsigned kind : {0u,2u,1u}) for (unsigned round=0;round<rounds;++round)
@@ -65,13 +87,25 @@ template<class Print> void runMapPipelineBenchmark(const std::string& directory,
 #endif
     for(unsigned slot=0;slot<backends;++slot) {
         const unsigned backend=(slot+round)%backends;
-#ifdef GEOPUTER_COMPARE_RLE
+#ifdef GEOPUTER_COMPARE_SPAN_FILL
+        const char* names[]={"both","before","mono","clip"};
+        const char* backend_name=names[backend];
+#elif defined(GEOPUTER_COMPARE_RAW)
+        const char* backend_name=backend?"before":"rows";
+#elif defined(GEOPUTER_COMPARE_RLE)
         const char* backend_name=backend?"scalar":"span";
 #else
         const char* backend_name=backend?"stdio":"fatfs";
 #endif
         auto read_rect=[&](const galuchat::Rect& r,uint32_t* pixels) {
-#ifdef GEOPUTER_COMPARE_RLE
+#ifdef GEOPUTER_COMPARE_SPAN_FILL
+            if(backend==1) before_reader.readRect(r,pixels);
+            else if(backend==2) mono_reader.readRect(r,pixels);
+            else if(backend==3) clip_reader.readRect(r,pixels);
+            else reader.readRect(r,pixels);
+#elif defined(GEOPUTER_COMPARE_RAW)
+            if(backend)raw_before_reader.readRect(r,pixels);else reader.readRect(r,pixels);
+#elif defined(GEOPUTER_COMPARE_RLE)
             if(backend) scalar_reader.readRect(r,pixels);
             else reader.readRect(r,pixels);
 #elif defined(GEOPUTER_COMPARE_STDIO)
@@ -83,6 +117,9 @@ template<class Print> void runMapPipelineBenchmark(const std::string& directory,
         print("[PIPE-START] backend=%s round=%u scale=%u heap=%u largest=%u\n",backend_name,round+1,kind==0?1:kind==1?2:4,
             unsigned(heap_caps_get_free_size(MALLOC_CAP_8BIT)),unsigned(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT)));
         map_io={}; index_io={}; observer.reset();
+#ifdef GEOPUTER_COMPARE_RAW
+        galuchat::detail::raw_benchmark_cells=0;galuchat::detail::raw_benchmark_pixels=0;galuchat::detail::raw_benchmark_target=0;
+#endif
         DecodeProfile decode{&map_io,&index_io};
         ActivateDecodeProfile activate(decode);
         uint64_t read_us=0, extract_us=0, old_us=0, yield_us=0, hash=0;
@@ -137,6 +174,11 @@ template<class Print> void runMapPipelineBenchmark(const std::string& directory,
         pipeline_us=monotonicMicros()-started-compare_us;
         if(have_hash[kind] && hashes[kind]!=hash)throw std::runtime_error("pipeline round image mismatch");
         hashes[kind]=hash;have_hash[kind]=true;
+#ifdef GEOPUTER_COMPARE_RAW
+        print("[RAW-PIPE] backend=%s round=%u scale=%u cells=%u pixels=%llu target=%llu\n",backend_name,round+1,kind==0?1:kind==1?2:4,
+            galuchat::detail::raw_benchmark_cells,(unsigned long long)galuchat::detail::raw_benchmark_pixels,
+            (unsigned long long)galuchat::detail::raw_benchmark_target);
+#endif
         const auto file_us=map_io.elapsed_us+index_io.elapsed_us;
         if(decode.io_us>decode.inclusive_us || file_us+decode.inclusive_us-decode.io_us>read_us)
             throw std::runtime_error("pipeline timing overlap");

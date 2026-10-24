@@ -39,6 +39,15 @@ ExportSnapshot run(LogExporter& exporter,const char* name,ExportFormat format) {
 }
 }
 void testExport() {
+    check(fatFsPath(0,"/sd/logs/a.gps.dat")=="0:/logs/a.gps.dat" &&
+          fatFsPath(12,"/sd/dataset/01/日本.glc")=="12:/dataset/01/日本.glc",
+          "shared native path conversion retains drive, directories and UTF-8 bytes");
+    for(const auto* path:{"/sd", "/sd-other/a", "relative.dat", ""}) {
+        bool rejected=false;
+        try { (void)fatFsPath(0,path); } catch(const std::runtime_error&) { rejected=true; }
+        check(rejected,"FatFs paths must start with the exact SD mount prefix");
+    }
+    check(storageNativePath(3,"/tmp/host/path")=="/tmp/host/path","host paths bypass FatFs translation");
     namespace fs=std::filesystem;
     const char* configured=std::getenv("GEOPUTER_EXPORT_FIXTURES");
     const fs::path root=configured?fs::path(configured):fs::temp_directory_path()/"geoputer-export-native";

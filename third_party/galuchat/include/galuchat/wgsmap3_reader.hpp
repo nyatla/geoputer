@@ -589,12 +589,12 @@ inline bool crossRect(const Rect& a, const Rect& b, Rect& out) {
     return true;
 }
 
-// Optional destination capability. Rasters with only set() retain the original
-// pixel traversal; span-aware destinations can avoid per-pixel mapIndex/clipping.
+// Optional capability shared by RLE and constant fills. Rasters with only set()
+// retain their original pixel traversal and input consumption.
 template <class Raster, class = void>
-struct HasRleSpan : std::false_type {};
+struct HasSpan : std::false_type {};
 template <class Raster>
-struct HasRleSpan<Raster, std::void_t<decltype(std::declval<Raster&>().setSpan(
+struct HasSpan<Raster, std::void_t<decltype(std::declval<Raster&>().setSpan(
     0, 0, 0, 0, 0, int64_t{}))>> : std::true_type {};
 
 template <class Raster>
@@ -628,9 +628,16 @@ inline void paintRleRun(Raster& dest, const Rect& target, int dest_x, int dest_y
 
 template <class Raster>
 inline void fillRect(Raster& dest, int x, int y, int width, int height, int64_t value) {
-    for (int iy = 0; iy < height; iy++) {
-        for (int ix = 0; ix < width; ix++) {
-            dest.set(x + ix, y + iy, value);
+    if constexpr (HasSpan<Raster>::value) {
+        if (width <= 0) return;
+        for (int iy = 0; iy < height; ++iy) {
+            dest.setSpan(x, y + iy, width, 1, 0, value);
+        }
+    } else {
+        for (int iy = 0; iy < height; iy++) {
+            for (int ix = 0; ix < width; ix++) {
+                dest.set(x + ix, y + iy, value);
+            }
         }
     }
 }
@@ -1300,6 +1307,28 @@ private:
         }
     }
 
+    template <class Raster, class ReadValue>
+    static void readRawRows(int resolution, const Rect& target, Raster& dest,
+                            int dest_x, int dest_y, ReadValue read_value) {
+        Rect visible{};
+        const bool intersects = detail::crossRect({0, 0, resolution, resolution}, target, visible);
+        const int right = visible.x + visible.width;
+        const int bottom = visible.y + visible.height;
+        for (int y = 0; y < resolution; ++y) {
+            const bool draw_row = intersects && y >= visible.y && y < bottom;
+            const int out_y = y - target.y + dest_y;
+            int out_x = visible.x - target.x + dest_x;
+            for (int x = 0; x < resolution; ++x) {
+                // One decoder call site also consumes the clipped pixels in
+                // their original order, preserving input/error semantics.
+                const int64_t value = read_value();
+                if (draw_row && x >= visible.x && x < right) {
+                    dest.set(out_x++, out_y, value);
+                }
+            }
+        }
+    }
+
     template <class Raster>
     void readRawRect(
         CellHeader header,
@@ -1314,17 +1343,16 @@ private:
         if (!header.hasValidRawReservedBits()) {
             throw std::runtime_error("RAW CellHeader reserved bits are not zero");
         }
-        int pallet_size = header.palletResolution() == CellHeader::PALLET_NBIT ? 0 : readRawPallet(header, reader, pallet_reader, pmgr);
-        int bits = pallet_size == 0 ? 0 : bitWidthForPaletteSize(pallet_size);
-        int pixels = resolution * resolution;
-        for (int index = 0; index < pixels; index++) {
-            int64_t value = pallet_size == 0 ? static_cast<int64_t>(reader.readMbUInt())
-                                             : pmgr.getValue(static_cast<int>(reader.readBitsAsInt32(bits)));
-            int lx = index % resolution;
-            int ly = index / resolution;
-            if (detail::insideRect(target, lx, ly)) {
-                dest.set(lx - target.x + dest_x, ly - target.y + dest_y, value);
-            }
+        const int pallet_size = header.palletResolution() == CellHeader::PALLET_NBIT
+            ? 0 : readRawPallet(header, reader, pallet_reader, pmgr);
+        // Select direct values or packed palette indices once per cell.
+        if (pallet_size == 0) {
+            readRawRows(resolution, target, dest, dest_x, dest_y,
+                [&]() { return static_cast<int64_t>(reader.readMbUInt()); });
+        } else {
+            const int bits = bitWidthForPaletteSize(pallet_size);
+            readRawRows(resolution, target, dest, dest_x, dest_y,
+                [&]() { return pmgr.getValue(static_cast<int>(reader.readBitsAsInt32(bits))); });
         }
     }
 
@@ -1495,7 +1523,7 @@ private:
                     max_index = pallet_index;
                 }
                 int64_t value = pmgr.getValue(pallet_index);
-                if constexpr (detail::HasRleSpan<Raster>::value) {
+                if constexpr (detail::HasSpan<Raster>::value) {
                     detail::paintRleRun(dest, target, dest_x, dest_y, resolution,
                                         header.rleMode(), position, count, value);
                     position += count;
