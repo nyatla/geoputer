@@ -39,6 +39,13 @@ struct File {
         require(written == bytes.size() && closed == 0, "fixture write failed");
     }
     ~File() { std::remove(path.c_str()); }
+    std::string readPath() const {
+#ifdef GEOPUTER_TEST_FATFS
+        return "/sd" + path;
+#else
+        return path;
+#endif
+    }
 };
 struct Observer : geoputer::StorageObserver {
     unsigned begins = 0, ends = 0;
@@ -53,7 +60,7 @@ void bufferedAndShort(const File& file) {
     geoputer::FileIoTiming io{};
     Observer observer;
     {
-        geoputer::ObservedFileReader reader(file.path, file.bytes.size(), 0, &observer, &io);
+        geoputer::ObservedFileReader reader(file.readPath(), file.bytes.size(), 0, &observer, &io);
         io = {};
         auto begins = observer.begins;
         reader.skipInByte(0);
@@ -70,7 +77,7 @@ void bufferedAndShort(const File& file) {
     if (Threshold == 0) return;
     io = {};
     {
-        geoputer::ObservedFileReader reader(file.path, file.bytes.size(), 0, &observer, &io);
+        geoputer::ObservedFileReader reader(file.readPath(), file.bytes.size(), 0, &observer, &io);
         (void)reader.readByte();
         io = {};
         // Skip the old buffer tail and one byte from the next refill.
@@ -86,7 +93,7 @@ void bufferedAndShort(const File& file) {
 void thresholdBoundary(const File& file) {
     for (bool over : {false, true}) {
         geoputer::FileIoTiming io{};
-        geoputer::ObservedFileReader reader(file.path, file.bytes.size(), 0, nullptr, &io);
+        geoputer::ObservedFileReader reader(file.readPath(), file.bytes.size(), 0, nullptr, &io);
         (void)reader.readByte();
         io = {};
         const size_t gap = Threshold + static_cast<size_t>(over);
@@ -100,7 +107,7 @@ void thresholdBoundary(const File& file) {
         require(reader.readByte() == file.bytes[target], "threshold skip byte");
     }
     geoputer::FileIoTiming io{};
-    geoputer::ObservedFileReader reader(file.path, file.bytes.size(), 37, nullptr, &io);
+    geoputer::ObservedFileReader reader(file.readPath(), file.bytes.size(), 37, nullptr, &io);
     io = {};
     reader.skipInByte(Threshold + 1);
     require(io.seeks == 1 && io.reads == 0, "initial long skip did not seek");
@@ -112,7 +119,7 @@ void endAndTruncation() {
     Observer observer;
     geoputer::FileIoTiming io{};
     {
-        geoputer::ObservedFileReader reader(short_file.path, short_file.bytes.size(), 3, &observer, &io);
+        geoputer::ObservedFileReader reader(short_file.readPath(), short_file.bytes.size(), 3, &observer, &io);
         io = {};
         reader.skipInByte(16);
         require(reader.pos() == 16 && reader.atEnd(), "EOF skip position");
@@ -128,7 +135,7 @@ void endAndTruncation() {
     // Declared length is larger than the physical file, simulating truncation.
     io = {};
     {
-        geoputer::ObservedFileReader reader(short_file.path, 128, 0, &observer, &io);
+        geoputer::ObservedFileReader reader(short_file.readPath(), 128, 0, &observer, &io);
         io = {};
         expectThrow([&] { reader.skipInByte(32); });
         require(reader.pos() == 19 && io.reads == 2 && io.bytes == 19 && io.seeks == 0,
@@ -140,7 +147,7 @@ void endAndTruncation() {
 
 void outsideBounds(const File& file) {
     geoputer::FileIoTiming io{};
-    geoputer::ObservedFileReader reader(file.path, file.bytes.size(), 0, nullptr, &io);
+    geoputer::ObservedFileReader reader(file.readPath(), file.bytes.size(), 0, nullptr, &io);
     (void)reader.readByte();
     io = {};
     expectThrow([&] { reader.skipInByte(file.bytes.size()); });
@@ -152,7 +159,7 @@ void readProfiles(const File& file) {
     geoputer::FileIoTiming io{};
     Observer observer;
     {
-        geoputer::ObservedFileReaderFactory factory(file.path, &observer, &io, {4096,4096});
+        geoputer::ObservedFileReaderFactory factory(file.readPath(), &observer, &io, {4096,4096});
         auto small = factory.create();
         factory.setReadOptions({8192,4096});
         auto medium = factory.create();
@@ -174,20 +181,20 @@ void readProfiles(const File& file) {
     observer.balanced();
     for (const size_t bytes : {4096u,8192u,16384u}) {
         for (const size_t gap : {4096u,4097u}) {
-            geoputer::ObservedFileReader reader(file.path,file.bytes.size(),0,nullptr,&io,{bytes,4096});
+            geoputer::ObservedFileReader reader(file.readPath(),file.bytes.size(),0,nullptr,&io,{bytes,4096});
             (void)reader.readByte();io={};
             reader.skipInByte(bytes-1+gap);
             require(io.seeks==(gap>4096?1u:0u) && io.reads==(gap<=4096?1u:0u),
                     "read-through threshold changed with buffer capacity");
             require(reader.readByte()==file.bytes[bytes+gap],"profile threshold position");
         }
-        geoputer::ObservedFileReader seek_only(file.path,file.bytes.size(),0,nullptr,&io,{bytes,0});
+        geoputer::ObservedFileReader seek_only(file.readPath(),file.bytes.size(),0,nullptr,&io,{bytes,0});
         (void)seek_only.readByte();io={};seek_only.skipInByte(bytes);
         require(io.seeks==1 && io.reads==0,"zero threshold did not disable read-through for a profile");
     }
     io={};
     bool invalid=false;
-    try { geoputer::ObservedFileReader bad(file.path,file.bytes.size(),0,&observer,&io,{0,4096}); }
+    try { geoputer::ObservedFileReader bad(file.readPath(),file.bytes.size(),0,&observer,&io,{0,4096}); }
     catch (const std::invalid_argument&) {invalid=true;}
     require(invalid && io.opens==0,"zero buffer opened a file or was accepted");
     observer.balanced();
@@ -196,7 +203,7 @@ void readProfiles(const File& file) {
 void boundedRanges(const File& file) {
     geoputer::FileIoTiming io{};
     Observer observer;
-    geoputer::ObservedFileReaderFactory factory(file.path,&observer,&io,{16384,4096});
+    geoputer::ObservedFileReaderFactory factory(file.readPath(),&observer,&io,{16384,4096});
     for (const size_t length : {1u,2u,123u,4095u,4096u,4097u,16383u,16384u,16385u}) {
         io={};
         auto reader=factory.createRange(73,length);
@@ -230,7 +237,7 @@ void mixedBitsAndSkips(const File& file) {
     auto next = [&] { random ^= random << 13; random ^= random >> 17; random ^= random << 5; return random; };
     for (size_t trial = 0; trial < 8; ++trial) {
         const size_t origin = trial * 37;
-        geoputer::ObservedFileReader actual(file.path, file.bytes.size(), origin, nullptr);
+        geoputer::ObservedFileReader actual(file.readPath(), file.bytes.size(), origin, nullptr);
         galuchat::BufferReader expected(file.bytes.data() + origin, file.bytes.size() - origin);
         for (int step = 0; step < 1000; ++step) {
             const size_t bits = expected.remaining() * 8 + expected.bitOffset();
@@ -258,6 +265,71 @@ void mixedBitsAndSkips(const File& file) {
         }
     }
 }
+#ifdef GEOPUTER_TEST_FATFS
+void fatFsFailuresAndDrive() {
+    File file(64);
+    Observer observer;
+    geoputer::FileIoTiming io{};
+    require(fatfs_test::live==0,"previous Readers leaked a FatFs file");
+    fatfs_test::drive=7;
+    {
+        geoputer::ObservedFileReaderFactory factory(file.readPath(),&observer,&io,{16,0},7);
+        require(fatfs_test::last_stat=="7:"+file.path,"factory ignored the mounted FatFs drive");
+        auto reader=factory.createRange(3,20);
+        require(fatfs_test::last_open=="7:"+file.path && reader->readByte()==file.bytes[3],"Reader ignored drive/range origin");
+        factory.setReadOptions({8,0});
+        auto next=factory.create();
+        require(next->readByte()==file.bytes[0],"new options lost the mounted drive");
+    }
+    fatfs_test::drive=0;
+    require(fatfs_test::live==0,"drive test leaked a file");
+    fatfs_test::fail_open=true;
+    expectThrow([&]{geoputer::ObservedFileReader reader(file.readPath(),64,0,&observer,&io);});
+    fatfs_test::fail_open=false;
+    require(fatfs_test::live==0,"open failure leaked a file");
+    fatfs_test::fail_seek=true;
+    expectThrow([&]{geoputer::ObservedFileReader reader(file.readPath(),64,0,&observer,&io);});
+    fatfs_test::fail_seek=false;
+    require(fatfs_test::live==0,"constructor seek failure leaked a file");
+    // FatFs returns FR_OK when an initial read-only seek is clipped at EOF.
+    expectThrow([&]{geoputer::ObservedFileReader reader(file.readPath(),128,80,&observer,&io);});
+    require(fatfs_test::live==0,"clipped initial seek leaked a file");
+    {
+        geoputer::ObservedFileReader reader(file.readPath(),512,0,&observer,&io,{16,0});
+        (void)reader.readByte();
+        expectThrow([&]{reader.skipInByte(128);});
+        require(reader.pos()==1,"clipped seek advanced logical position");
+    }
+    {
+        geoputer::ObservedFileReader reader(file.readPath(),64,0,&observer,&io);
+        io={};fatfs_test::fail_read=true;
+        expectThrow([&]{reader.readByte();});
+        fatfs_test::fail_read=false;
+        require(io.reads==1 && io.bytes==3 && reader.pos()==0,"partial read error was silently accepted");
+    }
+    fatfs_test::fail_stat=true;
+    expectThrow([&]{geoputer::ObservedFileReaderFactory factory(file.readPath(),&observer,&io);});
+    fatfs_test::fail_stat=false;
+    expectThrow([&]{geoputer::ObservedFileReaderFactory factory("/sd/tmp",&observer,&io);});
+    expectThrow([&]{geoputer::ObservedFileReaderFactory factory("/outside/data",&observer,&io);});
+    observer.balanced();
+    require(fatfs_test::live==0,"error tests leaked a file");
+
+    // Sparse file exercises the unsigned FAT32 offset range without allocating
+    // a multi-gigabyte fixture in RAM or writing a multi-gigabyte file.
+    File sparse(1);
+    constexpr uint32_t offset=0x80001003u;
+    auto* writer=std::fopen(sparse.path.c_str(),"r+b");
+    require(writer && !fseeko(writer,offset,SEEK_SET),"sparse fixture seek");
+    require(std::fputc(0x5a,writer)==0x5a && !std::fclose(writer),"sparse fixture byte");
+    {
+        geoputer::ObservedFileReaderFactory factory(sparse.readPath(),&observer,&io);
+        auto reader=factory.createRange(offset,1);
+        require(reader->readByte()==0x5a && reader->atEnd(),"FatFs offset above INT32_MAX was narrowed");
+    }
+    observer.balanced();require(fatfs_test::live==0,"large-offset Reader leaked a file");
+}
+#endif
 } // namespace
 
 int main() {
@@ -269,5 +341,8 @@ int main() {
     mixedBitsAndSkips(file);
     readProfiles(file);
     boundedRanges(file);
+#ifdef GEOPUTER_TEST_FATFS
+    fatFsFailuresAndDrive();
+#endif
     std::cout << "ObservedFileReader: buffer/threshold boundaries, read-ahead, seeks, EOF/errors, activity, bit-stream equivalence, per-Reader profiles, independent thresholds and bounded file I/O OK\n";
 }

@@ -1,9 +1,16 @@
 """Build an isolated map I/O/decode/extraction diagnostic; never edit normal sources."""
 from pathlib import Path
 import shutil
+import argparse
+import re
 
 root=Path(__file__).resolve().parents[2]
-work=root/'.pio/map-pipeline'
+parser=argparse.ArgumentParser(description=__doc__)
+parser.add_argument('--name',default='map-pipeline',help='Artifact directory name under .pio')
+parser.add_argument('--compare-stdio',action='store_true',help='Compare with the pre-FatFs Reader in the same firmware')
+args=parser.parse_args()
+if not re.fullmatch(r'[a-z0-9-]+',args.name): parser.error('Invalid artifact name')
+work=root/'.pio'/args.name
 work.mkdir(parents=True,exist_ok=True)
 shutil.copytree(root/'application',work/'application',dirs_exist_ok=True)
 bench=work/'application/benchmark'
@@ -11,6 +18,8 @@ bench.mkdir(exist_ok=True)
 for name in ['MapPipelineBenchmark.h','DecodeProfile.h','QuarterScaleBenchmark.h','ScaledBoundaryPrototype.h']:
     shutil.copyfile(root/'tests/performance'/name,bench/name)
 shutil.copyfile(root/'tests/performance/baseline/BoundaryExtractorBefore.h',bench/'BoundaryExtractorBefore.h')
+if args.compare_stdio:
+    shutil.copyfile(root/'tests/performance/baseline/ObservedFileReaderStdio.h',bench/'ObservedFileReaderStdio.h')
 p=work/'application/task/storage/galuchat/DiskIndexedMapReader.cpp'
 s=p.read_text().replace('#include "DiskIndexedMapReader.h"','#include "DiskIndexedMapReader.h"\n#include "../../../benchmark/DecodeProfile.h"')
 s=s.replace('''            auto stream = map_->createRange(start, bytes);''','''            benchmark::DecodeScope decode_scope;
@@ -37,9 +46,10 @@ s=s[:at]+'''        static bool pipeline_benchmark_ran=false;
         }
 '''+s[at:]
 p.write_text(s)
-s=(root/'platformio.ini').read_text().replace('src_dir = application','src_dir = .pio/map-pipeline/application\nbuild_dir = .pio/map-pipeline/build')
-(root/'.pio/map-pipeline.ini').write_text(s)
+s=(root/'platformio.ini').read_text().replace('src_dir = application',f'src_dir = .pio/{args.name}/application\nbuild_dir = .pio/{args.name}/build')
+if args.compare_stdio: s=s.replace('    -Wall','    -Wall\n    -DGEOPUTER_COMPARE_STDIO')
+(root/'.pio'/f'{args.name}.ini').write_text(s)
 for name in ['flash.py','capture.py']:
     shutil.copyfile(root/'.pio/map-heap'/name,work/name)
 print('Prepared',work)
-print('Build: pio run -c .pio/map-pipeline.ini -e cardputer-adv')
+print(f'Build: pio run -c .pio/{args.name}.ini -e cardputer-adv')

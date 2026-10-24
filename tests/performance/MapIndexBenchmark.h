@@ -33,12 +33,12 @@ void runMapIndexBenchmark(const std::string& directory,const DatasetMetadata& me
         const bool saved=bool(order^(round%2));
         FileIoTiming map_io{},index_io{};
         const auto before_heap=heap();const auto start=monotonicMicros();
-        auto factory=std::make_shared<ObservedFileReaderFactory>(map_path,nullptr,&map_io,FileReadOptions{4096,4096});
+        auto factory=std::make_shared<ObservedFileReaderFactory>(map_path,nullptr,&map_io,FileReadOptions{4096,4096},drive);
         std::unique_ptr<RamCachedMapReader> ram;
         std::unique_ptr<CachedMapReader> file;
         if(saved) {
             const auto info=disk.loadMap(index_path,map_path,&map_io,&index_io);
-            auto index=std::make_shared<ObservedFileReaderFactory>(index_path,nullptr,&index_io,FileReadOptions{4096,0});
+            auto index=std::make_shared<ObservedFileReaderFactory>(index_path,nullptr,&index_io,FileReadOptions{4096,0},drive);
             file=std::make_unique<CachedMapReader>(info,factory,index);
         } else ram=std::make_unique<RamCachedMapReader>(factory);
         factory->setReadOptions({16384,4096});

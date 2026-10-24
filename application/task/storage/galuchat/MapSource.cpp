@@ -19,10 +19,10 @@ MapSourceResult readBoundaryMap(const std::string& directory,const std::string& 
         DatasetWordBookIndex book;
         DatasetIndex index(drive,observer);
         const auto info=index.loadMap(path,map_path,nullptr,nullptr,&book,metadata.language);
-        auto index_factory=std::make_shared<ObservedFileReaderFactory>(path,observer,nullptr,FileReadOptions{config::IndexReadBufferBytes,0});
+        auto index_factory=std::make_shared<ObservedFileReaderFactory>(path,observer,nullptr,FileReadOptions{config::IndexReadBufferBytes,0},drive);
         {
             DiskIndexedMapReader reader(info,std::make_shared<ObservedFileReaderFactory>(map_path,observer,nullptr,
-                FileReadOptions{config::MapRectReadBufferBytes,config::FileReadThroughSkipBytes}),index_factory);
+                FileReadOptions{config::MapRectReadBufferBytes,config::FileReadThroughSkipBytes},drive),index_factory);
             result.info.error=map::planViewport(request.latitude,request.longitude,reader.unitInvX(),reader.unitInvY(),config::MapViewCodeMaxBytes,result.plan);
             if(result.info.error!=map::Error::None)return result;
             const auto& bounds=result.plan.source;
@@ -39,7 +39,7 @@ MapSourceResult readBoundaryMap(const std::string& directory,const std::string& 
             const auto book_path=directory+"/"+metadata.wordbook;
             if(!wordBookUsesUtf8(index.checkWordBook(book,book_path)))throw std::runtime_error("unsupported map wordbook encoding");
             DiskIndexedWordBookReader reader(book,std::make_shared<ObservedFileReaderFactory>(book_path,observer,nullptr,
-                FileReadOptions{config::WordBookReadBufferBytes,config::FileReadThroughSkipBytes}),index_factory);
+                FileReadOptions{config::WordBookReadBufferBytes,config::FileReadThroughSkipBytes},drive),index_factory);
             std::vector<std::string> names;
             if(!reader.readStringSetByCode(result.info.region,names))throw std::runtime_error("invalid map region");
             std::string name;

@@ -50,10 +50,10 @@ void runWordBookIndexBenchmark(const std::string& directory,const DatasetMetadat
     const auto map_info=loader.loadMap(index_path,map_path,nullptr,nullptr,&book_info,metadata.language);
     if(!wordBookUsesUtf8(loader.checkWordBook(book_info,book_path)))throw std::runtime_error("benchmark needs UTF-8 Wordbook");
     FileIoTiming map_io{},book_io{},map_index_io{},book_index_io{};
-    auto map_source=std::make_shared<ObservedFileReaderFactory>(map_path,nullptr,&map_io,FileReadOptions{16384,4096});
-    auto book_source=std::make_shared<ObservedFileReaderFactory>(book_path,nullptr,&book_io,FileReadOptions{4096,4096});
-    auto map_index=std::make_shared<ObservedFileReaderFactory>(index_path,nullptr,&map_index_io,FileReadOptions{4096,0});
-    auto book_index=std::make_shared<ObservedFileReaderFactory>(index_path,nullptr,&book_index_io,FileReadOptions{4096,0});
+    auto map_source=std::make_shared<ObservedFileReaderFactory>(map_path,nullptr,&map_io,FileReadOptions{16384,4096},drive);
+    auto book_source=std::make_shared<ObservedFileReaderFactory>(book_path,nullptr,&book_io,FileReadOptions{4096,4096},drive);
+    auto map_index=std::make_shared<ObservedFileReaderFactory>(index_path,nullptr,&map_index_io,FileReadOptions{4096,0},drive);
+    auto book_index=std::make_shared<ObservedFileReaderFactory>(index_path,nullptr,&book_index_io,FileReadOptions{4096,0},drive);
     auto map=std::make_unique<CachedMapReader>(map_info,map_source,map_index);
     auto sequential=std::make_unique<galuchat::GaluchatGisWordBookReader>(book_source,0);
     auto indexed=std::make_unique<DiskIndexedWordBookReader>(book_info,book_source,book_index);

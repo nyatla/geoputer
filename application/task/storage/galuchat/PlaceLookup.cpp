@@ -93,19 +93,19 @@ PlaceState PlaceLookup::open() {
     if (!maps || !books) return PlaceState::DatasetMissing;
     }
     }
-    // Same ReaderFactory/Reader API as the SDK's file sample. ESP-IDF's VFS
-    // exposes the already-mounted FatFs volume at /sd; do not mount SD twice.
+    // Preserve the SDK ReaderFactory/Reader API. Readers use the existing
+    // mounted FatFs drive directly on ESP32; do not mount SD twice.
     std::unique_ptr<CachedMapReader> map;
     DatasetWordBookIndex book_info;
     std::shared_ptr<ObservedFileReaderFactory> index_factory;
     try {
         auto factory = std::make_shared<ObservedFileReaderFactory>(
             mapPath, observer_, &timing_.map_io,
-            FileReadOptions{config::MapInitReadBufferBytes, config::FileReadThroughSkipBytes});
+            FileReadOptions{config::MapInitReadBufferBytes, config::FileReadThroughSkipBytes}, drive_);
         const auto index_path=directory_+"/_mapindex.dat";
         const auto info=DatasetIndex(drive_,observer_).loadMap(index_path,mapPath,&timing_.map_io,&timing_.index_io,&book_info,language_);
         index_factory=std::make_shared<ObservedFileReaderFactory>(index_path,observer_,&timing_.index_io,
-            FileReadOptions{config::IndexReadBufferBytes,0});
+            FileReadOptions{config::IndexReadBufferBytes,0}, drive_);
         map=std::make_unique<CachedMapReader>(info,factory,index_factory,observer_);
         factory->setReadOptions({config::MapRectReadBufferBytes, config::FileReadThroughSkipBytes});
     } catch (const MapChunkLimitExceeded& error) {
@@ -117,7 +117,7 @@ PlaceState PlaceLookup::open() {
     if (!wordBookUsesUtf8(book_metadata)) return PlaceState::EncodingError;
     auto book = std::make_unique<DiskIndexedWordBookReader>(book_info,
         std::make_shared<ObservedFileReaderFactory>(wordbookPath, observer_, &timing_.wordbook_io,
-            FileReadOptions{config::WordBookReadBufferBytes, config::FileReadThroughSkipBytes}), index_factory);
+            FileReadOptions{config::WordBookReadBufferBytes, config::FileReadThroughSkipBytes}, drive_), index_factory);
     map_ = std::move(map); wordbook_ = std::move(book);
     dataset_.state = PlaceState::Ready;
     return PlaceState::Ready;

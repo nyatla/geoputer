@@ -24,8 +24,8 @@ template<class Print> void runQuarterScaleBenchmark(const std::string& directory
     const auto map_path=directory+"/"+metadata.map,index_path=directory+"/_mapindex.dat";
     const auto info=DatasetIndex(drive,parent).loadMap(index_path,map_path);
     ScaleHeapObserver observer(parent);FileIoTiming map_io,index_io;
-    auto map_factory=std::make_shared<ObservedFileReaderFactory>(map_path,&observer,&map_io,FileReadOptions{16384,4096});
-    auto index_factory=std::make_shared<ObservedFileReaderFactory>(index_path,&observer,&index_io,FileReadOptions{4096,0});
+    auto map_factory=std::make_shared<ObservedFileReaderFactory>(map_path,&observer,&map_io,FileReadOptions{16384,4096},drive);
+    auto index_factory=std::make_shared<ObservedFileReaderFactory>(index_path,&observer,&index_io,FileReadOptions{4096,0},drive);
     DiskIndexedMapReader reader(info,map_factory,index_factory);
     const auto normal=scalePlan(latitude,longitude,reader.unitInvX(),reader.unitInvY(),1),half=scalePlan(latitude,longitude,reader.unitInvX(),reader.unitInvY(),2),quarter=scalePlan(latitude,longitude,reader.unitInvX(),reader.unitInvY(),4);
     // Reserve the same two UI image buffers for all cases. No UI-frame copying

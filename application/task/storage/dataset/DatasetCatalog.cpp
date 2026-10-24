@@ -68,7 +68,7 @@ DatasetView DatasetCatalog::read(const DatasetRequest& request,UiLanguage ui) co
         view.info.north=(double(info.south)+info.height)/view.info.unit_inv_y;
         galuchat::GaluchatGisWordBookReader book(std::make_shared<ObservedFileReaderFactory>(
             directory(request.number)+"/"+metadata.wordbook,observer_,nullptr,
-            FileReadOptions{config::WordBookReadBufferBytes,config::FileReadThroughSkipBytes}),0);
+            FileReadOptions{config::WordBookReadBufferBytes,config::FileReadThroughSkipBytes},drive_),0);
         if (!wordBookUsesUtf8(book.metadata())) view.error=DatasetError::Encoding;
     } catch(const MapChunkLimitExceeded& error) {view.error=DatasetError::TooManyChunks;view.info.chunks=error.count;}
     catch(const std::bad_alloc&) {view.error=DatasetError::NoMemory;}

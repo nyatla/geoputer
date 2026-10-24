@@ -3,6 +3,9 @@
 #include "BoundaryExtractorBefore.h"
 #include "DecodeProfile.h"
 #include <cstring>
+#ifdef GEOPUTER_COMPARE_STDIO
+#include "ObservedFileReaderStdio.h"
+#endif
 namespace geoputer::benchmark {
 template<class Print> void runMapPipelineBenchmark(const std::string& directory, const char* language,
                                                    uint8_t drive, StorageObserver* parent, Print print) {
@@ -16,9 +19,9 @@ template<class Print> void runMapPipelineBenchmark(const std::string& directory,
     ScaleHeapObserver observer(parent);
     FileIoTiming map_io, index_io;
     auto map_factory = std::make_shared<ObservedFileReaderFactory>(map_path, &observer, &map_io,
-        FileReadOptions{config::MapRectReadBufferBytes, config::FileReadThroughSkipBytes});
+        FileReadOptions{config::MapRectReadBufferBytes, config::FileReadThroughSkipBytes}, drive);
     auto index_factory = std::make_shared<ObservedFileReaderFactory>(index_path, &observer, &index_io,
-        FileReadOptions{config::IndexReadBufferBytes, 0});
+        FileReadOptions{config::IndexReadBufferBytes, 0}, drive);
     DiskIndexedMapReader reader(info, map_factory, index_factory);
     const auto normal = scalePlan(latitude,longitude,reader.unitInvX(),reader.unitInvY(),1);
     const auto half = scalePlan(latitude,longitude,reader.unitInvX(),reader.unitInvY(),2);
@@ -30,8 +33,38 @@ template<class Print> void runMapPipelineBenchmark(const std::string& directory,
     uint64_t hashes[3]{};
     bool have_hash[3]{};
     uint32_t current = 0;
+#ifdef GEOPUTER_COMPARE_STDIO
+    auto stdio_map = std::make_shared<StdioObservedFileReaderFactory>(map_path, &observer, &map_io,
+        FileReadOptions{config::MapRectReadBufferBytes, config::FileReadThroughSkipBytes}, drive);
+    auto stdio_index = std::make_shared<StdioObservedFileReaderFactory>(index_path, &observer, &index_io,
+        FileReadOptions{config::IndexReadBufferBytes, 0}, drive);
+    DiskIndexedMapReader stdio_reader(info, stdio_map, stdio_index);
+    constexpr unsigned backends=2, rounds=6;
+    print("[PIPE-READER] fil_bytes=%u direct_reader_bytes=%u stdio_reader_bytes=%u\n",
+        unsigned(sizeof(FIL)),unsigned(sizeof(ObservedFileReader)),unsigned(sizeof(StdioObservedFileReader)));
+#else
+    constexpr unsigned backends=1, rounds=3;
+#endif
+#ifndef GEOPUTER_COMPARE_STDIO
     const unsigned order[3][3] = {{0,1,2},{2,0,1},{1,2,0}};
-    for (unsigned round=0;round<3;++round) for (unsigned kind:order[round]) {
+#endif
+#ifdef GEOPUTER_COMPARE_STDIO
+    // Each scale is a separate workload. Run larger work areas first so the
+    // optional shrink prototypes do not fragment a later normal-size request.
+    for (unsigned kind : {0u,2u,1u}) for (unsigned round=0;round<rounds;++round)
+#else
+    for (unsigned round=0;round<rounds;++round) for (unsigned kind:order[round%3])
+#endif
+    for(unsigned slot=0;slot<backends;++slot) {
+        const unsigned backend=(slot+round)%backends;
+        const char* backend_name=backend?"stdio":"fatfs";
+#ifdef GEOPUTER_COMPARE_STDIO
+        auto& active_reader=backend?stdio_reader:reader;
+#else
+        auto& active_reader=reader;
+#endif
+        print("[PIPE-START] backend=%s round=%u scale=%u heap=%u largest=%u\n",backend_name,round+1,kind==0?1:kind==1?2:4,
+            unsigned(heap_caps_get_free_size(MALLOC_CAP_8BIT)),unsigned(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT)));
         map_io={}; index_io={}; observer.reset();
         DecodeProfile decode{&map_io,&index_io};
         ActivateDecodeProfile activate(decode);
@@ -47,7 +80,7 @@ template<class Print> void runMapPipelineBenchmark(const std::string& directory,
                 std::unique_ptr<uint32_t[]> pixels(new uint32_t[work_bytes/4]);
                 observer.sample();
                 auto tick=monotonicMicros();
-                reader.readRect({normal.source.x,normal.source.y,normal.source.width,normal.source.height},pixels.get());
+                active_reader.readRect({normal.source.x,normal.source.y,normal.source.width,normal.source.height},pixels.get());
                 read_us=monotonicMicros()-tick; read_calls=1;
                 observer.sample();
                 const map::RasterView view{pixels.get(),normal.source,work_bytes/4};
@@ -76,7 +109,7 @@ template<class Print> void runMapPipelineBenchmark(const std::string& directory,
                 // Both passes were executed, so total below is accounted by phases.
             } else {
                 const auto stats=renderStrips(kind==1?half:quarter,current,16,out,
-                    [&](const galuchat::Rect& r,uint32_t* dst){observer.sample();reader.readRect(r,dst);observer.sample();},
+                    [&](const galuchat::Rect& r,uint32_t* dst){observer.sample();active_reader.readRect(r,dst);observer.sample();},
                     [&]{observer.sample();vTaskDelay(1);});
                 read_us=stats.read_us;extract_us=stats.extract_us;yield_us=stats.yield_us;
                 read_calls=stats.calls;work_bytes=stats.work_bytes;
@@ -92,19 +125,19 @@ template<class Print> void runMapPipelineBenchmark(const std::string& directory,
             throw std::runtime_error("pipeline timing overlap");
         const auto decode_us=decode.inclusive_us-decode.io_us;
         const auto index_other_us=read_us-file_us-decode_us;
-        print("[PIPE-CASE] round=%u scale=%u band=%u total_us=%llu readrect_us=%llu file_us=%llu decode_us=%llu index_other_us=%llu extract_us=%llu old_extract_us=%llu yield_us=%llu read_calls=%u decode_calls=%u work=%u hash=%llu heap_min=%u\n",
-            round+1,kind==0?1:kind==1?2:4,kind==0?0:16,
+        print("[PIPE-CASE] backend=%s round=%u scale=%u band=%u total_us=%llu readrect_us=%llu file_us=%llu decode_us=%llu index_other_us=%llu extract_us=%llu old_extract_us=%llu yield_us=%llu read_calls=%u decode_calls=%u work=%u hash=%llu heap_min=%u\n",
+            backend_name,round+1,kind==0?1:kind==1?2:4,kind==0?0:16,
             (unsigned long long)pipeline_us,(unsigned long long)read_us,(unsigned long long)file_us,
             (unsigned long long)decode_us,(unsigned long long)index_other_us,(unsigned long long)extract_us,
             (unsigned long long)old_us,(unsigned long long)yield_us,read_calls,decode.calls,(unsigned)work_bytes,
             (unsigned long long)hash,(unsigned)observer.minimum);
-        auto io=[&](const char* file,const FileIoTiming& t){print("[PIPE-IO] round=%u scale=%u file=%s bytes=%llu reads=%u seeks=%u opens=%u closes=%u read_us=%llu seek_us=%llu open_us=%llu close_us=%llu stat_us=%llu\n",
-            round+1,kind==0?1:kind==1?2:4,file,(unsigned long long)t.bytes,t.reads,t.seeks,t.opens,t.closes,
+        auto io=[&](const char* file,const FileIoTiming& t){print("[PIPE-IO] backend=%s round=%u scale=%u file=%s bytes=%llu reads=%u seeks=%u opens=%u closes=%u read_us=%llu seek_us=%llu open_us=%llu close_us=%llu stat_us=%llu\n",
+            backend_name,round+1,kind==0?1:kind==1?2:4,file,(unsigned long long)t.bytes,t.reads,t.seeks,t.opens,t.closes,
             (unsigned long long)t.read_us,(unsigned long long)t.seek_us,(unsigned long long)t.open_us,
             (unsigned long long)t.close_us,(unsigned long long)t.stat_us);};
         io("map",map_io);io("index",index_io);
         vTaskDelay(pdMS_TO_TICKS(100));
     }
-    print("[PIPE-DONE] cases=9 old_new_equal=1 all_rounds_equal=1\n");
+    print("[PIPE-DONE] cases=%u old_new_equal=1 all_rounds_equal=1\n",3*rounds*backends);
 }
 } // namespace geoputer::benchmark
