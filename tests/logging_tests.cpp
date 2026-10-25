@@ -85,29 +85,53 @@ void fileTests(const std::string& directory) {
     check(activity.depth==0,"all physical I/O scopes balanced");
 }
 void uiTests() {
-    UiModel ui; UiData data{}; data.settings=defaultSettings();
-    ui.setScreen({ScreenId::LivePlace,DisplayMode::View,1,data,0,ActionResult::None});
-    ui.keyPressed(UiKey::PauseLog,100);
-    check(!ui.confirming() && ui.snapshot().action.kind==ActionKind::None,"0 cannot start a stopped logger");
-    data.recording.state=RecordingState::Recording;
-    ui.updateContent({DisplayMode::View,1,data,0,ActionResult::None});
-    ui.keyPressed(UiKey::PauseLog,101); ui.keyPressed(UiKey::Up,102);
-    check(ui.confirming() && !ui.confirmChoice(),"pause confirmation defaults to cancel; Up is ignored");
-    ui.keyPressed(UiKey::Right,103); ui.keyPressed(UiKey::Enter,104);
-    auto action=ui.snapshot().action;
-    check(action.kind==ActionKind::Logging && action.log_action==LogAction::Pause && action.confirmed,"0 confirms pause only");
-    data.recording.state=RecordingState::Paused;
-    ui.updateContent({DisplayMode::View,1,data,action.action_id,ActionResult::Applied});
-    ui.keyPressed(UiKey::PauseLog,105); check(ui.snapshot().action.kind==ActionKind::None,"0 cannot resume");
-    ui.setScreen({ScreenId::GpsLogger,DisplayMode::View,2,data,0,ActionResult::None});
-    ui.keyPressed(UiKey::Enter,106); action=ui.snapshot().action;
-    check(action.log_action==LogAction::Resume,"GPS Logger resumes recording");
-    ui.updateContent({DisplayMode::View,2,data,action.action_id,ActionResult::Applied});
-    ui.keyPressed(UiKey::Down,107); ui.keyPressed(UiKey::Enter,108);
-    check(ui.confirming(),"GPS Logger stop requires confirmation");
-    ui.keyPressed(UiKey::Escape,109); check(!ui.confirming(),"Esc cancels stop");
-    ui.setBattery(72,true,true); ui.updateContent({DisplayMode::View,2,data,0,ActionResult::None});
-    check(ui.battery().percent==72 && ui.battery().charging,"App updates preserve UI-owned battery sample");
+    for(auto screen:{ScreenId::GpsLogger,ScreenId::LivePlace,ScreenId::Map,ScreenId::Logs,ScreenId::LogDetail,ScreenId::Settings}) {
+        for(auto state:{RecordingState::Stopped,RecordingState::Starting,RecordingState::Recording,RecordingState::Paused}) {
+            for(unsigned choice=0;choice<(state==RecordingState::Stopped?1u:2u);++choice) {
+                UiModel ui;UiData data{};data.settings=defaultSettings();data.storage.card_state=CardState::Mounted;
+                data.recording.state=state;data.gps.reception=GpsReception::Fix;
+                ui.setScreen({screen,DisplayMode::View,1,data,0,ActionResult::None});
+                ui.keyPressed(screen==ScreenId::GpsLogger?UiKey::Enter:UiKey::GpsControl,1);
+                const auto initial=state==RecordingState::Stopped?0u:1u;
+                check(ui.confirming() && ui.dialog().choice()==initial,"GPS defaults to Start or Pause/Resume without Cancel item");
+                ui.keyPressed(UiKey::Down,2);check(ui.dialog().choice()==initial,"vertical key cannot choose action");
+                ui.keyPressed(UiKey::Left,3);
+                for(unsigned n=0;n<choice;++n)ui.keyPressed(UiKey::Right,3);
+                ui.keyPressed(UiKey::Enter,4);const auto a=ui.snapshot().action;
+                const auto expected=state==RecordingState::Stopped?LogAction::Start:
+                    choice==0?LogAction::Stop:state==RecordingState::Paused?LogAction::Resume:LogAction::Pause;
+                check(a.kind==ActionKind::Logging && a.log_action==expected && a.confirmed,"GPS screen and G dispatch identical operations");
+            }
+            for(auto cancel:{UiKey::Escape,UiKey::Back}) {
+                UiModel ui;UiData data{};data.settings=defaultSettings();data.storage.card_state=CardState::Mounted;data.recording.state=state;
+                ui.setScreen({screen,DisplayMode::View,1,data,0,ActionResult::None});
+                ui.keyPressed(UiKey::GpsControl,1);ui.keyPressed(cancel,2);
+                check(!ui.confirming() && ui.snapshot().action.kind==ActionKind::None,"Esc/Del cancel without application request");
+            }
+            // Enter immediately after opening executes the intended default.
+            UiModel ui;UiData data{};data.settings=defaultSettings();data.storage.card_state=CardState::Mounted;data.recording.state=state;
+            ui.setScreen({screen,DisplayMode::View,1,data,0,ActionResult::None});
+            ui.keyPressed(UiKey::GpsControl,1);ui.keyPressed(UiKey::Enter,2);
+            const auto expected=state==RecordingState::Stopped?LogAction::Start:state==RecordingState::Paused?LogAction::Resume:LogAction::Pause;
+            check(ui.snapshot().action.kind==ActionKind::Logging && ui.snapshot().action.log_action==expected,"Enter runs default without cursor movement");
+        }
+    }
+    UiData data{};data.settings=defaultSettings();data.storage.card_state=CardState::NoCard;
+    data.gps.reception=GpsReception::Fix;UiModel ui;ui.setScreen({ScreenId::GpsLogger,DisplayMode::View,1,data,0,ActionResult::None});
+    ui.keyPressed(UiKey::Enter,1);check(ui.dialog().choices()==1 && !ui.dialog().choiceEnabled(0),"without SD sole Start action is disabled");
+    ui.keyPressed(UiKey::Right,2);check(ui.dialog().choice()==0,"disabled Start cannot move to a hidden Cancel item");
+    ui.keyPressed(UiKey::Enter,2);check(ui.confirming() && ui.snapshot().action.kind==ActionKind::None,"disabled Start cannot execute or close the action menu");
+    data.recording.state=RecordingState::Paused;++data.revision;ui.updateContent({DisplayMode::View,1,data,0,ActionResult::None});
+    check(!ui.confirming(),"state change invalidates old dialog");
+    data.storage.log.closing=true;++data.revision;ui.updateContent({DisplayMode::View,1,data,0,ActionResult::None});
+    ui.keyPressed(UiKey::Enter,3);ui.keyPressed(UiKey::Right,4);ui.keyPressed(UiKey::Enter,5);
+    check(ui.snapshot().action.kind==ActionKind::None,"closing session disables operations");
+    check(ui.confirming() && ui.dialog().choice()==1,"temporarily disabled Pause/Resume retains focus");
+    data.storage.log.closing=false;++data.revision;ui.updateContent({DisplayMode::View,1,data,0,ActionResult::None});
+    check(ui.dialog().choice()==1 && ui.dialog().choiceEnabled(1),"enabling actions cannot silently select Stop");
+    ui.setBattery(72,true,true);ui.updateContent({DisplayMode::View,1,data,0,ActionResult::None});
+    check(ui.battery().percent==72,"UI-owned battery survives update");
+
 }
 }
 void testLogging() {

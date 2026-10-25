@@ -13,7 +13,7 @@ void check(bool value,const char* why){if(!value)throw std::runtime_error(why);}
 MapSourceResult source(const map::Request& request) {
     MapSourceResult out;out.info.request=request;
     check(map::planViewport(request.latitude,request.longitude,10000,10000,96*1024,out.plan)==map::Error::None,"fixture viewport");
-    out.info.width=240;out.info.height=101;out.info.region=11;std::strcpy(out.info.name,"Test");
+    out.info.width=240;out.info.height=101;out.info.region=11;
     out.info.meters_per_pixel=out.plan.meters_per_pixel*request.scale;
     out.pixels.reset(new uint32_t[size_t(out.plan.source.width)*out.plan.source.height]);
     std::fill_n(out.pixels.get(),out.view().count,11u);return out;
@@ -87,6 +87,30 @@ int main() {
     app.data_.gps.fix.valid=false;check(app.changeMapScale(4),"zoom unavailable map");acknowledgeScale(app);app.processMap();
     check(!app.map_request_.token && app.data_.map.error==map::Error::NoFix && app.data_.map.scale==4,"zoom without fix lost selection or issued a read");
     app.data_.gps.fix.valid=true;app.processMap();check(app.map_request_.scale==4,"fix recovery lost chosen scale");finish(app);deliver(app);
+    // New GPS samples inside the window never request new SD/map work.
+    const auto anchor=app.map_anchor_;
+    auto move=[&](double x,double y) {
+        app.data_.gps.fix.latitude=anchor.request.latitude-y*anchor.meters_per_pixel/111320.;
+        app.data_.gps.fix.longitude=anchor.request.longitude+x*anchor.meters_per_pixel/(111320.*std::cos(anchor.request.latitude*3.14159265358979323846/180));
+        ++app.data_.gps.sample_seq;++app.data_.revision;
+        app.processMap();acknowledgeScale(app);
+    };
+    const auto before_tracking=commands.size();
+    for(auto point:std::vector<std::pair<double,double>>{{32,0},{-32,0},{0,32},{0,-32},{32,32}}) {
+        move(point.first,point.second);const auto cursor=app.ui_.model_.mapCursor();
+        check(commands.size()==before_tracking && !app.map_request_.token,"inside movement performed a redundant map read");
+        check(cursor.valid && std::abs(cursor.x-point.first)<1e-7 && std::abs(cursor.y-point.second)<1e-7,"UI cursor did not follow the current fix");
+    }
+    app.data_.gps.fix.valid=false;++app.data_.revision;app.processMap();acknowledgeScale(app);
+    check(app.data_.map.error==map::Error::NoFix && app.ui_.model_.mapCursor().x>31.9,"GPS loss must preserve the last marker position");
+    app.data_.gps.fix.valid=true;++app.data_.revision;app.processMap();acknowledgeScale(app);
+    check(commands.size()==before_tracking && app.data_.map.error==map::Error::None,"fix recovery inside the window should reuse the shown map");
+    move(32.25,0);check(app.map_request_.token && commands.back()==MessageKind::RequestMap,"crossing 32 pixels should recenter without a periodic delay");
+    check(app.map_anchor_.request.token==anchor.request.token,"pending map replaced the displayed coordinate origin");
+    move(36.25,0);finish(app);deliver(app);acknowledgeScale(app);
+    check(app.map_anchor_.request.token!=anchor.request.token && std::abs(app.ui_.model_.mapCursor().x-4)<1e-7,
+          "completed map must preserve newer GPS motion relative to its requested origin");
+    const auto after_tracking=commands.size();app.processMap();check(commands.size()==after_tracking,"newly recentered map immediately regenerated");
     app.screen_=ScreenId::LivePlace;check(!app.changeMapScale(1),"other screens can change map scale");
     app.screen_=ScreenId::Map;app.mode_=DisplayMode::Background;check(!app.changeMapScale(1),"background changes map scale");
     std::puts("PASS: real App zoom cancellation, stale completions, mid-transfer changes, unchanged GPS, no-fix recovery and atomic frame commit");

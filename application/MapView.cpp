@@ -11,7 +11,7 @@ bool Application::changeMapScale(uint8_t scale) {
     data_.map.scale=scale;
     // A scale change is a fresh request even with the same GPS sample. Keep
     // the displayed frame until the new image has been received completely.
-    map_started_=false;map_retry_at_=0;
+    map_retry_at_=0;
     if(map_request_.token)map_cancel_=true;
     const auto error=mapAvailability();
     data_.map.busy=error==map::Error::None;data_.map.error=error;
@@ -57,7 +57,7 @@ void Application::processMap() {
         map_request_.dataset_generation!=data_.dataset.generation || map_request_.scale!=data_.map.scale))map_cancel_=true;
     if(map_cancel_ && map_request_.token) {
         if(!mapStorageCommand(MessageKind::CancelMap,map_request_))return;
-        map_request_={};map_cancel_=map_ready_=map_begun_=false;map_started_=false;
+        map_request_={};map_cancel_=map_ready_=map_begun_=false;
     }
     if(!visible) {mapState(false,map::Error::None);return;}
     if(available!=map::Error::None) {mapState(false,available);return;}
@@ -83,12 +83,17 @@ void Application::processMap() {
         if(!mapUiCommand(MessageKind::CommitMapFrame,map_transfer_)) {
             mapState(false,map::Error::Stale);map_cancel_=true;map_retry_at_=now+config::MapViewRetryMs;return;
         }
+        map_anchor_={map_info_.request,map_info_.meters_per_pixel};
         if(!mapStorageCommand(MessageKind::ReleaseMap,map_request_)) {map_cancel_=true;return;}
         map_request_={};map_ready_=map_begun_=false;mapState(false,map::Error::None);return;
     }
+    if(!map_request_.token && map_anchor_.request.screen_generation==generation_ &&
+       map_anchor_.request.dataset_generation==data_.dataset.generation && map_anchor_.request.scale==data_.map.scale &&
+       map::inTrackingWindow(map::cursorOffset(map_anchor_,data_.gps.fix.latitude,data_.gps.fix.longitude),config::MapCursorRadius)) {
+        mapState(false,map::Error::None);return;
+    }
     if(map_request_.token || static_cast<int32_t>(now-map_retry_at_)<0 ||
-       (map_started_ && (now-map_started_at_<config::MapViewUpdateMs || data_.gps.sample_seq==map_last_sample_)) ||
-       data_.storage.busy || dataset_waiting_ || dataset_check_waiting_ || browse_waiting_)return;
+       place_flow_.pending() || data_.storage.busy || dataset_waiting_ || dataset_check_waiting_ || browse_waiting_)return;
     if(++map_token_==0)++map_token_;
     map_request_={};map_request_.token=map_token_;map_request_.screen_generation=generation_;
     map_request_.dataset_generation=data_.dataset.generation;map_request_.sample_seq=data_.gps.sample_seq;
@@ -97,6 +102,6 @@ void Application::processMap() {
     if(!mapStorageCommand(MessageKind::RequestMap,map_request_)) {
         map_request_={};map_retry_at_=now+config::MapViewRetryMs;return;
     }
-    map_started_=true;map_started_at_=now;map_last_sample_=data_.gps.sample_seq;mapState(true,map::Error::None);
+    mapState(true,map::Error::None);
 }
 } // namespace geoputer

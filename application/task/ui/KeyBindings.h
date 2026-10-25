@@ -6,13 +6,15 @@ namespace geoputer {
 
 // Input is the unshifted value of a physical Cardputer key, independent of Fn.
 // Del and Enter are supplied separately by the keyboard driver's state flags.
-inline UiKey mapPhysicalKey(char key, bool fn) {
+inline UiKey mapPhysicalKey(char key, bool /*fn*/) {
     switch (key) {
-        case 'p': return UiKey::PauseLog;
-        case '1': return fn ? UiKey::F1 : UiKey::OpenLivePlace;
-        case '2': return UiKey::OpenGpsLogger;
-        case '3': return UiKey::OpenLogs;
-        case '4': return UiKey::OpenMap;
+        case 's': return UiKey::ScreenOff;
+        case 'g': return UiKey::GpsControl;
+        case '0': return UiKey::OpenSettings;
+        case '1': return UiKey::OpenLivePlace;
+        case '2': return UiKey::OpenMap;
+        case '3': return UiKey::OpenGpsLogger;
+        case '4': return UiKey::OpenLogs;
         case 'd': return UiKey::DeleteLog;
         case ';': return UiKey::Up;
         case '.': return UiKey::Down;

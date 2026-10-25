@@ -85,8 +85,8 @@ void testPlace() {
     check(flow.waitMs(2000, 9) == UINT32_MAX, "new GPS fixes cannot flood a pending search");
     check(!flow.completed(99, 7, 7) && flow.pending(), "unrelated result cannot release request");
     check(flow.completed(100, 7, 7) && !flow.pending(), "matching completion releases request");
-    check(flow.waitMs(0xFFFFFF00 + 2000u, 2) == 3000, "search deadline survives timer wrap");
-    check(flow.waitMs(0xFFFFFF00 + 5000u, 2) == 0, "new fix is searched at five-second deadline");
+    check(flow.waitMs(0xFFFFFF00 + 2000u, 2) == 0, "changed fix is not delayed by a five-second timer");
+    check(flow.waitMs(0xFFFFFF00 + 5000u, 2) == 0, "changed fix remains eligible across timer wrap");
     check(flow.waitMs(9000, 1) == UINT32_MAX, "same GPS sample is not searched repeatedly");
     flow.sent(101, request, 9000);
     flow.refresh();
@@ -97,6 +97,19 @@ void testPlace() {
     flow.refresh();  // GPS became invalid and recovered in the same view.
     check(!flow.accepts(102, 7, 7), "late progress cannot light a lamp after fix loss");
     check(!flow.completed(102, 7, 7), "fix invalidation rejects old result even in same view");
+
+    PlaceSearchFlow lattice;
+    PlaceRequest cell_request{7,1,{35.68,140.02,0,true}};
+    lattice.sent(1,cell_request,0);check(lattice.completed(1,7,7),"lattice first result");
+    auto moved=cell_request.fix;moved.longitude+=0.00001;
+    check(lattice.waitMs(1,2,moved,10000,10000)==UINT32_MAX,"same dataset cell avoids a new request");
+    moved.longitude+=0.00006;
+    check(lattice.waitMs(1,2,moved,10000,10000)==0,"changed cell searches immediately without timer delay");
+    moved=cell_request.fix;moved.latitude+=0.00006;
+    check(lattice.waitMs(1,2,moved,10000,10000)==0,"north-south lattice crossing also searches");
+    lattice.refresh();
+    check(lattice.waitMs(1,2,cell_request.fix,10000,10000)==0,"refresh invalidates same-cell suppression");
+    check(!lattice.sameCell(cell_request.fix,0,0),"unopened dataset cannot suppress a lookup");
 
     UiData data{};
     data.settings = defaultSettings();
@@ -193,7 +206,7 @@ void testPlace() {
         check(warning.snapshot().action.target==ScreenId::Settings,"dataset fault never blocks direct settings access");
         UiModel recovery;recovery.setScreen({ScreenId::LivePlace,DisplayMode::View,1,rejected,0,ActionResult::None});
         recovery.keyPressed(UiKey::Escape,10);
-        check(recovery.snapshot().action.kind==ActionKind::Maintenance,"latched dataset error offers maintenance without a red-band requirement");
+        check(recovery.snapshot().action.kind==ActionKind::ChangeScreen && recovery.snapshot().action.target==ScreenId::Menu,"dataset error retains MENU access for settings recovery");
         DatasetInfo state{failure,2000,1500,7};
         check(!applyDatasetInfo(state,{PlaceState::Ready,1500,1500,7}) && state.state==failure,
               "same-generation late success cannot clear a dataset error");

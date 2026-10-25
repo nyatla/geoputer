@@ -36,13 +36,13 @@ int main(int argc,char** argv) {
         auto result=readBoundaryMap(dir.string(),"ja",request,0,&observer);
         const auto elapsed=std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()-started).count();
         check(result.info.error==map::Error::None && result.pixels,"independent map source succeeds");
-        check(result.info.region==place.region_code && result.info.name[0],"map center and name match the existing point lookup");
+        check(result.info.region==place.region_code,"map center matches the shared point lookup");
         check(result.plan.source.width==240 && result.plan.source.height<=101,"viewport fits the independent work limit");
         const auto after=lookup.cacheStats();
         check(after.bytes==before.bytes && after.fills==before.fills && after.hits==before.hits &&
               after.misses==before.misses && after.bounds.x==before.bounds.x && after.bounds.y==before.bounds.y &&
               lookup.datasetInfo().generation==generation && observer.rg==rg,"map never invalidates, reuses or changes the 128 cache or RG state");
-        const auto raw_bytes=result.view().count*4;const auto name=std::string(result.info.name);
+        const auto raw_bytes=result.view().count*4;const auto name=std::string(place.lines[0])+" / "+place.lines[1];
         const auto plan=result.plan;
         MapBuildJob job;job.start(request);job.loaded(std::move(result));
         unsigned steps=0;while(!job.complete() && ++steps<20)job.step();
@@ -60,7 +60,7 @@ int main(int argc,char** argv) {
             auto scaled=request;scaled.scale=scale;++scaled.token;
             auto small=readBoundaryMap(dir.string(),"ja",scaled,0,&observer);
             check(small.info.error==map::Error::None && small.pixels,"sampled map source succeeds");
-            check(small.info.region==place.region_code && small.info.name==name,"sampled map retains current-location code and name");
+            check(small.info.region==place.region_code,"sampled map retains its generation-center code");
             check(small.view().count*4==raw_bytes && small.info.meters_per_pixel==plan.meters_per_pixel*scale,
                   "sampled map uses constant code memory and a correctly scaled distance bar");
             const auto info=DatasetIndex{}.loadMap((dir/"_mapindex.dat").string(),(dir/"map.glc").string());
@@ -86,11 +86,24 @@ int main(int argc,char** argv) {
                   "actual boundary output differs from decimate-then-extract reference");
             check(lookup.cacheStats().fills==before.fills && lookup.cacheStats().hits==before.hits+1 && observer.rg==rg,
                   "sampled maps alter the independent point cache");
-            std::cout<<"PASS: decimate first scale="<<scale<<", raw_input="<<b.width<<'x'<<b.height<<", work_bytes="<<expected.size()*4<<", name="<<sampled_job.info().name<<'\n';
+            std::cout<<"PASS: decimate first scale="<<scale<<", raw_input="<<b.width<<'x'<<b.height<<", work_bytes="<<expected.size()*4<<", name="<<place.lines[0]<<" / "<<place.lines[1]<<'\n';
         }
+        std::ofstream(dir/"dataset.ini",std::ios::app)<<"display_line1=AREA %0 %%\ndisplay_line2=%1%2%3%4%5\n";
+        lookup.configure(dir.string(),"ja");check(lookup.prepare().state==PlaceState::Ready,"formatted point lookup prepares");
+        const auto formatted=lookup.search(point);auto formatted_map=readBoundaryMap(dir.string(),"ja",request,0,&observer);
+        check(formatted_map.info.error==map::Error::None && std::string(formatted.lines[0]).find("AREA ")==0,"shared lookup honours formatting independently of map generation");
+        std::ofstream(dir/"dataset.ini")<<"[dataset]\nversion=1\nmap=map.glc\ndefault_language=ja\n[ja]\ntitle=Test\nwordbook=names.giswordbook\ndisplay_line1=\ndisplay_line2=\n";
+        auto blank=readBoundaryMap(dir.string(),"ja",request,0,&observer);
+        check(blank.info.error==map::Error::None,"map generation is independent of place row formatting");
+        fs::rename(dir/"names.giswordbook",dir/"names.hidden");
+        check(readBoundaryMap(dir.string(),"ja",request,0,&observer).info.error==map::Error::None,
+              "boundary generation must not open or search the Wordbook");
+        fs::rename(dir/"names.hidden",dir/"names.giswordbook");
+        const auto configured_generation=lookup.datasetInfo().generation;
+        const auto configured_stats=lookup.cacheStats();
         fs::remove(dir/"_mapindex.dat");
         check(readBoundaryMap(dir.string(),"ja",request,0,&observer).info.error==map::Error::ReadError,"missing index becomes a map error");
-        check(lookup.cacheStats().fills==before.fills && lookup.datasetInfo().generation==generation && lookup.search(point).state==PlaceState::Ready,
+        check(lookup.datasetInfo().generation==configured_generation && lookup.cacheStats().fills==configured_stats.fills && lookup.search(point).state==PlaceState::Ready,
               "independent map errors do not mutate the existing cache or selection");
         std::cout<<"PASS: independent map source, center/name="<<name<<", work_bytes="<<raw_bytes<<", image_bytes=6060, source_host_ms="<<elapsed<<"; 128 cache preserved\n";
     }catch(const std::exception& error){std::cerr<<"FAIL: "<<error.what()<<'\n';return 1;}

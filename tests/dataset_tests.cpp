@@ -138,8 +138,9 @@ void navigationAndGate() {
 void unselectedUi() {
     UiData data{};data.settings=defaultSettings();data.dataset.state=PlaceState::Unselected;
     data.storage.card_state=CardState::NoCard;data.storage.settings_state=SettingsState::Loaded;
-    UiModel logger;logger.setScreen({ScreenId::GpsLogger,DisplayMode::View,1,data,0,ActionResult::None});
-    logger.keyPressed(UiKey::Enter,1);
+    auto logger_data=data;logger_data.storage.card_state=CardState::Mounted;
+    UiModel logger;logger.setScreen({ScreenId::GpsLogger,DisplayMode::View,1,logger_data,0,ActionResult::None});
+    logger.keyPressed(UiKey::Enter,1);logger.keyPressed(UiKey::Right,2);logger.keyPressed(UiKey::Enter,3);
     check(logger.snapshot().action.kind==ActionKind::Logging,"unselected retains logger controls");
     UiModel model;model.setScreen({ScreenId::Settings,DisplayMode::View,1,data,0,ActionResult::None});
     uint32_t now=0;auto key=[&](UiKey k){model.keyPressed(k,++now);};

@@ -3,7 +3,9 @@
 namespace geoputer {
 
 void GpsReceiver::begin(uint32_t now) {
+    const auto revision = snapshot_.revision, sample = snapshot_.sample_seq;
     *this = GpsReceiver{};
+    snapshot_.revision = revision; snapshot_.sample_seq = sample;
     started_at_ = now;
     snapshot_.reception = GpsReception::Waiting;
     changed(false);
@@ -28,6 +30,7 @@ void GpsReceiver::feed(char byte, uint32_t now) {
     if (result == NmeaResult::Rejected) ++rejected_sentences_;
     if (result != NmeaResult::Position && result != NmeaResult::OtherSentence) return;
     ++received_sentences_;
+    snapshot_.received_at_ms = now; snapshot_.received = true;
     have_sentence_ = true;
     sentence_at_ = now;
     if (result != NmeaResult::Position) return;

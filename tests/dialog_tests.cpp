@@ -56,7 +56,7 @@ void testDialogs() {
 
     data.recording.state = RecordingState::Recording;
     model.setScreen({ScreenId::GpsLogger, DisplayMode::View, 2, data, 0, ActionResult::None});
-    model.keyPressed(UiKey::Enter, 20); model.keyPressed(UiKey::Right, 21); model.keyPressed(UiKey::Enter, 22);
+    model.keyPressed(UiKey::Enter, 20); model.keyPressed(UiKey::Left, 21); model.keyPressed(UiKey::Enter, 22);
     const auto action = model.snapshot().action;
     check(action.kind == ActionKind::Logging && action.log_action == LogAction::Stop && action.confirmed,
           "shared Stop dialog preserves App-owned confirmed action");

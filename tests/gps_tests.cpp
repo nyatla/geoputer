@@ -171,4 +171,7 @@ void testGps() {
     testNmeaCoordinatesAndDamage();
     testEpochMergeAndStaleFix();
     testClockRolloverAndUiIsolation();
+    GpsReceiver receiver; receiver.begin(1);const auto before=receiver.snapshot();
+    GpsSnapshot app=receiver.snapshot();receiver.begin(3000);
+    check(applyGpsSnapshot(app,receiver.snapshot()) && app.revision>before.revision && app.sample_seq==before.sample_seq,"restart keeps monotonic sequence and revision");
 }

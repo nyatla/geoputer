@@ -14,6 +14,7 @@ struct LogSnapshot {
     uint8_t buffered = 0;
     bool open = false, closing = false;
     LogError error = LogError::None;
+    char name[48]{}; // Assigned by Storage when the first physical file is created.
 };
 inline bool applyLogSnapshot(LogSnapshot& current, const LogSnapshot& incoming) {
     if (!incoming.revision || (current.revision && static_cast<int32_t>(incoming.revision-current.revision)<=0)) return false;

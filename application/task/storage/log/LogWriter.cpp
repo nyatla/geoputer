@@ -102,6 +102,10 @@ bool LogWriter::createFile(uint64_t session, uint64_t first_utc) {
         // Retry a previously created but not yet committed header, never truncate.
         file_.open(path_,false);
     }
+    if (file_.opened()) {
+        ShortLock::Guard guard(lock_);
+        std::snprintf(state_.name, sizeof(state_.name), "%s", path_.c_str() + directory_.size() + 1);
+    }
     return file_.opened();
 }
 bool LogWriter::flush(uint32_t now) {

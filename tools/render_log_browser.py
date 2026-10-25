@@ -92,20 +92,20 @@ int main(int argc,char** argv) {
         for(int x=8;x<232;++x)for(int border:{short_name?38:33,short_name?102:107})
             if(display.pixels[border*240+x]!=TFT_WHITE)throw std::runtime_error("modal horizontal rule overwritten");
     }
-    if(screen==ScreenId::Logs && !delete_confirm && data.browse.count) {
-        const char* guide="[ENTER] OPEN    [D] DELETE";
-        for(unsigned n=0;guide[n];++n) {
-            const auto color=n<7?(data.browse.loading?TFT_DARKGREY:TFT_CYAN):
-                n>=16&&n<19?(data.browse.loading||(data.browse.active_mask&1)?TFT_DARKGREY:TFT_CYAN):TFT_LIGHTGREY;
-            for(int row=0;row<8;++row)for(int col=0;col<8;++col) {
-                const bool ink=font8x8_c64[(guide[n]-32)*8+col]&(1u<<row);
-                if(display.pixels[(97+row)*240+4+n*8+col]!=(ink?color:TFT_BLACK))throw std::runtime_error("list footer key guide differs from the specified pixel layout");
-            }
+    if(screen==ScreenId::Logs && !delete_confirm) {
+        // The former action-description row is empty. D is now a footer key.
+        for(int y=97;y<105;++y)for(int x=0;x<240;++x)
+            if(display.pixels[y*240+x]!=TFT_BLACK)throw std::runtime_error("obsolete log action prose remains");
+        const auto color=data.browse.deleting || data.browse.loading || !data.browse.count || (data.browse.active_mask&1)?TFT_DARKGREY:TFT_WHITE;
+        for(int row=0;row<8;++row)for(int col=0;col<8;++col) {
+            const bool ink=font8x8_c64[('D'-32)*8+col]&(1u<<row);
+            if(display.pixels[(124+row)*240+180+col]!=(ink?color:TFT_BLACK))throw std::runtime_error("D footer state differs from deletion availability");
         }
     }
+    const int header=usb_mode?22:16;
     if(screen!=ScreenId::LivePlace)for(int y=0;y<135;++y)for(int x=236;x<240;++x)
-        if(y!=22 && y!=118 && display.pixels[y*240+x]!=TFT_BLACK)throw std::runtime_error("text exceeded right margin");
-    if(screen!=ScreenId::LivePlace)for(int x=0;x<240;++x)for(int y:{22,118})
+        if(y!=header && y!=118 && display.pixels[y*240+x]!=TFT_BLACK)throw std::runtime_error("text exceeded right margin");
+    if(screen!=ScreenId::LivePlace)for(int x=0;x<240;++x)for(int y:{header,118})
         if(display.pixels[y*240+x]!=TFT_DARKGREY)throw std::runtime_error("header/footer border overwritten");
     std::printf("P6\n240 135\n255\n");
     for(auto c:display.pixels){const unsigned char pixel[]={static_cast<unsigned char>(((c>>11)&31)*255/31),static_cast<unsigned char>(((c>>5)&63)*255/63),static_cast<unsigned char>((c&31)*255/31)};std::fwrite(pixel,1,3,stdout);}
@@ -119,7 +119,7 @@ def main():
     for name in sorted(set(re.findall(r'\bTFT_[A-Z]+\b',SCENE+renderer))):
         value=re.search(rf'\b{name}\s*=\s*(0x[0-9A-Fa-f]+)',enums)[1]
         colors.append(f'inline constexpr uint16_t {name}={value};')
-    modes=('usb','usb-screen','usb-selected','usb-error','usb-ejected','logger','logger-paused','logger-confirm','pause-confirm','list','delete-confirm','delete-selected','delete-protected','delete-short','delete-longest','deleting','delete-error','detail','point','long-name','unknown','loading','crc-error','empty','sd-error','partial-tail','bounds')
+    modes=('usb','usb-screen','usb-selected','usb-error','usb-ejected','list','delete-confirm','delete-selected','delete-protected','delete-short','delete-longest','deleting','delete-error','detail','point','long-name','unknown','loading','crc-error','empty','sd-error','partial-tail','bounds')
     with tempfile.TemporaryDirectory(prefix='geoputer-browser-') as directory:
         work=Path(directory);(work/'M5GFX.h').write_text(ADAPTER+'\n'+'\n'.join(colors));(work/'scene.cpp').write_text(SCENE)
         sources=[ROOT/'application/task/ui'/f'{name}.cpp' for name in ('PixelFont','UiRenderer','UsbRenderer','UiModel','LicenseText','SettingsText','Shinonome')]

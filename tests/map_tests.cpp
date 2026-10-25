@@ -125,14 +125,31 @@ MapSourceResult source(const map::Request& request) {
     MapSourceResult result;result.info.request=request;
     check(map::planViewport(35.681641,140.027194,10000,10000,96*1024,result.plan)==map::Error::None,"map plan succeeds within independent memory budget");
     result.info.width=result.plan.width;result.info.height=result.plan.height;result.info.meters_per_pixel=result.plan.meters_per_pixel;
-    result.info.region=11;std::strcpy(result.info.name,"Test");
+    result.info.region=11;
     const auto& b=result.plan.source;result.pixels.reset(new uint32_t[size_t(b.width)*b.height]);
     for(int y=0;y<b.height;++y)for(int x=0;x<b.width;++x)result.pixels[size_t(y)*b.width+x]=x<120?11:22;
     return result;
 }
 }
+void testMapTracking() {
+    map::TrackingAnchor anchor;anchor.request.latitude=35;anchor.request.longitude=140;
+    anchor.meters_per_pixel=10;
+    auto at=[&](double x,double y) {return map::cursorOffset(anchor,anchor.request.latitude-y*anchor.meters_per_pixel/111320.,
+        anchor.request.longitude+x*anchor.meters_per_pixel/(111320.*std::cos(anchor.request.latitude*3.14159265358979323846/180)));};
+    for(unsigned scale:{1u,2u,4u}) {
+        anchor.request.scale=scale;anchor.meters_per_pixel=10*scale;
+        for(double x:{-32.,0.,32.})for(double y:{-32.,0.,32.}) {
+            const auto position=at(x,y);
+            check(map::inTrackingWindow(position,32) && std::abs(position.x-x)<1e-7 && std::abs(position.y-y)<1e-7,"tracking includes all +/-32-pixel corners at every scale");
+        }
+        check(!map::inTrackingWindow(at(32.01,0),32) && !map::inTrackingWindow(at(0,-32.01),32),"continuous coordinates outside the window require recentering");
+    }
+    anchor.request.latitude=60;check(map::inTrackingWindow(at(30,20),32),"latitude correction shared by cursor and viewport");
+    check(!map::cursorOffset(anchor,std::numeric_limits<double>::quiet_NaN(),140).valid,"nonfinite cursor rejected");
+    anchor.meters_per_pixel=0;check(!map::cursorOffset(anchor,60,140).valid,"uncommitted map cannot suppress first read");
+}
 void testMaps() {
-    testBoundarySampling();testDecimatedViewport();testMapScaleKeys();
+    testBoundarySampling();testDecimatedViewport();testMapScaleKeys();testMapTracking();
     map::BoundaryImage image;check(!image.resize(0,1) && !image.resize(241,101),"image rejects zero/oversized dimensions");
     check(image.resize(5,3) && image.bytes()==6,"odd image widths have padded rows");
     image.set(0,0,1);image.set(1,0,2);image.set(4,0,2);
@@ -180,14 +197,14 @@ void testMaps() {
     const ScreenId roots[]{ScreenId::LivePlace,ScreenId::GpsLogger,ScreenId::Logs,ScreenId::Settings,ScreenId::Map};
     for(auto from:roots)for(bool fn:{false,true}) {
         UiModel model;model.setScreen({from,DisplayMode::View,7,data,0,ActionResult::None});
-        model.keyPressed(mapPhysicalKey('4',fn),1);
+        model.keyPressed(mapPhysicalKey('2',fn),1);
         const auto action=model.snapshot().action;
         check(from==ScreenId::Map?action.kind==ActionKind::None:action.kind==ActionKind::ChangeScreen && action.target==ScreenId::Map,"4 opens Map from every root with or without Fn");
         check(model.data().recording.state==RecordingState::Recording,"opening Map never changes logging");
     }
     UiModel child;child.setScreen({ScreenId::Settings,DisplayMode::View,7,data,0,ActionResult::None});child.keyPressed(UiKey::Enter,1);child.keyPressed(UiKey::OpenMap,2);
     check(child.snapshot().action.kind==ActionKind::None,"settings children ignore map shortcut");
-    UiModel modal;modal.setScreen({ScreenId::LivePlace,DisplayMode::View,7,data,0,ActionResult::None});modal.keyPressed(UiKey::PauseLog,1);modal.keyPressed(UiKey::OpenMap,2);
+    UiModel modal;modal.setScreen({ScreenId::LivePlace,DisplayMode::View,7,data,0,ActionResult::None});modal.keyPressed(UiKey::GpsControl,1);modal.keyPressed(UiKey::OpenMap,2);
     check(modal.confirming() && modal.snapshot().action.kind==ActionKind::None,"map cannot bypass a confirmation");
     UiModel model;model.setScreen({ScreenId::Map,DisplayMode::View,7,data,0,ActionResult::None});
     job.start(request);job.loaded(source(request));for(int n=0;n<13;++n)job.step();

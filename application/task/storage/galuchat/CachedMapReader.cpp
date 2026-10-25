@@ -7,7 +7,7 @@ namespace geoputer {
 bool CachedMapReader::contains(int x, int y) const {
     const int64_t dx = static_cast<int64_t>(x) - stats_.bounds.x;
     const int64_t dy = static_cast<int64_t>(y) - stats_.bounds.y;
-    return stats_.valid && dx >= 0 && dy >= 0 && dx < Side && dy < Side;
+    return stats_.valid && dx >= 0 && dy >= 0 && dx < side_ && dy < side_;
 }
 
 void CachedMapReader::rebuild(int x, int y) {
@@ -17,11 +17,11 @@ void CachedMapReader::rebuild(int x, int y) {
     if (observer_) observer_->cacheState(RgCacheState::Rebuilding);
     try {
         const galuchat::Rect target{
-            galuchat::detail::subtractInt(x, Side / 2, "cache west"),
-            galuchat::detail::subtractInt(y, Side / 2, "cache south"), Side, Side};
+            galuchat::detail::subtractInt(x, side_ / 2, "cache west"),
+            galuchat::detail::subtractInt(y, side_ / 2, "cache south"), int(side_), int(side_)};
         if (!pixels_) {
-            pixels_.reset(new uint32_t[Pixels]);
-            stats_.bytes = Bytes;
+            pixels_.reset(new uint32_t[size_t(side_)*side_]);
+            stats_.bytes = size_t(side_)*side_*sizeof(uint32_t);
         }
         {
             ElapsedTime elapsed(stats_.last_rect_us);
@@ -43,7 +43,7 @@ uint32_t CachedMapReader::readWgsPoint(double longitude, double latitude) {
     const int y = galuchat::detail::roundedInt(latitude * reader_.unitInvY(), "cache latitude");
     if (contains(x, y)) ++stats_.hits;
     else rebuild(x, y);
-    const size_t offset = static_cast<size_t>(y - stats_.bounds.y) * Side + (x - stats_.bounds.x);
+    const size_t offset = static_cast<size_t>(y - stats_.bounds.y) * side_ + (x - stats_.bounds.x);
     return pixels_[offset];
 }
 

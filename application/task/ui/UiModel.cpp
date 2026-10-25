@@ -3,6 +3,7 @@
 #include "LicenseText.h"
 #include "SettingsLayout.h"
 #include "ScreenNavigation.h"
+#include "GpsControls.h"
 #include "DatasetPresentation.h"
 #include <cstring>
 #include <cmath>
@@ -16,7 +17,7 @@ static bool switchingMode(const UiData& data) {
 
 OperationStatus UiModel::setScreen(const SetUiScreen& command) {
     if (command.screen != ScreenId::LivePlace && command.screen != ScreenId::Settings && command.screen != ScreenId::Boot &&
-        command.screen != ScreenId::Map && command.screen != ScreenId::GpsLogger && command.screen != ScreenId::UsbStorage && !isLogBrowser(command.screen)) {
+        command.screen != ScreenId::Menu && command.screen != ScreenId::Map && command.screen != ScreenId::GpsLogger && command.screen != ScreenId::UsbStorage && !isLogBrowser(command.screen)) {
         return OperationStatus::InvalidRequest;
     }
     if (command.generation <= generation_) return OperationStatus::StaleContent;
@@ -27,7 +28,7 @@ OperationStatus UiModel::setScreen(const SetUiScreen& command) {
     }
     acknowledge(command.processed_action_id, command.action_result);
     if (screen_ == ScreenId::Boot || command.screen == ScreenId::Boot) last_input_ms_ = 0;
-    map_frame_.clear();
+    map_frame_.clear();map_cursor_={};
     screen_ = command.screen;
     mode_ = command.mode;
     generation_ = command.generation;
@@ -75,7 +76,16 @@ OperationStatus UiModel::writeMapRows(const map::Transfer& transfer) {
 OperationStatus UiModel::commitMapFrame(const map::Transfer& transfer) {
     if(!acceptsMap(transfer.info))return OperationStatus::StaleContent;
     if(!map_frame_.commit(transfer.info))return OperationStatus::InvalidRequest;
+    map_cursor_={0,0,true};updateMapCursor();
     redraw_=true;return OperationStatus::Ok;
+}
+
+void UiModel::updateMapCursor() {
+    if(!map_frame_.image().bytes()) {map_cursor_={};return;}
+    // Invalid GPS preserves the last known marker, drawn grey by the renderer.
+    if(data_.gps.reception!=GpsReception::Fix || !data_.gps.fix.valid)return;
+    const auto& info=map_frame_.info();
+    map_cursor_=map::cursorOffset({info.request,info.meters_per_pixel},data_.gps.fix.latitude,data_.gps.fix.longitude);
 }
 
 void UiModel::copyData(const UiData& data) {
@@ -92,7 +102,7 @@ void UiModel::copyData(const UiData& data) {
     const auto old_dataset_revision=data_.datasets.revision;
     const auto old_export=data_.storage.export_job.phase;
     if(data.dataset.generation!=data_.dataset.generation)map_frame_.clear();
-    data_ = data;
+    data_ = data;updateMapCursor();
     // Activity is global; an older job snapshot cannot roll it back.
     if (newerRevision(previous_sd.revision, data_.storage.sd.revision)) data_.storage.sd = previous_sd;
     if (newerRevision(previous_rg.revision, data_.storage.rg.revision)) data_.storage.rg = previous_rg;
@@ -141,6 +151,11 @@ void UiModel::copyData(const UiData& data) {
     if (dialog_.kind() == DialogKind::ClearDataset || dialog_.kind() == DialogKind::RebuildIndex || dialog_.kind() == DialogKind::VerifyIndex)
         dialog_.setActionEnabled(data_.datasets.purpose==dataset_purpose_ && selection_<data_.datasets.count &&
             data_.datasets.rows[selection_].number==dataset_dialog_number_ && datasetRowBlock(data_,selection_)==DatasetError::None);
+    if (dialog_.kind() == DialogKind::GpsControl) {
+        if (gps_dialog_state_ != data_.recording.state) dialog_.close();
+        else for (unsigned i = 0; i < dialog_.choices(); ++i)
+            dialog_.setChoiceEnabled(i, gpsControlAllowed(data_, gpsControlAction(gps_dialog_state_, i)));
+    }
     data_.message[sizeof(data_.message) - 1] = '\0';
 }
 
@@ -182,29 +197,43 @@ void UiModel::keyPressed(UiKey key, uint32_t now_ms) {
         if (kind == DialogKind::ClearDataset || kind == DialogKind::RebuildIndex || kind == DialogKind::VerifyIndex)
             dialog_.setActionEnabled(data_.datasets.purpose==dataset_purpose_ && selection_<data_.datasets.count &&
             data_.datasets.rows[selection_].number==dataset_dialog_number_ && datasetRowBlock(data_,selection_)==DatasetError::None);
+        const auto choice = dialog_.choice();
         const auto result = dialog_.keyPressed(key);
+        if (kind == DialogKind::GpsControl && result == DialogInput::Accepted) {
+            const auto operation = gpsControlAction(gps_dialog_state_, choice);
+            if (gps_dialog_state_ == data_.recording.state && gpsControlAllowed(data_, operation)) {
+                action(ActionKind::Logging); action_.log_action = operation; action_.confirmed = true;
+            } else changed();
+            return;
+        }
         if (result == DialogInput::Accepted) acceptDialog(kind);
         else if (result != DialogInput::Ignored) changed();
         return; // A modal owns all keys, including screen shortcuts.
-    }
-    if (screen_ == ScreenId::LivePlace && maintenance_key && placeIssue(data_) != PlaceState::Ready &&
-        loggerStopped(data_.recording, data_.storage.log)) {
-        action(ActionKind::Maintenance, ScreenId::Settings);
-        return;
     }
     if (screen_ == ScreenId::UsbStorage) {
         usbKey(key);
         return;
     }
     if (isLogBrowser(screen_) && data_.browse.deleting) return;
+    if (!data_.boot.maintenance) {
+        if (key == UiKey::ScreenOff) { action(ActionKind::Sleep); return; }
+        if (key == UiKey::GpsControl) { openGpsControls(); return; }
+    }
     if (!data_.boot.maintenance && isScreenRoot(screen_, page_) && !editing_ && !card_info_) {
+        if (screen_ == ScreenId::Menu) {
+            if (key == UiKey::Up && selection_) { --selection_; changed(); return; }
+            if (key == UiKey::Down && selection_ + 1u < MenuCount) { ++selection_; changed(); return; }
+            if (key == UiKey::Enter) { action(ActionKind::ChangeScreen, MenuTargets[selection_]); return; }
+            if (key == UiKey::Escape) { action(ActionKind::ChangeScreen, ScreenId::LivePlace); return; }
+        }
         ScreenId target;
-        // Del keeps Back semantics; only the physical Esc is a Settings shortcut.
+        // Del keeps Back semantics; physical Esc opens MENU.
         if (!(key == UiKey::Escape && !maintenance_key) && screenShortcut(key, target)) {
             if (target != screen_) action(ActionKind::ChangeScreen, target);
             return;
         }
     }
+    if (screen_ == ScreenId::Menu) return;
     if (screen_ == ScreenId::Map) {
         const auto scale=data_.map.scale;
         if(map::supportedScale(scale) && ((key==UiKey::Up && scale>1) || (key==UiKey::Down && scale<4))) {
@@ -228,29 +257,19 @@ void UiModel::keyPressed(UiKey key, uint32_t now_ms) {
     settingsKey(key);
 }
 
-void UiModel::livePlaceKey(UiKey key) {
-    if (key == UiKey::PauseLog && data_.recording.state == RecordingState::Recording) {
-        dialog_.open(DialogKind::PauseLog); changed();
-    }
-    return;
+void UiModel::livePlaceKey(UiKey) {}
+
+void UiModel::openGpsControls() {
+    gps_dialog_state_ = data_.recording.state;
+    dialog_.openActions(DialogKind::GpsControl, gpsControlChoices(data_), gpsControlDefault(gps_dialog_state_));
+    for (unsigned i = 0; i < dialog_.choices(); ++i)
+        dialog_.setChoiceEnabled(i, gpsControlAllowed(data_, gpsControlAction(gps_dialog_state_, i)));
+    changed();
 }
 
 void UiModel::gpsLoggerKey(UiKey key) {
-    const auto state = data_.recording.state;
-    const unsigned count = state == RecordingState::Paused ? 2 : 1;
-    if (selection_ >= count) selection_ = 0;
-    if (key == UiKey::Escape) action(ActionKind::ChangeScreen);
-    else if (key == UiKey::Up && selection_) { --selection_; changed(); }
-    else if (key == UiKey::Down && selection_ + 1u < count) { ++selection_; changed(); }
-    else if (key == UiKey::Enter && !data_.storage.log.closing) {
-        if (state == RecordingState::Stopped || (state == RecordingState::Paused && !selection_)) {
-            action(ActionKind::Logging);
-            action_.log_action = state == RecordingState::Stopped ? LogAction::Start : LogAction::Resume;
-        } else {
-            dialog_.open(DialogKind::StopLog); changed();
-        }
-    }
-    return;
+    if (key == UiKey::Escape) action(ActionKind::ChangeScreen, ScreenId::LivePlace);
+    else if (key == UiKey::Enter) openGpsControls();
 }
 
 void UiModel::logBrowserKey(UiKey key) {
@@ -535,7 +554,7 @@ void UiModel::acceptDialog(DialogKind kind) {
         case DialogKind::RebuildIndex:case DialogKind::VerifyIndex:
             datasetAction(kind==DialogKind::RebuildIndex?DatasetAction::RebuildIndex:DatasetAction::VerifyIndex,selection_);
             page_=SettingsPage::DatasetIndex;changed();break;
-        case DialogKind::None: return;
+        case DialogKind::GpsControl: case DialogKind::None: return;
     }
     action_.confirmed = true;
 }

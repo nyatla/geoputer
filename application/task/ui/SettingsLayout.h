@@ -8,7 +8,8 @@ struct SettingsLayout {
     static constexpr int Cell = 16;
     static constexpr int LabelX = 20;
     static constexpr int ValueRight = 236;
-    static constexpr int HeaderBottom = 22;
+    static constexpr int HeaderTextY = 4;
+    static constexpr int HeaderBottom = 16;
     static constexpr int FirstRowY = 27;
     static constexpr int RowStep = 20;
     static constexpr unsigned VisibleRows = 4;

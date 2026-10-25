@@ -39,6 +39,8 @@ struct GpsSnapshot {
     uint32_t sample_seq;
     GpsReception reception;
     GpsFix fix;
+    uint32_t received_at_ms = 0;
+    bool received = false;
 };
 
 inline bool applyGpsSnapshot(GpsSnapshot& current, const GpsSnapshot& incoming) {

@@ -1,0 +1,7 @@
+dataset,map,side,bytes,samples,mean_ms,min_ms,max_ms,rect_mean_ms,crossing_mean_ms,hit_mean_us,map_bytes_mean,map_reads_mean
+/sd/dataset/01,N03-20260101-grid-8192-10000.remap.wgsmapset.glc,128,65536,6,43.456,40.6,45.705,43.343,43.057,5.728,32768,2
+/sd/dataset/01,N03-20260101-grid-8192-10000.remap.wgsmapset.glc,64,16384,6,40.476,40.235,40.775,40.364,41.491,5.793,32768,2
+/sd/dataset/01,N03-20260101-grid-8192-10000.remap.wgsmapset.glc,32,4096,6,34.739,29.27,40.135,34.628,34.223,5.735,24576,1.5
+/sd/dataset/02,estat-r2ka-jgd2011-2020-grid-8192-10000.remap.wgsmapset.glc,128,65536,6,103.505,100.169,104.562,103.396,116.54,6.008,81920,5
+/sd/dataset/02,estat-r2ka-jgd2011-2020-grid-8192-10000.remap.wgsmapset.glc,64,16384,6,78.234,54.318,102.112,78.121,77.725,5.962,57344,3.5
+/sd/dataset/02,estat-r2ka-jgd2011-2020-grid-8192-10000.remap.wgsmapset.glc,32,4096,6,76.782,54.078,101.479,76.671,77.573,5.343,57344,3.5

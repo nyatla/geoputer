@@ -72,8 +72,10 @@ int main(int argc,char** argv) {
     if(!std::strcmp(mode,"missing-boot"))check_ascii(4,124,"ESC MAINT",TFT_CYAN);
     if(!std::strcmp(mode,"boot") || !std::strcmp(mode,"boot-ready"))check_ascii(4,124,"ESC MAINT",TFT_CYAN);
     if(!std::strcmp(mode,"maintenance")) {
-        check_ascii(4,7,"MAINTENANCE",TFT_LIGHTGREY);check_ascii(4,124,"ESC RESTART",TFT_WHITE);
+        check_ascii(4,4,"MAINTENANCE",TFT_LIGHTGREY);check_ascii(4,124,"ESC DEL",TFT_CYAN);
     }
+    if(ui.snapshot().screen==ScreenId::Settings)for(int x=0;x<240;++x)
+        if(display.pixels.at(16*240+x)!=TFT_DARKGREY)throw std::runtime_error("settings header height mismatch");
     std::printf("P6\n240 135\n255\n");
     for(auto color:display.pixels) {
         const unsigned char rgb[]={static_cast<unsigned char>(((color>>11)&31)*255/31),static_cast<unsigned char>(((color>>5)&63)*255/63),static_cast<unsigned char>((color&31)*255/31)};

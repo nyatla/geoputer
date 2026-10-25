@@ -113,6 +113,7 @@ PlaceState PlaceLookup::open() {
         return dataset_.state = PlaceState::TooManyChunks;
     }
     dataset_.chunks = map->chunkCount();
+    dataset_.unit_inv_x = map->unitInvX(); dataset_.unit_inv_y = map->unitInvY();
     const auto book_metadata=DatasetIndex(drive_,observer_).checkWordBook(book_info,wordbookPath,&timing_.wordbook_io);
     if (!wordBookUsesUtf8(book_metadata)) return PlaceState::EncodingError;
     auto book = std::make_unique<DiskIndexedWordBookReader>(book_info,

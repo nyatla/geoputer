@@ -191,7 +191,25 @@ int main(int argc,char** argv){
         for(int row=0;row<8;++row)for(int col=0;col<8;++col)
             pixel(4+col,27+row,font8x8_c64[(c-32)*8+col]&(1u<<row)?TFT_WHITE:TFT_BLACK);
     }
-    for(int x=0;x<240;++x){pixel(x,22,TFT_DARKGREY);pixel(x,118,TFT_DARKGREY);}
+    // The footer lists keys, while Enter remains implicit. Editing replaces
+    // list navigation with horizontal arrows; licenses retain both directions.
+    auto small=[&](int x,int y,const char* value,uint16_t color) {
+        for(;*value;++value,x+=8)for(int row=0;row<8;++row)for(int col=0;col<8;++col)
+            pixel(x+col,y+row,font8x8_c64[(*value-32)*8+col]&(1u<<row)?color:TFT_BLACK);
+    };
+    if(!ui.confirming()) {
+        small(4,124,ui.snapshot().page==SettingsPage::Root?"ESC:MENU":"ESC DEL",TFT_CYAN);
+        small(ui.snapshot().page==SettingsPage::Root?148:84,124,"S",TFT_WHITE);
+    }
+    if(!std::strcmp(mode,"language-edit")) {
+        pixel(124,127,TFT_WHITE);pixel(142,127,TFT_WHITE);
+        pixel(127,124,TFT_WHITE); // left arrow head reaches the top of its native cell
+    }
+    if(!std::strcmp(mode,"licenses")) {
+        pixel(127,124,TFT_DARKGREY);pixel(139,130,TFT_WHITE);
+        pixel(160,127,TFT_DARKGREY);pixel(178,127,TFT_WHITE);
+    }
+    for(int x=0;x<240;++x){pixel(x,16,TFT_DARKGREY);pixel(x,118,TFT_DARKGREY);}
     std::printf("P6\n240 135\n255\n");
     for(auto color:display.pixels){
         const unsigned char rgb[]={static_cast<unsigned char>(((color>>11)&31)*255/31),

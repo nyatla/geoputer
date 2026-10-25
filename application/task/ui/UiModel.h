@@ -4,6 +4,7 @@
 #include "DisplayClock.h"
 #include "ChoiceDialog.h"
 #include "../../map/MapFrameReceiver.h"
+#include "../../map/MapTracking.h"
 #include "../../TaskMessages.h"
 
 namespace geoputer {
@@ -17,6 +18,7 @@ public:
     OperationStatus writeMapRows(const map::Transfer& transfer);
     OperationStatus commitMapFrame(const map::Transfer& transfer);
     const map::MapFrameReceiver& mapFrame() const { return map_frame_; }
+    const map::CursorOffset& mapCursor() const { return map_cursor_; }
     void keyPressed(UiKey key, uint32_t now_ms);
     void tick(uint32_t now_ms);
     UiSnapshot snapshot() const;
@@ -57,6 +59,7 @@ public:
 
 private:
     void livePlaceKey(UiKey key);
+    void openGpsControls();
     void gpsLoggerKey(UiKey key);
     void logBrowserKey(UiKey key);
     void settingsKey(UiKey key);
@@ -72,6 +75,8 @@ private:
     void usbAction(UsbAction action);
 
     map::MapFrameReceiver map_frame_;
+    map::CursorOffset map_cursor_{};
+    void updateMapCursor();
     bool acceptsMap(const map::FrameInfo& info) const;
     ScreenId screen_ = ScreenId::LivePlace;
     DisplayMode mode_ = DisplayMode::View;
@@ -97,6 +102,7 @@ private:
     UsbPage usb_page_ = UsbPage::Menu, usb_return_page_ = UsbPage::Menu;
     uint8_t usb_file_ = 0;
     bool early_maintenance_key_ = false;
+    RecordingState gps_dialog_state_ = RecordingState::Stopped;
     UiData data_{};
     BatteryStatus battery_{};
     bool sd_seen_ = false;

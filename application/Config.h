@@ -33,12 +33,12 @@ inline constexpr uint32_t IndexMinChunkBytes = 16384;
 inline constexpr uint32_t IndexGroupTargetBytes = 65536;
 inline constexpr uint16_t IndexMaxDepth = 32; // Bounds recursive TI00 parsing during generation.
 inline constexpr size_t WordBookCacheEntries = 16;
-inline constexpr uint32_t PlaceSearchIntervalMs = 5000;
+// Place lookup follows each changed dataset cell; no periodic throttle.
 // Independent boundary-map buffers; the 128x128 point cache is untouched.
 inline constexpr size_t MapViewCodeMaxBytes = 96 * 1024;
 inline constexpr unsigned MapViewRowsPerStep = 8;
 inline constexpr uint8_t MapViewScale = 1; // Boot scale; Map Up/Down selects 1, 2, 4 for this session.
-inline constexpr uint32_t MapViewUpdateMs = 5000;
+inline constexpr unsigned MapCursorRadius = 32; // Display pixels in each direction from the committed map center.
 inline constexpr uint32_t MapViewRetryMs = 1000;
 inline constexpr bool MapHeapDiagnostics = true; // Phase snapshots; no extra map buffers or sampling task.
 inline constexpr size_t DatasetLineBytes = 256;  // 255 UTF-8 bytes plus NUL.

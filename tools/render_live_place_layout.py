@@ -48,6 +48,8 @@ int main(int argc, char** argv) {
     data.storage.rg = {1,1,unprepared ? RgCacheState::Unprepared : rebuilding ? RgCacheState::Rebuilding : RgCacheState::Ready};
     data.storage.sd = {1,1,io};
     data.storage.log.buffered = sd_error ? 64 : paused || unprepared ? 0 : 2;
+    data.storage.log.accepted = unprepared || !std::strcmp(mode,"zero") ? 0 :
+        !std::strcmp(mode,"bounds") || !std::strcmp(mode,"overflow") ? UINT32_MAX : 13338;
     data.storage.log.error = sd_error ? LogError::Io : LogError::None;
     data.gps.reception = GpsReception::Fix;
     data.gps.fix = {35.681641,140.027194,19921000,true}; // JST 14:32:01.
@@ -124,16 +126,16 @@ int main(int argc, char** argv) {
             for(int row=0;row<8;++row) for(int col=0;col<8;++col)
                 check_pixel(x+col,y+row,font8x8_c64[(*p-32)*8+col] & (1u<<row) ? color : TFT_BLACK);
     };
-    const bool recovery=placeIssue(data) != PlaceState::Ready && loggerStopped(data.recording,data.storage.log);
-    check_ascii(4,124,recovery?"ESC MAINT":"P||",recovery?TFT_CYAN:data.recording.state == RecordingState::Recording ? TFT_WHITE : TFT_DARKGREY);
-    check_ascii(4,62,"SPD"); check_ascii(4,85,"HDG");
-    if(recovery)check_ascii(92,124,"2:GPS 3:LOG 4:MAP",TFT_LIGHTGREY);
-    else {
-        check_ascii(36,124,"2",TFT_CYAN);check_ascii(44,124,":GPS",TFT_LIGHTGREY);
-        check_ascii(84,124,"3",TFT_CYAN);check_ascii(92,124,":LOG",TFT_LIGHTGREY);
-        check_ascii(132,124,"4",TFT_CYAN);check_ascii(140,124,":MAP",TFT_LIGHTGREY);
-        check_ascii(180,124,"ESC",TFT_CYAN);check_ascii(204,124,":SET",TFT_LIGHTGREY);
+    check_ascii(4,124,"ESC:MENU",TFT_CYAN);
+    check_ascii(84,124,"1",TFT_CYAN);check_ascii(92,124,"2340",TFT_LIGHTGREY);
+    check_ascii(148,124,"S");check_ascii(164,124,"G");
+    if (!sd_error && !gps_error) {
+        check_ascii(124,110,"PTS");
+        char points[16];std::snprintf(points,sizeof(points),"%lu",static_cast<unsigned long>(data.storage.log.accepted));
+        check_ascii(236-8*std::strlen(points),110,points);
+        for(int x=236;x<240;++x)for(int y=110;y<118;++y)check_pixel(x,y,TFT_BLACK);
     }
+    check_ascii(4,62,"SPD");check_ascii(4,85,"HDG");
     check_ascii(84,73,"km/h");
     const auto speed_detail=formatLiveGps(model.data().gps,model.data().place_fix);
     if(speedTextWidth(speed_detail.speed)>56) throw std::runtime_error("speed exceeded its three-digit viewport");

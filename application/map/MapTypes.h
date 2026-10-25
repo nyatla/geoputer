@@ -15,9 +15,8 @@ struct FrameInfo {
     Request request;
     uint16_t width = 0, height = 0;
     double meters_per_pixel = 0;
-    RegionCode region = 0;
+    RegionCode region = 0; // Generation-center region for boundary highlighting, not the live place.
     Error error = Error::None;
-    char name[64]{};
 };
 constexpr size_t TransferRows = 8, MaxWidth = 240, MaxHeight = 101;
 constexpr size_t TransferBytes = ((MaxWidth + 3) / 4) * TransferRows;
@@ -27,7 +26,7 @@ struct Transfer {
     uint8_t pixels[TransferBytes]{};
 };
 constexpr bool supportedScale(unsigned scale) { return scale==1 || scale==2 || scale==4; }
-inline const char* scaleText(unsigned scale) { return scale==4?"1/4":scale==2?"1/2":"1"; }
+inline const char* scaleText(unsigned scale) { return scale==4?"1/4":scale==2?"1/2":"1/1"; }
 struct ViewState { bool busy = false; Error error = Error::None; uint8_t scale = 1; };
 struct GridRect { int32_t x = 0, y = 0, width = 0, height = 0; };
 struct RasterView {

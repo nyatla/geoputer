@@ -118,7 +118,7 @@ void uiTests() {
     auto action=ui.snapshot().action;ui.updateContent({DisplayMode::View,1,data,action.action_id,ActionResult::Applied});
     ui.keyPressed(UiKey::Left,11);check(ui.snapshot().action.kind==ActionKind::None,"left/right remain limited to Settings");
     data.browse.loading=true;ui.updateContent({DisplayMode::View,1,data,0,ActionResult::None});
-    ui.keyPressed(UiKey::Escape,12);check(ui.snapshot().action.target==ScreenId::Settings,"Escape opens Settings directly during a pending read");
+    ui.keyPressed(UiKey::Escape,12);check(ui.snapshot().action.target==ScreenId::Menu,"Escape opens Menu directly during a pending read");
     data.browse.loading=false;data.browse.summary.records=25;data.browse.target=9;
     ui.setScreen({ScreenId::LogPoint,DisplayMode::View,2,data,ui.snapshot().action.action_id,ActionResult::Applied});
     ui.keyPressed(UiKey::Down,13);check(ui.snapshot().action.browse_index==10,"point navigation crosses ten-record cache boundary");

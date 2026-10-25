@@ -134,7 +134,9 @@ void navigationAndEditing() {
     ui.keyPressed(UiKey::Escape, 160);
     check(ui.snapshot().page == SettingsPage::Root, "Escape returns from operation page to root");
     ui.keyPressed(UiKey::Escape, 170);
-    check(ui.snapshot().action.kind == ActionKind::None, "Escape on Settings root stays on Settings");
+    auto menu = ui.snapshot().action;
+    check(menu.kind == ActionKind::ChangeScreen && menu.target==ScreenId::Menu, "Escape on Settings root opens Menu");
+    ui.setScreen({ScreenId::Menu,DisplayMode::View,ui.snapshot().screen_generation+1,ui.data(),menu.action_id,ActionResult::Applied});
     ui.keyPressed(UiKey::OpenLivePlace, 171);
     check(ui.snapshot().action.kind == ActionKind::ChangeScreen && ui.snapshot().action.target == ScreenId::LivePlace,
           "1 at root requests LivePlace through App");

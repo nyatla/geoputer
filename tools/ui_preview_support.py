@@ -1,9 +1,11 @@
 """Host framebuffer support for native-pixel UI documentation images.
 
-Uses the installed M5GFX C64 and ASCII 8x16 fonts. The adapter supports the
+Uses the installed M5GFX C64, ASCII 8x16 and Japanese Gothic 8px fonts.
+The adapter supports the
 integer-pixel operations used by the Live Place and Settings renderers.
 """
 from pathlib import Path
+import re
 
 ROOT = Path(__file__).resolve().parents[1]
 OUTPUT = ROOT / "doc/画面・操作/live-place"
@@ -12,6 +14,7 @@ M5GFX = ROOT / ".pio/libdeps/cardputer-adv/M5GFX/src/lgfx"
 ADAPTER = r'''
 #pragma once
 #include <algorithm>
+#include <array>
 #include <cstdlib>
 #include <cstdint>
 #include <stdexcept>
@@ -23,6 +26,7 @@ namespace lgfx { struct IFont { bool ascii; int height; }; }
 namespace fonts {
 inline const lgfx::IFont Font8x8C64{true,8}, AsciiFont8x16{true,16}, lgfxJapanGothic_8{false,8};
 }
+JAPANESE8_HELPER
 inline constexpr int top_left = 0;
 inline uint8_t previewColorDepth() {
     const auto* depth = std::getenv("GEOPUTER_PREVIEW_DEPTH");
@@ -96,8 +100,13 @@ public:
         fillRect(x, y, width, 1, color);
     }
     void drawString(const char* text, int x, int y) {
-        if (!font_ || !font_->ascii)
-            throw std::runtime_error("Only ASCII bitmap fonts supported by this adapter");
+        if (!font_) throw std::runtime_error("Font not selected");
+        if (!font_->ascii) {
+            const auto rows=previewJapanese8(text);
+            for(int row=0;row<8;++row)for(int col=0;col<8;++col)
+                drawPixel(x+col,y+row,rows[row]&(1u<<col)?foreground_:background_);
+            return;
+        }
         for (auto ch = reinterpret_cast<const unsigned char*>(text); *ch; ++ch) {
             if (*ch < 32 || *ch > 127) throw std::runtime_error("Non-ASCII text");
             // M5GFX GLCDfont: eight columns, bit 0 is the top dot.
@@ -118,6 +127,54 @@ public:
     }
 };
 '''
+
+
+# Decode the installed M5GFX Japanese 8px font for pixel-accurate host previews.
+_font_source = (M5GFX / "Fonts/IPA/lgfx_font_japan.c").read_text()
+_font_literals = re.search(
+    r'const uint8_t lgfx_font_japan_gothic_8\[\d+\] =\s*((?:"(?:\\.|[^"\\])*"\s*)+);',
+    _font_source).group(1)
+_JAPANESE8 = r'''
+inline const char previewJapan8Data[] = FONT_LITERALS;
+inline std::array<uint8_t,8> previewJapanese8(const char* text) {
+    const auto* f=reinterpret_cast<const uint8_t*>(previewJapan8Data);
+    const auto* t=reinterpret_cast<const uint8_t*>(text);
+    unsigned count=*t<0xe0?2:*t<0xf0?3:4,cp=*t&((1u<<(7-count))-1);
+    for(unsigned i=1;i<count;++i)cp=(cp<<6)|(t[i]&63);
+    auto be=[](const uint8_t* p){return (unsigned(p[0])<<8)|p[1];};
+    const uint8_t* glyph=f+23+be(f+21);const uint8_t* lut=glyph;
+    unsigned last;
+    do {glyph+=be(lut);last=be(lut+2);lut+=4;}while(last<cp);
+    while(be(glyph) && be(glyph)!=cp)glyph+=glyph[2];
+    std::array<uint8_t,8> rows{};
+    if(!be(glyph)) {rows={0x7f,0x41,0x41,0x41,0x41,0x41,0x7f,0};return rows;}
+    glyph+=3;unsigned bit=0;
+    auto bits=[&](unsigned n) {
+        unsigned value=0;
+        for(unsigned i=0;i<n;++i) {value|=((*glyph>>bit)&1u)<<i;if(++bit==8){bit=0;++glyph;}}
+        return value;
+    };
+    auto signedBits=[&](unsigned n){return int(bits(n))-(1<<(n-1));};
+    const unsigned w=bits(f[4]),h=bits(f[5]);
+    const int dx=signedBits(f[6]),gy=signedBits(f[7]);signedBits(f[8]);
+    const int dy=int(f[10])+int(int8_t(f[12]))-gy-int(h);
+    if(!w)return rows;
+    unsigned x=0,y=0;
+    do {
+        unsigned runs[]={bits(f[2]),bits(f[3])};bool ink=false;
+        do {
+            for(unsigned left=runs[ink];left;--left) {
+                const int px=dx+int(x),py=dy+int(y);
+                if(ink && px>=0 && px<8 && py>=0 && py<8)rows[py]|=1u<<px;
+                if(++x==w){x=0;++y;}
+            }
+            ink=!ink;
+        }while(ink || bits(1));
+    }while(y<h);
+    return rows;
+}
+'''.replace("FONT_LITERALS", _font_literals)
+ADAPTER = ADAPTER.replace("JAPANESE8_HELPER", _JAPANESE8)
 
 
 def reference_frame(executable, *arguments, timeout=20):

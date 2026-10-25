@@ -1,6 +1,7 @@
 #include "utils/Console.h"
 #include "Application.h"
 #include "task/ui/ScreenNavigation.h"
+#include "task/ui/GpsControls.h"
 #include "task/ui/PlacePresentation.h"
 #include <Arduino.h>
 #include <esp_system.h>
@@ -90,15 +91,15 @@ bool Application::setScreen(ScreenId target, uint32_t action_id, ActionResult ac
     const uint32_t sent_revision = data_.revision;
     SyncReturn result{};
     if (!callUi(request, result) || result.status != OperationStatus::Ok) return false;
-    if(target!=screen_) {map_started_=false;map_retry_at_=0;}
+    map_anchor_={};map_retry_at_=0; // SetUiScreen clears the UI frame even for the same screen.
     screen_ = target;
     mode_ = DisplayMode::View;
     ++generation_;
-    if (target == ScreenId::LivePlace) refreshPlace();
+    if (target == ScreenId::LivePlace || target == ScreenId::Map) refreshPlace();
     ui_data_dirty_ = data_.revision != sent_revision;
     if (action_id) last_processed_action_ = action_id;
     Console.printf("[APP] screen=%s generation=%lu action=%lu stack_free=%u\n",
-                  target==ScreenId::Map ? "Map" : target == ScreenId::LivePlace ? "LivePlace" : target == ScreenId::Boot ? "Boot" : target==ScreenId::Logs?"Logs":target==ScreenId::LogDetail?"LogDetail":target==ScreenId::LogPoint?"LogPoint":target==ScreenId::GpsLogger?"GpsLogger":target==ScreenId::UsbStorage?"UsbStorage":"Settings",
+                  target==ScreenId::Menu ? "Menu" : target==ScreenId::Map ? "Map" : target == ScreenId::LivePlace ? "LivePlace" : target == ScreenId::Boot ? "Boot" : target==ScreenId::Logs?"Logs":target==ScreenId::LogDetail?"LogDetail":target==ScreenId::LogPoint?"LogPoint":target==ScreenId::GpsLogger?"GpsLogger":target==ScreenId::UsbStorage?"UsbStorage":"Settings",
                   static_cast<unsigned long>(generation_), static_cast<unsigned long>(action_id),
                   static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)));
     return true;
@@ -157,11 +158,15 @@ void Application::handleNotification(const AppNotification& event) {
             ++data_.revision;
             ui_data_dirty_ = true;
             const bool current = place_flow_.completed(completed.request_id, place.request.screen_generation, generation_);
-            if (current && accepted && !datasetInactive(data_.dataset.state) && screen_ == ScreenId::LivePlace && mode_ == DisplayMode::View && data_.gps.fix.valid) {
+            if (current && accepted && !datasetInactive(data_.dataset.state) && (screen_ == ScreenId::LivePlace || screen_ == ScreenId::Map) && mode_ == DisplayMode::View && data_.gps.fix.valid) {
                 completePlacePresentation(data_, place);
                 ++data_.revision;
                 ui_data_dirty_ = true;
                 Console.printf("[APP] place=%s / %s (%s)\n", data_.place[0], data_.place[1], placeStateName(place.state));
+            } else if (current) {
+                // A completion consumed while hidden must not mark an unseen
+                // cell as displayed; retry the latest position after wake.
+                place_flow_.refresh();
             }
             return;
         }
@@ -279,7 +284,9 @@ void Application::readUiContent() {
         return;
     }
     if (action.kind == ActionKind::Wake && mode_ == DisplayMode::Background) {
-        if (!setScreen(ScreenId::LivePlace, action.action_id, ActionResult::Applied)) ui_changed_ = true;
+        mode_ = DisplayMode::View;
+        last_processed_action_ = action.action_id;
+        if (!publishUiContent(action.action_id, ActionResult::Applied)) ui_changed_ = true;
         return;
     }
     if(action.kind==ActionKind::UsbExport && screen_==ScreenId::UsbStorage && mode_==DisplayMode::View) {
@@ -438,14 +445,24 @@ void Application::refreshPlace() {
 }
 
 bool Application::canSearchPlace() const {
-    return data_.settings.dataset && !data_.boot.maintenance && screen_ == ScreenId::LivePlace && mode_ == DisplayMode::View && data_.gps.fix.valid &&
+    return data_.settings.dataset && !data_.boot.maintenance && (screen_ == ScreenId::LivePlace || screen_ == ScreenId::Map) && mode_ == DisplayMode::View && data_.gps.fix.valid &&
+           !map_request_.token &&
            data_.storage.card_state == CardState::Mounted && !data_.storage.busy &&
            data_.dataset.state == PlaceState::Ready && !dataset_check_needed_ && !dataset_check_waiting_;
 }
 
 void Application::requestPlace() {
     const auto now = taskTimeMs();
-    if (!canSearchPlace() || place_flow_.waitMs(now, data_.gps.sample_seq) != 0) return;
+    if (!canSearchPlace()) return;
+    if (place_flow_.sameCell(data_.gps.fix,data_.dataset.unit_inv_x,data_.dataset.unit_inv_y)) {
+        // The area is already known: keep the main-screen coordinates current
+        // without reading code pixels, touching the name LRU or issuing SD work.
+        if(data_.place_fix.latitude!=data_.gps.fix.latitude || data_.place_fix.longitude!=data_.gps.fix.longitude) {
+            data_.place_fix=data_.gps.fix;++data_.revision;ui_data_dirty_=true;
+        }
+        return;
+    }
+    if (place_flow_.waitMs(now, data_.gps.sample_seq) != 0) return;
     StorageRequest request{};
     request.kind = MessageKind::SearchPlace;
     request.source = TaskId::Application;
@@ -623,14 +640,26 @@ bool Application::queueLogAction(const UiAction& action) {
     if (data_.boot.maintenance || dataset_applying_ || restart_pending_) return false;
     if (log_control_.action_id) return action.action_id == log_control_.action_id;
     const auto state = data_.recording.state;
-    const bool logger_screen = screen_ == ScreenId::GpsLogger;
-    const bool valid = (logger_screen && action.log_action == LogAction::Start && state == RecordingState::Stopped && !data_.storage.log.closing) ||
-        (logger_screen && action.log_action == LogAction::Resume && state == RecordingState::Paused) ||
-        (action.log_action == LogAction::Pause && action.confirmed && screen_ == ScreenId::LivePlace && state == RecordingState::Recording) ||
-        (logger_screen && action.log_action == LogAction::Stop && action.confirmed && state != RecordingState::Stopped);
+    const bool source = screen_ != ScreenId::Boot && screen_ != ScreenId::UsbStorage && action.confirmed && gpsControlAllowed(data_, action.log_action);
+    const bool valid = source && (
+        (action.log_action == LogAction::Start && state == RecordingState::Stopped) ||
+        (action.log_action == LogAction::Resume && state == RecordingState::Paused) ||
+        (action.log_action == LogAction::Pause && (state == RecordingState::Recording || state == RecordingState::Starting)) ||
+        (action.log_action == LogAction::Stop));
     if (!valid) return false;
     log_control_ = action;
     if (action.log_action == LogAction::Pause || action.log_action == LogAction::Stop) log_accepting_ = false;
+    return true;
+}
+
+bool Application::ensureGpsReception() {
+    GpsRequest request{}; request.kind = MessageKind::StartGpsReception;
+    SyncReturn result{};
+    if (!callTask(TaskId::GPS, gps_.inbox(), request, result) || result.status != OperationStatus::Ok) {
+        message("GPS CONTROL FAILED"); return false;
+    }
+    applyGpsSnapshot(data_.gps, result.gps);
+    refreshPlace();
     return true;
 }
 
@@ -648,10 +677,11 @@ void Application::processLog() {
     bool ok = true;
     updateLogElapsed();
     if (action.log_action == LogAction::Start) {
+        ok = ensureGpsReception();
         command.session_id = (static_cast<uint64_t>(esp_random()) << 32) | esp_random();
         if (!command.session_id) command.session_id = 1;
         command.created_utc_ms = (data_.gps.fix.fields & GpsTime) ? data_.gps.fix.utc_epoch_ms : UINT64_MAX;
-        ok = logRequest(MessageKind::OpenLogSession, command);
+        if (ok) ok = logRequest(MessageKind::OpenLogSession, command);
         if (ok) {
             data_.recording = {};
             data_.recording.state = RecordingState::Starting;
@@ -663,11 +693,15 @@ void Application::processLog() {
         data_.recording.state = RecordingState::Starting;
         log_accepting_ = true; log_adopted_ = false; log_seen_seq_ = data_.gps.sample_seq;
     } else {
-        ok = logRequest(action.log_action == LogAction::Stop ? MessageKind::CloseLogSession : MessageKind::FlushLog, command);
-        if (ok) data_.recording.state = action.log_action == LogAction::Stop ? RecordingState::Stopped : RecordingState::Paused;
+        if (data_.recording.state != RecordingState::Stopped)
+            ok = logRequest(action.log_action == LogAction::Stop ? MessageKind::CloseLogSession : MessageKind::FlushLog, command);
+        if (ok) {
+            data_.recording.state = action.log_action == LogAction::Stop ? RecordingState::Stopped : RecordingState::Paused;
+        }
         else log_accepting_ = data_.recording.state == RecordingState::Recording || data_.recording.state == RecordingState::Starting;
     }
     log_elapsed_at_ = taskTimeMs();
+    data_.recording.now_ms = log_elapsed_at_;
     ++data_.revision; ui_data_dirty_ = true;
     log_control_ = {};
     last_processed_action_ = action.action_id;
@@ -705,8 +739,8 @@ void Application::runOnce() {
     advanceBoot();
     processDatasetCheck();
     processBrowser();
-    processMap();
     requestPlace();
+    processMap();
     if (ui_data_dirty_) {
         if (!publishUiContent()) vTaskDelay(pdMS_TO_TICKS(10));
         return;
@@ -726,7 +760,7 @@ void Application::runOnce() {
             wait = pdMS_TO_TICKS(50);  // Only retry requests that were not queued.
         }
     } else if (canSearchPlace()) {
-        const auto remaining = place_flow_.waitMs(taskTimeMs(), data_.gps.sample_seq);
+        const auto remaining = place_flow_.waitMs(taskTimeMs(), data_.gps.sample_seq,data_.gps.fix,data_.dataset.unit_inv_x,data_.dataset.unit_inv_y);
         if (remaining != UINT32_MAX) wait = pdMS_TO_TICKS(remaining ? remaining : 50);
     }
     if(screen_==ScreenId::Map || map_request_.token) {if(wait==portMAX_DELAY || wait>pdMS_TO_TICKS(20))wait=pdMS_TO_TICKS(20);}

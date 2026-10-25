@@ -33,6 +33,7 @@ struct DatasetInfo {
     uint64_t chunks;
     uint32_t limit;
     uint32_t generation = 1; // Explicit reopen only; errors retain the same generation.
+    int unit_inv_x = 0, unit_inv_y = 0; // Validated dataset lattice; zero until opened.
 };
 
 struct PlaceRequest {

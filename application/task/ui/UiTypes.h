@@ -8,7 +8,7 @@
 
 namespace geoputer {
 
-enum class ScreenId : uint8_t { LivePlace, Settings, Boot, GpsLogger, Logs, LogDetail, LogPoint, UsbStorage, Map };
+enum class ScreenId : uint8_t { LivePlace, Settings, Boot, GpsLogger, Logs, LogDetail, LogPoint, UsbStorage, Map, Menu };
 inline bool isLogBrowser(ScreenId screen) { return screen==ScreenId::Logs || screen==ScreenId::LogDetail || screen==ScreenId::LogPoint; }
 enum class DisplayMode : uint8_t { Background, View };
 enum class LogAction : uint8_t { Start, Pause, Resume, Stop };
@@ -19,7 +19,7 @@ enum class UsbPage : uint8_t { Menu, WaitEject, Files, Format, Progress, Complet
 enum class UsbAction : uint8_t { Begin, Start, Publish, Older, Newer };
 enum class BrowseAction : uint8_t { OpenFile, Older, Newer, Points, Reload, Point, Delete };
 enum class ActionResult : uint8_t { None, Applied, Rejected };
-enum class UiKey : uint8_t { OpenGpsLogger, OpenSettings, OpenLogs, DeleteLog, Escape, Up, Down, Left, Right, Enter, Other, F1, PauseLog, Back, OpenLivePlace, OpenMap };
+enum class UiKey : uint8_t { OpenGpsLogger, OpenSettings, OpenLogs, DeleteLog, Escape, Up, Down, Left, Right, Enter, Other, F1, PauseLog, Back, OpenLivePlace, OpenMap, ScreenOff, GpsControl };
 enum class SettingsPage : uint8_t { Root, Operation, Storage, Reset, Licenses, DatasetList, DatasetDetail, About, DatasetIndex, DatasetMenu, System };
 // Menu commands are separate from persisted settings and page identifiers.
 enum class SettingsRootItem : uint8_t { Operation, System, Storage, About, Licenses, Count };

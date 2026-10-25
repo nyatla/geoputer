@@ -151,13 +151,13 @@ void testBoot() {
         runtime.setScreen(command);runtime.keyPressed(UiKey::Back,8);runtime.keyPressed(UiKey::F1,9);
         check(runtime.snapshot().action.kind==ActionKind::None,"runtime Del/F1 do not enter maintenance");
         runtime.keyPressed(UiKey::Escape,10);
-        check(runtime.snapshot().action.kind==(recording?ActionKind::ChangeScreen:ActionKind::Maintenance),
+        check(runtime.snapshot().action.kind==ActionKind::ChangeScreen && runtime.snapshot().action.target==ScreenId::Menu,
               "runtime errors use maintenance when stopped and normal settings while recording");
     }
     UiModel healthy;
     command.data.storage.card_state=CardState::Mounted;command.data.recording.state=RecordingState::Stopped;
     command.data.gps.fix.valid=true;command.data.gps.reception=GpsReception::Fix;
     healthy.setScreen(command);healthy.keyPressed(UiKey::Escape,20);
-    check(healthy.snapshot().action.kind==ActionKind::ChangeScreen && healthy.snapshot().action.target==ScreenId::Settings,"healthy Live Place opens Settings with ESC");
+    check(healthy.snapshot().action.kind==ActionKind::ChangeScreen && healthy.snapshot().action.target==ScreenId::Menu,"healthy Live Place opens Settings with ESC");
 
 }

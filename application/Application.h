@@ -1,6 +1,7 @@
 #pragma once
 
 #include "TaskMessages.h"
+#include "map/MapTracking.h"
 #include "utils/SyncClient.h"
 #include "task/ui/UiTask.h"
 #include "task/gps/GpsTask.h"
@@ -51,6 +52,7 @@ private:
     void advanceBoot();
     void processDatasetCheck();
     void initializeGps();
+    bool ensureGpsReception();
     void enterMaintenance();
     void bootChanged();
     void adoptLogSample();
@@ -97,9 +99,10 @@ private:
     map::Request map_request_{};
     map::FrameInfo map_info_{};
     map::Transfer map_transfer_{};
-    uint32_t map_token_=0xa0000000u,map_started_at_=0,map_retry_at_=0,map_last_sample_=0;
+    map::TrackingAnchor map_anchor_{};
+    uint32_t map_token_=0xa0000000u,map_retry_at_=0;
     uint16_t map_row_=0;
-    bool map_cancel_=false,map_ready_=false,map_begun_=false,map_started_=false;
+    bool map_cancel_=false,map_ready_=false,map_begun_=false;
     PlaceSearchFlow place_flow_;
     uint32_t dataset_token_ = 0, dataset_waiting_ = 0;
     bool dataset_applying_ = false, restart_pending_ = false;
