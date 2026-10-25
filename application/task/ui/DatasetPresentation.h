@@ -12,7 +12,7 @@ inline const char* datasetMenuLabel(unsigned row,bool ja) {
     }
 }
 inline DatasetError datasetMutationBlock(const UiData& data,bool requires_card) {
-    if(data.storage.busy || data.datasets.loading || data.datasets.applying) return DatasetError::Busy;
+    if(data.storage.busy || data.datasets().loading || data.datasets().applying) return DatasetError::Busy;
     if(!datasetLogStopped(data.recording,data.storage.log)) return DatasetError::NotStopped;
     if(requires_card && data.storage.card_state!=CardState::Mounted) return DatasetError::CardUnavailable;
     return DatasetError::None;
@@ -23,18 +23,18 @@ inline DatasetError datasetSelectionBlock(const UiData& data,bool requires_card)
 }
 inline DatasetError datasetMenuBlock(const UiData& data,unsigned row) {
     if(row) return datasetMutationBlock(data,true);
-    return data.storage.busy || data.datasets.loading || data.datasets.applying?DatasetError::Busy:DatasetError::None;
+    return data.storage.busy || data.datasets().loading || data.datasets().applying?DatasetError::Busy:DatasetError::None;
 }
 inline DatasetError datasetRowBlock(const UiData& data,unsigned row) {
-    if(row>=data.datasets.count) return DatasetError::Missing;
-    const auto& entry=data.datasets.rows[row];
+    if(row>=data.datasets().count) return DatasetError::Missing;
+    const auto& entry=data.datasets().rows[row];
     if(!entry.number) {
         const auto reason=datasetSelectionBlock(data,false);
         return reason!=DatasetError::None?reason:!data.settings.dataset?DatasetError::AlreadyUnselected:DatasetError::None;
     }
     if(entry.error!=DatasetError::None) return entry.error;
-    if(data.datasets.purpose!=DatasetPurpose::Select) return datasetMutationBlock(data,true);
-    if(data.storage.busy || data.datasets.loading) return DatasetError::Busy;
+    if(data.datasets().purpose!=DatasetPurpose::Select) return datasetMutationBlock(data,true);
+    if(data.storage.busy || data.datasets().loading) return DatasetError::Busy;
     return data.storage.card_state==CardState::Mounted?DatasetError::None:DatasetError::CardUnavailable;
 }
 inline const char* indexPhaseText(IndexPhase phase,bool ja) {

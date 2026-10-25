@@ -30,7 +30,7 @@ const char* settingsSystemLabel(UiLanguage language, unsigned row) {
 const char* systemModeBlockText(const UiData& data, bool changed, UiLanguage language) {
     const bool ja = language == UiLanguage::Japanese;
     if (!loggerStopped(data.recording, data.storage.log)) return ja ? "先に記録を停止" : "Stop logger first";
-    if (data.storage.busy || data.datasets.loading || data.datasets.applying) return ja ? "処理中です" : "Storage busy";
+    if (data.storage.busy || data.datasets().loading || data.datasets().applying) return ja ? "処理中です" : "Storage busy";
     if (data.storage.settings_state == SettingsState::Unavailable) return ja ? "設定を保存できません" : "Settings unavailable";
     if (!changed) return ja ? "変更はありません" : "No changes";
     return "";

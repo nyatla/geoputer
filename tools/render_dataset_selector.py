@@ -22,7 +22,7 @@ int main(int argc,char** argv) {
     data.storage.settings_state=SettingsState::Loaded;data.storage.card_state=CardState::Mounted;
     ui.setScreen({ScreenId::Settings,DisplayMode::View,1,data,0,ActionResult::None});
     auto key=[&](UiKey k){ui.keyPressed(k,100);};
-    auto publish=[&](){const auto action=ui.snapshot().action;++data.revision;data.datasets.revision=ui.data().datasets.revision+1;ui.updateContent({DisplayMode::View,1,data,action.action_id,ActionResult::Applied});};
+    auto publish=[&](){const auto action=ui.snapshot().action;++data.revision;data.editDatasets().revision=ui.data().datasets().revision+1;ui.updateContent({DisplayMode::View,1,data,action.action_id,ActionResult::Applied});};
     if(!std::strcmp(mode,"missing-boot")) {
         data.boot.complete=true;data.boot.dataset(PlaceState::DatasetMissing);data.settings.dataset=2;std::strcpy(data.settings.wordbook_language,"ja");
         ui.setScreen({ScreenId::Boot,DisplayMode::View,2,data,0,ActionResult::None});
@@ -44,22 +44,22 @@ int main(int argc,char** argv) {
         if(!std::strcmp(mode,"restart-selected"))key(UiKey::Right);
     } else {
         key(UiKey::Enter);for(unsigned i=0;i<5;++i)key(UiKey::Down);key(UiKey::Enter);
-        data.datasets.count=4;data.datasets.has_newer=true;
+        data.editDatasets().count=4;data.editDatasets().has_newer=true;
         const char* titles_ja[]={"日本・市区町村","日本・町丁目","フランス行政区域","オーストラリア"};
         const char* titles_en[]={"Japan Municipalities","Japan Towns","France Administrative Areas","Australia"};
-        for(unsigned i=0;i<4;++i){data.datasets.rows[i].number=i+1;std::snprintf(data.datasets.rows[i].title,sizeof(data.datasets.rows[i].title),"%s",ja?titles_ja[i]:titles_en[i]);}
+        for(unsigned i=0;i<4;++i){data.editDatasets().rows[i].number=i+1;std::snprintf(data.editDatasets().rows[i].title,sizeof(data.editDatasets().rows[i].title),"%s",ja?titles_ja[i]:titles_en[i]);}
         publish();
         if(std::strcmp(mode,"list")) {
-            key(UiKey::Enter);data.datasets={};data.datasets.detail=true;data.datasets.number=1;
-            auto& d=data.datasets.info;std::snprintf(d.title,sizeof(d.title),"%s",ja?titles_ja[0]:titles_en[0]);
+            key(UiKey::Enter);data.editDatasets()={};data.editDatasets().detail=true;data.editDatasets().number=1;
+            auto& d=data.editDatasets().info;std::snprintf(d.title,sizeof(d.title),"%s",ja?titles_ja[0]:titles_en[0]);
             std::snprintf(d.description,sizeof(d.description),"%s",ja?"日本全国の都道府県・市区町村を表示するデータセットです。":"Municipality boundaries throughout Japan.");
             std::strcpy(d.language,"ja");d.language_count=2;d.chunks=172;d.unit_inv_x=d.unit_inv_y=4096;
             d.west=122.9;d.east=153.99;d.south=20.42;d.north=45.55;publish();
-            const auto count=datasetDetailRows(data.datasets,ja);
+            const auto count=datasetDetailRows(data.editDatasets(),ja);
             if(!std::strcmp(mode,"extent"))for(unsigned i=0;i<count-3;++i)key(UiKey::Down);
             if(!std::strcmp(mode,"apply") || !std::strcmp(mode,"blocked"))for(unsigned i=0;i<count-1;++i)key(UiKey::Down);
-            if(!std::strcmp(mode,"blocked")){data.datasets.error=DatasetError::NotStopped;publish();}
-            if(!std::strcmp(mode,"saving")){data.datasets.loading=data.datasets.applying=true;publish();}
+            if(!std::strcmp(mode,"blocked")){data.editDatasets().error=DatasetError::NotStopped;publish();}
+            if(!std::strcmp(mode,"saving")){data.editDatasets().loading=data.editDatasets().applying=true;publish();}
         }
     }
     renderer.draw(ui);

@@ -14,7 +14,7 @@ inline LogAction gpsControlAction(RecordingState state, unsigned choice) {
     return state == RecordingState::Paused ? LogAction::Resume : LogAction::Pause;
 }
 inline bool gpsControlAllowed(const UiData& data, LogAction action) {
-    if(data.boot.maintenance || data.storage.log.closing || data.datasets.applying) return false;
+    if(data.boot.maintenance || data.storage.log.closing || data.datasets().applying) return false;
     if(action == LogAction::Start) return data.storage.card_state == CardState::Mounted && !data.storage.log.open;
     if (action == LogAction::Stop) return data.recording.state != RecordingState::Stopped;
     return true;

@@ -14,28 +14,29 @@ bool Application::requestDataset(DatasetRequest request) {
        (data_.storage.busy && !dataset_waiting_)) {
         message("STORAGE BUSY");return false;
     }
+    auto& view=data_.editDatasets();
     if(applying && !datasetChangeReady()) {
-        data_.datasets.error=DatasetError::NotStopped;
-        ++data_.datasets.revision; ++data_.revision;ui_data_dirty_=true;
+        view.error=DatasetError::NotStopped;
+        ++view.revision; ++data_.revision;ui_data_dirty_=true;
         message("STOP LOGGER FIRST");return false;
     }
     const bool maintenance=request.action==DatasetAction::RebuildIndex || request.action==DatasetAction::VerifyIndex;
     const bool detail=!maintenance && request.action!=DatasetAction::Clear && request.action!=DatasetAction::Open && request.action!=DatasetAction::Older && request.action!=DatasetAction::Newer;
-    if(detail && !data_.datasets.detail) data_.datasets.info={};
-    data_.datasets.detail=detail;data_.datasets.purpose=request.purpose;
-    if(maintenance)data_.datasets.number=request.number;
+    if(detail && !view.detail) view.info={};
+    view.detail=detail;view.purpose=request.purpose;
+    if(maintenance)view.number=request.number;
     if(++dataset_token_==0) ++dataset_token_;
     request.token=dataset_token_;dataset_waiting_=request.token;
     dataset_applying_=applying;dataset_operation_=request.action;
-    if(applying) {data_.datasets.progress={};data_.datasets.progress.verifying=request.action==DatasetAction::VerifyIndex;}
-    data_.datasets.loading=true;data_.datasets.applying=applying;data_.datasets.error=DatasetError::None;
-    ++data_.datasets.revision;++data_.revision;ui_data_dirty_=true;
+    if(applying) {view.progress={};view.progress.verifying=request.action==DatasetAction::VerifyIndex;}
+    view.loading=true;view.applying=applying;view.error=DatasetError::None;
+    ++view.revision;++data_.revision;ui_data_dirty_=true;
     StorageRequest command{};command.kind=MessageKind::DatasetOperation;command.payload.dataset=request;
     SyncReturn result{};
     if(!callTask(TaskId::Storage,storage_.inbox(),command,result) || result.status!=OperationStatus::Ok) {
         dataset_waiting_=0;dataset_applying_=false;
-        data_.datasets.loading=data_.datasets.applying=false;data_.datasets.error=DatasetError::Busy;
-        ++data_.datasets.revision;++data_.revision;ui_data_dirty_=true;return false;
+        view.loading=view.applying=false;view.error=DatasetError::Busy;
+        ++view.revision;++data_.revision;ui_data_dirty_=true;return false;
     }
     applyStorage(result.storage);
     return true;
@@ -43,7 +44,7 @@ bool Application::requestDataset(DatasetRequest request) {
 bool Application::operateDataset(const UiAction& action) {
     DatasetRequest request{};request.action=action.dataset_action;request.purpose=action.dataset_purpose;
     if(request.purpose>DatasetPurpose::Verify)return false;
-    const auto& view=data_.datasets;
+    const auto& view=data_.datasets();
     switch(action.dataset_action) {
         case DatasetAction::Open:
             if(action.browse_index>99)return false;
@@ -84,23 +85,27 @@ bool Application::operateDataset(const UiAction& action) {
 void Application::completeDataset(const DatasetView& incoming) {
     if(!dataset_waiting_ || incoming.revision!=dataset_waiting_) return;
     dataset_waiting_=0;
+    // A catalog read may finish after a root shortcut opened Logs/USB files.
+    // It still releases its token, but cannot replace the newer page payload.
+    if (!data_.hasDatasets()) { dataset_applying_=false; return; }
+    auto& view=data_.editDatasets();
     const bool applying=dataset_applying_;
     if(applying && (dataset_operation_==DatasetAction::RebuildIndex || dataset_operation_==DatasetAction::VerifyIndex)) {
-        data_.datasets.loading=data_.datasets.applying=false;data_.datasets.error=incoming.error;
-        data_.datasets.progress=incoming.progress;dataset_applying_=false;
+        view.loading=view.applying=false;view.error=incoming.error;
+        view.progress=incoming.progress;dataset_applying_=false;
         if(incoming.number && incoming.number==data_.settings.dataset) {
             if(incoming.error==DatasetError::None)dataset_check_needed_=true;
         }
-        ++data_.datasets.revision;
+        ++view.revision;
     } else if(applying) {
-        data_.datasets.progress=incoming.progress;
-        data_.datasets.loading=false;data_.datasets.applying=false;data_.datasets.error=incoming.error;
+        view.progress=incoming.progress;
+        view.loading=false;view.applying=false;view.error=incoming.error;
         if(incoming.error==DatasetError::None) {dataset_applying_=false;dataset_check_needed_=true;refreshPlace();message("SETTINGS SAVED");}
         else {dataset_applying_=false;message(incoming.error==DatasetError::NotStopped?"STOP LOGGER FIRST":"DATASET CHANGE FAILED");}
-        ++data_.datasets.revision;
+        ++view.revision;
     } else {
-        const auto revision=data_.datasets.revision+1;
-        data_.datasets=incoming;data_.datasets.revision=revision;
+        const auto revision=view.revision+1;
+        view=incoming;view.revision=revision;
     }
     ++data_.revision;ui_data_dirty_=true;
 }

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "TaskMessages.h"
+#include "AppScreenResources.h"
 #include "map/MapTracking.h"
 #include "utils/SyncClient.h"
 #include "task/ui/UiTask.h"
@@ -91,18 +92,13 @@ private:
     bool log_pending_ = false, log_accepting_ = false;
     uint32_t log_seen_seq_ = 0, log_adopt_at_ = 0, log_retry_at_ = 0, log_elapsed_at_ = 0;
     bool log_adopted_ = false;
-    LogReadRequest browse_request_{};
-    uint8_t browse_records_[LogReadCount][32]{};
-    uint32_t browse_token_=0, browse_waiting_=0, browse_retry_at_=0, browse_cache_start_=0;
-    uint8_t browse_cache_count_=0;
-    bool browse_need_=false, browse_cancel_=false, browse_single_=false;
+    AppScreenResources screen_resources_;
+    // Monotonic tokens and cancellation survive display-resource replacement.
+    uint32_t browse_token_=0,browse_waiting_=0;
+    bool browse_cancel_=false;
     map::Request map_request_{};
-    map::FrameInfo map_info_{};
-    map::Transfer map_transfer_{};
-    map::TrackingAnchor map_anchor_{};
-    uint32_t map_token_=0xa0000000u,map_retry_at_=0;
-    uint16_t map_row_=0;
-    bool map_cancel_=false,map_ready_=false,map_begun_=false;
+    uint32_t map_token_=0xa0000000u;
+    bool map_cancel_=false;
     PlaceSearchFlow place_flow_;
     uint32_t dataset_token_ = 0, dataset_waiting_ = 0;
     bool dataset_applying_ = false, restart_pending_ = false;

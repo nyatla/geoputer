@@ -1,6 +1,8 @@
 #pragma once
 
 #include <cstdint>
+#include <new>
+#include <type_traits>
 #include "../gps/GpsTypes.h"
 #include "../storage/StorageTypes.h"
 #include "../../BootStatus.h"
@@ -62,13 +64,46 @@ struct UiData {
     RecordingSnapshot recording;
     char message[40];
     uint32_t message_at_ms;
-    LogBrowserView browse;
-    DatasetView datasets;
+
+    // Only one page payload is retained. Readers never activate a different
+    // member; an unused page reads as empty. Owners explicitly select on write.
+    void clearPage() { page_kind_ = PageKind::None; }
+    bool hasBrowse() const { return page_kind_ == PageKind::Browse; }
+    bool hasDatasets() const { return page_kind_ == PageKind::Datasets; }
+    const LogBrowserView& browse() const { return hasBrowse() ? page_.browse : EmptyBrowse; }
+    const DatasetView& datasets() const { return hasDatasets() ? page_.datasets : EmptyDatasets; }
+    LogBrowserView& editBrowse() {
+        if (!hasBrowse()) {
+            new (&page_.browse) LogBrowserView{};
+            page_kind_ = PageKind::Browse;
+        }
+        return page_.browse;
+    }
+    DatasetView& editDatasets() {
+        if (!hasDatasets()) {
+            new (&page_.datasets) DatasetView{};
+            page_kind_ = PageKind::Datasets;
+        }
+        return page_.datasets;
+    }
+
+private:
+    enum class PageKind : uint8_t { None, Browse, Datasets };
+    union PageData {
+        LogBrowserView browse;
+        DatasetView datasets;
+        constexpr PageData() : browse{} {}
+    } page_{};
+    PageKind page_kind_ = PageKind::None;
+    inline static constexpr LogBrowserView EmptyBrowse{};
+    inline static constexpr DatasetView EmptyDatasets{};
 };
+
+static_assert(std::is_trivially_copyable<UiData>::value, "UI page data must remain safe for value-copy queues");
 
 inline bool usbEntryAllowed(const UiData& data) {
     return loggerStopped(data.recording, data.storage.log) && !data.storage.busy &&
-        !data.datasets.loading && !data.datasets.applying && data.storage.settings_state != SettingsState::Unavailable;
+        !data.datasets().loading && !data.datasets().applying && data.storage.settings_state != SettingsState::Unavailable;
 }
 
 struct UiSnapshot {

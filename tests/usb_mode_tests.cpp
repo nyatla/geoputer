@@ -88,7 +88,7 @@ void ui() {
     data.storage.log.open = true; check(!usbEntryAllowed(data), "retained session blocks entry"); data.storage.log.open = false;
     data.recording.pending = true; check(!usbEntryAllowed(data), "pending App sample blocks entry"); data.recording.pending = false;
     data.storage.busy = true; check(!usbEntryAllowed(data), "storage busy blocks entry"); data.storage.busy = false;
-    data.datasets.loading = true; check(!usbEntryAllowed(data), "dataset read blocks entry"); data.datasets.loading = false;
+    data.editDatasets().loading = true; check(!usbEntryAllowed(data), "dataset read blocks entry"); data.editDatasets().loading = false;
     data.storage.settings_state=SettingsState::Unavailable;
     UiModel noNvs; stageUsb(noNvs);noNvs.keyPressed(UiKey::Enter,30);
     check(!noNvs.confirming(),"known NVS unavailability blocks Save");
@@ -133,8 +133,8 @@ void exportUi() {
     ui.updateContent({DisplayMode::View,1,data,0,ActionResult::None});
     ui.keyPressed(UiKey::Enter,7);ack(ExportPhase::Preparing);
     check(ui.usbPage()==UsbPage::Busy,"disconnected entry skips safe-removal prompt");
-    data.storage.usb.local=true;data.browse.revision=7;data.browse.count=4;data.browse.has_older=true;
-    for(unsigned n=0;n<4;++n)std::strcpy(data.browse.names[n],"20261017_093012_0.gps.dat");
+    data.storage.usb.local=true;data.editBrowse().revision=7;data.editBrowse().count=4;data.editBrowse().has_older=true;
+    for(unsigned n=0;n<4;++n)std::strcpy(data.editBrowse().names[n],"20261017_093012_0.gps.dat");
     ack(ExportPhase::Selecting);
     check(ui.usbPage()==UsbPage::Files,"prepared local storage exposes file selection");
     ui.keyPressed(UiKey::Down,8);ui.keyPressed(UiKey::Down,9);ui.keyPressed(UiKey::Enter,10);

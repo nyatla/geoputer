@@ -38,15 +38,16 @@ bool Application::operateBootMode(const UiAction& action) {
     return true;
 }
 bool Application::operateUsbExport(const UiAction& action) {
-    if(!usb_mode_ || storage_operation_id_ || restart_pending_)return false;
-    auto& view=data_.browse;
+    if(!screen_resources_.hasLogs() || !usb_mode_ || storage_operation_id_ || restart_pending_)return false;
+    auto& logs=screen_resources_.logs();
+    const auto& view=data_.browse();
     if(action.usb_action==UsbAction::Older || action.usb_action==UsbAction::Newer) {
         const bool older=action.usb_action==UsbAction::Older;
         if(!usbSelecting() || view.loading || !view.count || (older?!view.has_older:!view.has_newer))return false;
-        browse_request_={};browse_request_.kind=LogReadKind::List;browse_request_.count=4;
-        browse_request_.direction=older?LogListDirection::Older:LogListDirection::Newer;
-        std::snprintf(browse_request_.anchor,sizeof(browse_request_.anchor),"%s",view.names[older?view.count-1:0]);
-        view.loading=browse_need_=true;++data_.revision;ui_data_dirty_=true;return true;
+        logs.request={};logs.request.kind=LogReadKind::List;logs.request.count=4;
+        logs.request.direction=older?LogListDirection::Older:LogListDirection::Newer;
+        std::snprintf(logs.request.anchor,sizeof(logs.request.anchor),"%s",view.names[older?view.count-1:0]);
+        data_.editBrowse().loading=logs.need=true;++data_.revision;ui_data_dirty_=true;return true;
     }
     if(action.usb_action!=UsbAction::Begin && action.usb_action!=UsbAction::Start && action.usb_action!=UsbAction::Publish)return false;
     StorageRequest request{};request.kind=MessageKind::UsbExportOperation;
@@ -60,7 +61,7 @@ bool Application::operateUsbExport(const UiAction& action) {
         std::snprintf(command.name,sizeof(command.name),"%s",view.names[action.browse_index]);
     }
     if(command.operation==ExportOperation::Publish) {
-        browse_need_=false;
+        logs.need=false;
         if(browse_waiting_)browse_cancel_=true;
     }
     SyncReturn result{};

@@ -43,11 +43,11 @@ void testDialogs() {
         check(dialog.keyPressed(UiKey::Enter) == DialogInput::Cancelled, "disabled action cannot be accepted");
     }
     UiData data{}; data.settings = defaultSettings();
-    data.browse.revision = 1; data.browse.count = 1;
+    data.editBrowse().revision = 1; data.editBrowse().count = 1;
     UiModel model;
     model.setScreen({ScreenId::Logs, DisplayMode::View, 1, data, 0, ActionResult::None});
     model.keyPressed(UiKey::DeleteLog, 10); model.keyPressed(UiKey::Right, 11);
-    data.browse.active_mask = 1; ++data.revision; // Same list, newly active file.
+    data.editBrowse().active_mask = 1; ++data.revision; // Same list, newly active file.
     model.updateContent({DisplayMode::View, 1, data, 0, ActionResult::None});
     check(model.confirming() && !model.confirmChoice() && !model.dialog().actionEnabled(),
           "content updates revoke Delete without a stale selected action");

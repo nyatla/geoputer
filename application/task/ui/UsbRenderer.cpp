@@ -7,7 +7,7 @@ namespace geoputer {
 void UiRenderer::drawUsb(const UiModel& model) {
     const auto page=model.usbPage();
     const auto& data=model.data();const auto& usb=data.storage.usb;
-    const auto& job=data.storage.export_job;const auto& files=data.browse;
+    const auto& job=data.storage.export_job;const auto& files=data.browse();
     const bool ja=data.settings.language==UiLanguage::Japanese;
     const auto selected=model.snapshot().selected_setting;
     auto large=[&](int x,int y,const char* value,uint16_t color=TFT_WHITE) {

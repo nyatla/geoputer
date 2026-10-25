@@ -61,6 +61,7 @@ bool Application::awaitSyncResult(SyncSendResult sent,SyncReturn& result) {
 }
 int main() {
     Application app;check(app.results_.initialize() && app.storage_.initialize(),"initialize host queues");
+    app.screen_resources_.enter(ScreenGroup::Map);
     app.screen_=ScreenId::Map;app.generation_=7;app.data_.dataset.generation=1;app.data_.settings.dataset=1;
     app.data_.storage.card_state=CardState::Mounted;app.data_.gps.reception=GpsReception::Fix;
     app.data_.gps.fix={35.68,140.02,1000,true};app.data_.gps.sample_seq=1;
@@ -70,12 +71,12 @@ int main() {
     check(app.changeMapScale(2),"select half scale");acknowledgeScale(app);app.processMap();
     check(app.map_request_.scale==2 && backend.reading(),"zoom must request immediately with unchanged GPS sample and no update-period delay");
     check(app.changeMapScale(4),"select quarter while half is reading");acknowledgeScale(app);
-    finish(app);check(!app.map_ready_,"completion of the old scale was accepted");
+    finish(app);check(!app.screen_resources_.map().ready,"completion of the old scale was accepted");
     const auto before=commands.size();app.processMap();
     check(commands.size()==before+2 && commands[before]==MessageKind::CancelMap && commands[before+1]==MessageKind::RequestMap &&
           app.map_request_.scale==4 && app.data_.map.scale==4,"cancel old job before starting the latest scale");
     finish(app);app.processMap();app.processMap();
-    check(app.map_begun_ && app.map_row_>0,"quarter-scale transfer did not start");
+    check(app.screen_resources_.map().begun && app.screen_resources_.map().row>0,"quarter-scale transfer did not start");
     check(app.ui_.model_.mapFrame().info().request.token==original,"incomplete zoom replaced the visible old frame");
     check(app.changeMapScale(2),"change scale during row transfer");acknowledgeScale(app);app.processMap();finish(app);deliver(app);
     check(app.ui_.model_.mapFrame().info().request.scale==2 && app.data_.map.scale==2 && !app.data_.map.busy,
@@ -88,7 +89,7 @@ int main() {
     check(!app.map_request_.token && app.data_.map.error==map::Error::NoFix && app.data_.map.scale==4,"zoom without fix lost selection or issued a read");
     app.data_.gps.fix.valid=true;app.processMap();check(app.map_request_.scale==4,"fix recovery lost chosen scale");finish(app);deliver(app);
     // New GPS samples inside the window never request new SD/map work.
-    const auto anchor=app.map_anchor_;
+    const auto anchor=app.screen_resources_.map().anchor;
     auto move=[&](double x,double y) {
         app.data_.gps.fix.latitude=anchor.request.latitude-y*anchor.meters_per_pixel/111320.;
         app.data_.gps.fix.longitude=anchor.request.longitude+x*anchor.meters_per_pixel/(111320.*std::cos(anchor.request.latitude*3.14159265358979323846/180));
@@ -106,9 +107,9 @@ int main() {
     app.data_.gps.fix.valid=true;++app.data_.revision;app.processMap();acknowledgeScale(app);
     check(commands.size()==before_tracking && app.data_.map.error==map::Error::None,"fix recovery inside the window should reuse the shown map");
     move(32.25,0);check(app.map_request_.token && commands.back()==MessageKind::RequestMap,"crossing 32 pixels should recenter without a periodic delay");
-    check(app.map_anchor_.request.token==anchor.request.token,"pending map replaced the displayed coordinate origin");
+    check(app.screen_resources_.map().anchor.request.token==anchor.request.token,"pending map replaced the displayed coordinate origin");
     move(36.25,0);finish(app);deliver(app);acknowledgeScale(app);
-    check(app.map_anchor_.request.token!=anchor.request.token && std::abs(app.ui_.model_.mapCursor().x-4)<1e-7,
+    check(app.screen_resources_.map().anchor.request.token!=anchor.request.token && std::abs(app.ui_.model_.mapCursor().x-4)<1e-7,
           "completed map must preserve newer GPS motion relative to its requested origin");
     const auto after_tracking=commands.size();app.processMap();check(commands.size()==after_tracking,"newly recentered map immediately regenerated");
     app.screen_=ScreenId::LivePlace;check(!app.changeMapScale(1),"other screens can change map scale");

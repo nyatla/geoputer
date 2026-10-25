@@ -20,10 +20,10 @@ int main(int argc,char** argv) {
     const char* mode=argv[1];
     M5GFX display; UiRenderer renderer(display); if(!renderer.begin(previewColorDepth()))return 1;
     UiData data{}; data.settings=defaultSettings();data.settings.language=english?UiLanguage::English:UiLanguage::Japanese;data.storage.card_state=CardState::Mounted;
-    data.browse.revision=1;data.browse.count=6;data.browse.has_older=true;data.browse.active_mask=1;
-    for(unsigned n=0;n<6;++n)std::snprintf(data.browse.names[n],LogNameBytes,"202610%02u_093012_0.gps.dat",16-n);
-    std::strcpy(data.browse.name,"20261016_093012_0.gps.dat");
-    data.browse.summary={100,113376,1789309921000ull,1789321921000ull,3527,0};
+    data.editBrowse().revision=1;data.editBrowse().count=6;data.editBrowse().has_older=true;data.editBrowse().active_mask=1;
+    for(unsigned n=0;n<6;++n)std::snprintf(data.editBrowse().names[n],LogNameBytes,"202610%02u_093012_0.gps.dat",16-n);
+    std::strcpy(data.editBrowse().name,"20261016_093012_0.gps.dat");
+    data.editBrowse().summary={100,113376,1789309921000ull,1789321921000ull,3527,0};
     data.storage.log.session_id=100;data.storage.log.open=true;data.recording.state=RecordingState::Recording;
     auto screen=ScreenId::Logs;
     const bool usb_mode=!std::strncmp(mode,"usb",3);
@@ -32,32 +32,32 @@ int main(int argc,char** argv) {
     if(!std::strcmp(mode,"usb-ejected"))data.storage.usb.ejected=true;
     if(!std::strcmp(mode,"detail")||!std::strcmp(mode,"long-name")||!std::strcmp(mode,"partial-tail"))screen=ScreenId::LogDetail;
     if(!std::strcmp(mode,"point")||!std::strcmp(mode,"unknown")||!std::strcmp(mode,"loading")||!std::strcmp(mode,"crc-error")||!std::strcmp(mode,"bounds"))screen=ScreenId::LogPoint;
-    if(!std::strcmp(mode,"empty")){data.browse.count=0;data.browse.has_older=false;}
-    if(!std::strcmp(mode,"sd-error")){data.browse.count=0;data.browse.error=LogReadError::NoCard;}
+    if(!std::strcmp(mode,"empty")){data.editBrowse().count=0;data.editBrowse().has_older=false;}
+    if(!std::strcmp(mode,"sd-error")){data.editBrowse().count=0;data.editBrowse().error=LogReadError::NoCard;}
     const bool delete_confirm=!std::strcmp(mode,"delete-confirm")||!std::strcmp(mode,"delete-selected")||!std::strcmp(mode,"delete-protected")||!std::strcmp(mode,"delete-short")||!std::strcmp(mode,"delete-longest");
     if(delete_confirm) {
-        std::strcpy(data.browse.names[0],"undated_0123456789abcdef_4294967295.gps.dat");
-        data.browse.active_mask=!std::strcmp(mode,"delete-protected")?1:0;
+        std::strcpy(data.editBrowse().names[0],"undated_0123456789abcdef_4294967295.gps.dat");
+        data.editBrowse().active_mask=!std::strcmp(mode,"delete-protected")?1:0;
     }
-    if(!std::strcmp(mode,"delete-short"))std::strcpy(data.browse.names[0],"20261017_093012_0.gps.dat");
-    if(!std::strcmp(mode,"delete-longest"))std::strcpy(data.browse.names[0],"123456789012345678901234567890123456789.gps.dat");
-    if(!std::strcmp(mode,"deleting")){data.browse.loading=data.browse.deleting=true;}
-    if(!std::strcmp(mode,"delete-error")){data.browse.error=LogReadError::DeleteFailed;data.browse.active_mask=0;}
-    if(!std::strcmp(mode,"long-name"))std::strcpy(data.browse.name,"undated_0123456789abcdef_4294967295.gps.dat");
-    if(!std::strcmp(mode,"partial-tail"))data.browse.summary.tail=7;
-    data.browse.index=data.browse.target=123;
-    data.browse.point={35.681641,140.027194,0,true};data.browse.point.fields=126;
-    data.browse.point.utc_epoch_ms=1789309921000ull;
-    data.browse.point.speed_kmh=4.2;data.browse.point.course_deg=140;
-    data.browse.point.altitude_m=12.3;data.browse.point.satellites=12;data.browse.point.hdop=0.8;
-    if(!std::strcmp(mode,"unknown")){data.browse.point.fields=0;data.browse.point.utc_epoch_ms=UINT64_MAX;}
-    if(!std::strcmp(mode,"loading"))data.browse.loading=true;
-    if(!std::strcmp(mode,"crc-error")){data.browse.error=LogReadError::Corrupt;data.browse.point={};}
+    if(!std::strcmp(mode,"delete-short"))std::strcpy(data.editBrowse().names[0],"20261017_093012_0.gps.dat");
+    if(!std::strcmp(mode,"delete-longest"))std::strcpy(data.editBrowse().names[0],"123456789012345678901234567890123456789.gps.dat");
+    if(!std::strcmp(mode,"deleting")){data.editBrowse().loading=data.editBrowse().deleting=true;}
+    if(!std::strcmp(mode,"delete-error")){data.editBrowse().error=LogReadError::DeleteFailed;data.editBrowse().active_mask=0;}
+    if(!std::strcmp(mode,"long-name"))std::strcpy(data.editBrowse().name,"undated_0123456789abcdef_4294967295.gps.dat");
+    if(!std::strcmp(mode,"partial-tail"))data.editBrowse().summary.tail=7;
+    data.editBrowse().index=data.editBrowse().target=123;
+    data.editBrowse().point={35.681641,140.027194,0,true};data.editBrowse().point.fields=126;
+    data.editBrowse().point.utc_epoch_ms=1789309921000ull;
+    data.editBrowse().point.speed_kmh=4.2;data.editBrowse().point.course_deg=140;
+    data.editBrowse().point.altitude_m=12.3;data.editBrowse().point.satellites=12;data.editBrowse().point.hdop=0.8;
+    if(!std::strcmp(mode,"unknown")){data.editBrowse().point.fields=0;data.editBrowse().point.utc_epoch_ms=UINT64_MAX;}
+    if(!std::strcmp(mode,"loading"))data.editBrowse().loading=true;
+    if(!std::strcmp(mode,"crc-error")){data.editBrowse().error=LogReadError::Corrupt;data.editBrowse().point={};}
     if(!std::strcmp(mode,"bounds")){
-        data.browse.point.latitude=-90;data.browse.point.longitude=180;
-        data.browse.point.altitude_m=-2147483.648f;data.browse.point.hdop=655.35;
-        data.browse.point.speed_kmh=2359.26;data.browse.point.course_deg=359.99;data.browse.point.satellites=255;
-        data.browse.index=134217710;data.browse.summary.records=134217711;
+        data.editBrowse().point.latitude=-90;data.editBrowse().point.longitude=180;
+        data.editBrowse().point.altitude_m=-2147483.648f;data.editBrowse().point.hdop=655.35;
+        data.editBrowse().point.speed_kmh=2359.26;data.editBrowse().point.course_deg=359.99;data.editBrowse().point.satellites=255;
+        data.editBrowse().index=134217710;data.editBrowse().summary.records=134217711;
     }
     UiModel model;model.setScreen({screen,DisplayMode::View,1,data,0,ActionResult::None});
     if(usb_mode && (!std::strcmp(mode,"usb") || !std::strcmp(mode,"usb-selected")))model.keyPressed(UiKey::Escape,1);
@@ -88,7 +88,7 @@ int main(int argc,char** argv) {
         // The former action-description row is empty. D is now a footer key.
         for(int y=97;y<105;++y)for(int x=0;x<240;++x)
             if(display.pixels[y*240+x]!=TFT_BLACK)throw std::runtime_error("obsolete log action prose remains");
-        const auto color=data.browse.deleting || data.browse.loading || !data.browse.count || (data.browse.active_mask&1)?TFT_DARKGREY:TFT_WHITE;
+        const auto color=data.editBrowse().deleting || data.editBrowse().loading || !data.editBrowse().count || (data.editBrowse().active_mask&1)?TFT_DARKGREY:TFT_WHITE;
         for(int row=0;row<8;++row)for(int col=0;col<8;++col) {
             const bool ink=font8x8_c64[('D'-32)*8+col]&(1u<<row);
             if(display.pixels[(124+row)*240+180+col]!=(ink?color:TFT_BLACK))throw std::runtime_error("D footer state differs from deletion availability");

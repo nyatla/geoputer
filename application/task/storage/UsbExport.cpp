@@ -37,7 +37,7 @@ void StorageTask::stepUsbExport() {
         if(usbHostNeedsEject(usb_.snapshot()))return;
         job.phase=ExportPhase::Preparing;
         if(usb_.takeLocal()) {
-            log_reader_.setDrive(usb_.drive());
+            screen_resources_.logs.setDrive(usb_.drive());
             state_.card_state=CardState::Mounted;state_.fat_type=32;
             job.phase=ExportPhase::Selecting;usb_work_=UsbWork::None;
         } else if(usbHostNeedsEject(usb_.snapshot()))job.phase=ExportPhase::WaitEject;
@@ -71,7 +71,7 @@ void StorageTask::stepUsbExport() {
         return;
     }
     const bool menu=usb_work_==UsbWork::PublishMenu;
-    log_reader_.cancel();
+    screen_resources_.logs.cancel();
     if(exporter_ && !exporter_->closeFiles()) {
         // Retain the FILs after close failure so Publish can retry safely.
         job.phase=ExportPhase::Failed;job.error=ExportError::Close;

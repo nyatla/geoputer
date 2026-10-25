@@ -110,19 +110,19 @@ void activeTests(const std::string& dir) {
     req.kind=LogReadKind::Summary;check(run(reader,req,&writer).summary.records==30,"closed file uses independent read-only handle");
 }
 void uiTests() {
-    UiModel ui;UiData data{};data.settings=defaultSettings();data.browse.count=6;data.browse.has_older=true;data.browse.revision=1;
-    std::strcpy(data.browse.names[0],"20261016_093012_0.gps.dat");
+    UiModel ui;UiData data{};data.settings=defaultSettings();data.editBrowse().count=6;data.editBrowse().has_older=true;data.editBrowse().revision=1;
+    std::strcpy(data.editBrowse().names[0],"20261016_093012_0.gps.dat");
     ui.setScreen({ScreenId::Logs,DisplayMode::View,1,data,0,ActionResult::None});
     for(unsigned i=0;i<5;++i)ui.keyPressed(UiKey::Down,i+1);
     ui.keyPressed(UiKey::Down,10);check(ui.snapshot().action.browse_action==BrowseAction::Older,"bottom Down requests older page");
     auto action=ui.snapshot().action;ui.updateContent({DisplayMode::View,1,data,action.action_id,ActionResult::Applied});
     ui.keyPressed(UiKey::Left,11);check(ui.snapshot().action.kind==ActionKind::None,"left/right remain limited to Settings");
-    data.browse.loading=true;ui.updateContent({DisplayMode::View,1,data,0,ActionResult::None});
+    data.editBrowse().loading=true;ui.updateContent({DisplayMode::View,1,data,0,ActionResult::None});
     ui.keyPressed(UiKey::Escape,12);check(ui.snapshot().action.target==ScreenId::Menu,"Escape opens Menu directly during a pending read");
-    data.browse.loading=false;data.browse.summary.records=25;data.browse.target=9;
+    data.editBrowse().loading=false;data.editBrowse().summary.records=25;data.editBrowse().target=9;
     ui.setScreen({ScreenId::LogPoint,DisplayMode::View,2,data,ui.snapshot().action.action_id,ActionResult::Applied});
     ui.keyPressed(UiKey::Down,13);check(ui.snapshot().action.browse_index==10,"point navigation crosses ten-record cache boundary");
-    action=ui.snapshot().action;data.browse.target=24;ui.updateContent({DisplayMode::View,2,data,action.action_id,ActionResult::Applied});
+    action=ui.snapshot().action;data.editBrowse().target=24;ui.updateContent({DisplayMode::View,2,data,action.action_id,ActionResult::Applied});
     ui.keyPressed(UiKey::Down,14);check(ui.snapshot().action.kind==ActionKind::None,"last record does not wrap to first");
     ui.keyPressed(UiKey::Escape,15);check(ui.snapshot().action.target==ScreenId::LogDetail,"point Escape returns to file detail");
 }
@@ -198,8 +198,8 @@ void deleteTests(const std::string& dir) {
     check(!activity.depth,"all delete and refresh SD scopes are balanced");
 }
 void deleteUiTests() {
-    UiData data{};data.settings=defaultSettings();data.browse.count=3;data.browse.selected=1;data.browse.revision=7;
-    for(unsigned n=0;n<3;++n)std::snprintf(data.browse.names[n],LogNameBytes,"20261016_09301%u_0.gps.dat",n);
+    UiData data{};data.settings=defaultSettings();data.editBrowse().count=3;data.editBrowse().selected=1;data.editBrowse().revision=7;
+    for(unsigned n=0;n<3;++n)std::snprintf(data.editBrowse().names[n],LogNameBytes,"20261016_09301%u_0.gps.dat",n);
     UiModel ui;ui.setScreen({ScreenId::Logs,DisplayMode::View,1,data,0,ActionResult::None});
     ui.keyPressed(UiKey::DeleteLog,10);
     check(ui.confirming() && !ui.confirmChoice() && ui.snapshot().action.kind==ActionKind::None,"D opens confirmation with Cancel selected, no request");
@@ -211,21 +211,21 @@ void deleteUiTests() {
     const auto action=ui.snapshot().action;
     check(action.kind==ActionKind::Browse && action.browse_action==BrowseAction::Delete && action.confirmed &&
           action.browse_index==1 && action.browse_revision==7,"only explicit Delete confirmation creates a request for the shown row/revision");
-    data.browse.loading=data.browse.deleting=true;
+    data.editBrowse().loading=data.editBrowse().deleting=true;
     ui.updateContent({DisplayMode::View,1,data,action.action_id,ActionResult::Applied});
     for(auto key:{UiKey::Escape,UiKey::DeleteLog,UiKey::Enter,UiKey::OpenGpsLogger,UiKey::OpenSettings,UiKey::OpenLogs})ui.keyPressed(key,20);
     ui.tick(100);ui.tick(100000);
     check(ui.snapshot().action.kind==ActionKind::None,"accepted deletion cannot be abandoned by navigation, duplicate D or sleep");
-    data.browse.loading=data.browse.deleting=false;data.browse.active_mask=2;
+    data.editBrowse().loading=data.editBrowse().deleting=false;data.editBrowse().active_mask=2;
     UiModel active;active.setScreen({ScreenId::Logs,DisplayMode::View,1,data,0,ActionResult::None});
     active.keyPressed(UiKey::DeleteLog,10);active.keyPressed(UiKey::Right,11);active.keyPressed(UiKey::Enter,12);
     check(!active.confirming() && active.snapshot().action.kind==ActionKind::None,"active row explains protection and cannot confirm Delete");
-    data.browse.active_mask=0;
+    data.editBrowse().active_mask=0;
     UiModel changed;changed.setScreen({ScreenId::Logs,DisplayMode::View,1,data,0,ActionResult::None});
-    changed.keyPressed(UiKey::DeleteLog,10);++data.browse.revision;
+    changed.keyPressed(UiKey::DeleteLog,10);++data.editBrowse().revision;
     changed.updateContent({DisplayMode::View,1,data,0,ActionResult::None});
     check(!changed.confirming() && changed.snapshot().action.kind==ActionKind::None,"refreshed list invalidates the shown delete target");
-    data.browse.count=0;UiModel empty;empty.setScreen({ScreenId::Logs,DisplayMode::View,1,data,0,ActionResult::None});
+    data.editBrowse().count=0;UiModel empty;empty.setScreen({ScreenId::Logs,DisplayMode::View,1,data,0,ActionResult::None});
     empty.keyPressed(UiKey::DeleteLog,10);check(!empty.confirming(),"empty list offers no delete target");
 }
 }

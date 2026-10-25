@@ -6,7 +6,7 @@ work=prepare_workspace(root,'code-cache-bench',['CodeCacheBenchmark.h'])
 p=work/'application/task/storage/StorageTask.cpp';s=p.read_text()
 s=inject_storage_probe(s,'CodeCacheBenchmark.h','''        static bool cache_benchmark_ran=false;
         if(!cache_benchmark_ran && !usb_mode_ && initialized_ && !hasJob() && !has_completion_ && !has_return_ &&
-           !map_job_.occupied() && !has_read_ && state_.card_state==CardState::Mounted && place_lookup_.datasetInfo().state==PlaceState::Ready) {
+           !screen_resources_.map.occupied() && !has_read_ && state_.card_state==CardState::Mounted && place_lookup_.datasetInfo().state==PlaceState::Ready) {
             cache_benchmark_ran=true;
             // No retained main cache during the trial: each test creates exactly
             // one code cache. This temporary diagnostic will be replaced after capture.

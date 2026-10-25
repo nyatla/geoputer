@@ -4,6 +4,7 @@
 #include "DisplayClock.h"
 #include "ChoiceDialog.h"
 #include "UiKeyGuide.h"
+#include "UiScreenResources.h"
 #include "../../map/MapFrameReceiver.h"
 #include "../../map/MapTracking.h"
 #include "../../TaskMessages.h"
@@ -18,8 +19,8 @@ public:
     OperationStatus beginMapFrame(const map::Transfer& transfer);
     OperationStatus writeMapRows(const map::Transfer& transfer);
     OperationStatus commitMapFrame(const map::Transfer& transfer);
-    const map::MapFrameReceiver& mapFrame() const { return map_frame_; }
-    const map::CursorOffset& mapCursor() const { return map_cursor_; }
+    const map::MapFrameReceiver& mapFrame() const { return screen_resources_.map.frame; }
+    const map::CursorOffset& mapCursor() const { return screen_resources_.map.cursor; }
     void keyPressed(UiKey key, uint32_t now_ms);
     void tick(uint32_t now_ms);
     UiSnapshot snapshot() const;
@@ -28,24 +29,24 @@ public:
     bool takeRedraw();
     bool notificationPending() const { return notification_pending_; }
     void notificationSent() { notification_pending_ = false; }
-    bool systemUsbMode() const { return system_usb_mode_; }
-    bool editing() const { return editing_; }
-    uint8_t editValue() const { return edit_value_; }
+    bool systemUsbMode() const { return screen_resources_.settings.usb_mode; }
+    bool editing() const { return screen_resources_.settings.editing; }
+    uint8_t editValue() const { return screen_resources_.settings.edit_value; }
     bool confirming() const { return dialog_.active(); }
     bool confirmChoice() const { return dialog_.selected(); }
     const ChoiceDialog& dialog() const { return dialog_; }
     UiKeyGuide keyGuide() const;
-    uint32_t licenseOffset() const { return license_offset_; }
-    uint8_t datasetDialogNumber() const { return dataset_dialog_number_; }
+    uint32_t licenseOffset() const { return screen_resources_.settings.license_offset; }
+    uint8_t datasetDialogNumber() const { return screen_resources_.settings.dataset.dialog_number; }
     static constexpr uint32_t DatasetNoticeMs = 5000;
     bool datasetFailureVisible() const {
         return !data_.settings.dataset && data_.storage.dataset_failure.revision &&
             last_tick_ms_ - dataset_notice_started_ms_ < DatasetNoticeMs;
     }
-    bool viewingLicenses() const { return screen_ == ScreenId::Settings && page_ == SettingsPage::Licenses; }
-    bool cardInfo() const { return card_info_; }
-    UsbPage usbPage() const { return usb_page_; }
-    uint8_t usbFile() const { return usb_file_; }
+    bool viewingLicenses() const { return screen_ == ScreenId::Settings && screen_resources_.settings.page == SettingsPage::Licenses; }
+    bool cardInfo() const { return screen_resources_.settings.card_info; }
+    UsbPage usbPage() const { return screen_resources_.usb.page; }
+    uint8_t usbFile() const { return screen_resources_.usb.file; }
     const DisplayClock& clock() const { return clock_; }
     static constexpr uint32_t AccessLampMinMs = 150;
     bool sdAccessLit() const {
@@ -79,8 +80,9 @@ private:
     void usbKey(UiKey key);
     void usbAction(UsbAction action);
 
-    map::MapFrameReceiver map_frame_;
-    map::CursorOffset map_cursor_{};
+
+
+    UiScreenResources screen_resources_;
     void updateMapCursor();
     bool acceptsMap(const map::FrameInfo& info) const;
     ScreenId screen_ = ScreenId::LivePlace;
@@ -93,19 +95,18 @@ private:
     uint32_t access_started_ms_ = 0;
     uint32_t dataset_notice_started_ms_ = 0;
     uint8_t selection_ = 0;
-    SettingsPage page_ = SettingsPage::Root;
-    DatasetPurpose dataset_purpose_ = DatasetPurpose::Select;
-    uint8_t dataset_dialog_number_ = 0;
-    bool system_usb_mode_ = false;
-    bool editing_ = false;
+
+
+
+
     ChoiceDialog dialog_;
-    uint8_t edit_value_ = 0;
-    uint8_t dataset_list_start_ = 0;
-    char dataset_edit_original_[config::DatasetLanguageBytes]{};
-    uint32_t license_offset_ = 0;
-    bool card_info_ = false;
-    UsbPage usb_page_ = UsbPage::Menu, usb_return_page_ = UsbPage::Menu;
-    uint8_t usb_file_ = 0;
+
+
+
+
+
+
+
     bool early_maintenance_key_ = false;
     RecordingState gps_dialog_state_ = RecordingState::Stopped;
     UiData data_{};

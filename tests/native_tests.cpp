@@ -3,6 +3,7 @@
 #include <stdexcept>
 #include "utils/SyncClient.h"
 #include "task/ui/UiModel.h"
+#include "AppScreenResources.h"
 
 using namespace geoputer;
 void testMaps();
@@ -197,6 +198,67 @@ static void testDirectionalPayloadCopies() {
     }
 }
 
+static void testExclusiveUiPages() {
+    UiData data{};
+    check(!data.hasBrowse() && !data.hasDatasets(), "UI starts without a page payload");
+    check(!data.browse().count && !data.datasets().count && !data.hasBrowse() && !data.hasDatasets(),
+          "reading an unused page returns empty data without activating it");
+    data.gps.fix={35.68,140.02,1000,true};
+    data.recording.state=RecordingState::Recording;
+    for (unsigned i=0;i<100;++i) {
+        auto& dataset=data.editDatasets();
+        check(!dataset.count && !dataset.loading && !dataset.applying, "new dataset payload is zero initialized");
+        dataset.detail=true;dataset.info={};dataset.revision=i+1;
+        std::strcpy(dataset.info.description,"dataset description");
+        UiData copied=data;
+        auto& browse=data.editBrowse();
+        check(!browse.count && !browse.loading && !browse.deleting && !browse.names[0][0],
+              "switching from datasets cannot leave stale browser flags or filenames");
+        browse.count=1;browse.revision=i+2;std::strcpy(browse.names[0],"20261025_120000_0.gps.dat");
+        check(!data.hasDatasets() && !data.datasets().loading && !data.datasets().applying &&
+              copied.hasDatasets() && !std::strcmp(copied.datasets().info.description,"dataset description"),
+              "inactive reads are empty and value copies retain the original active payload");
+        copied=data;
+        const auto& empty=data.datasets();
+        check(!empty.count && !empty.detail && data.hasBrowse(), "const page reads preserve the active browser");
+        check(copied.hasBrowse() && copied.browse().count==1 && copied.browse().revision==i+2,
+              "copy assignment carries the browser discriminator and content");
+        check(data.gps.fix.valid && data.gps.fix.latitude==35.68 && data.recording.state==RecordingState::Recording,
+              "page changes preserve GPS and logger state");
+    }
+    UiModel ui;
+    check(ui.setScreen({ScreenId::Logs,DisplayMode::View,1,data,0,ActionResult::None})==OperationStatus::Ok,
+          "browser payload accepted by UI");
+    check(ui.data().hasBrowse(), "UI sanitization preserves browser payload");
+    data.editDatasets().detail=true;data.editDatasets().info={};
+    std::strcpy(data.editDatasets().info.description,"not overwritten by browser sanitization");
+    check(ui.setScreen({ScreenId::Settings,DisplayMode::View,2,data,0,ActionResult::None})==OperationStatus::Ok &&
+          ui.data().hasDatasets() && !std::strcmp(ui.data().datasets().info.description,"not overwritten by browser sanitization"),
+          "UI sanitizes only the active page and does not activate browser storage");
+}
+
+static void testScreenResourceLifetime() {
+    AppScreenResources app;
+    app.enter(ScreenGroup::Map);app.map().transfer.pixels[0]=0xaa;app.map().anchor.request.token=21;
+    app.enter(ScreenGroup::Logs);check(app.hasLogs() && !app.logs().cache_count,"log work initializes after map leave");
+    app.logs().records[0][0]=0x55;app.logs().cache_count=1;
+    app.enter(ScreenGroup::Logs);check(app.logs().cache_count==1 && app.logs().records[0][0]==0x55,"log hierarchy retains its own work");
+    app.enter(ScreenGroup::Settings);check(!app.hasMap() && !app.hasLogs(),"settings owns no map/log working payload");
+    app.enter(ScreenGroup::Map);check(!app.map().transfer.pixels[0] && !app.map().anchor.request.token,"map reentry starts clean");
+    app.enter(ScreenGroup::Usb);check(app.hasLogs(),"USB file selection uses bounded log working resources");
+    UiScreenResources ui;ui.enter(ScreenGroup::Map);
+    map::FrameInfo info{};info.request.token=1;info.width=8;info.height=2;
+    check(ui.map.frame.begin(info),"UI allocates a map staging image");
+    map::Transfer rows{};rows.info=info;rows.rows=2;
+    check(ui.map.frame.write(rows) && ui.map.frame.commit(info) && ui.map.frame.image().bytes(),"UI owns a committed image");
+    ui.enter(ScreenGroup::Settings);
+    check(!ui.map.frame.image().bytes() && !ui.map.cursor.valid,"map image is released at screen leave");
+    ui.settings.editing=true;ui.settings.dataset.edit_original[0]='x';ui.settings.license_offset=81;
+    ui.enter(ScreenGroup::Usb);
+    check(!ui.settings.editing && !ui.settings.dataset.edit_original[0] && !ui.settings.license_offset && ui.usb.page==UsbPage::Menu,
+          "departed settings and license state are cleared before USB entry");
+}
+
 static void testSyncCallerEnvelopeAndQueuedSnapshot() {
     Queue<ReturnMessage, 1> returns;
     Queue<UiRequest, 1> destination;
@@ -205,9 +267,9 @@ static void testSyncCallerEnvelopeAndQueuedSnapshot() {
     UiRequest request{};
     request.kind = MessageKind::SetUiScreen;
     request.payload.screen.generation = 42;
-    request.payload.screen.data.datasets.detail = true;
-    request.payload.screen.data.datasets.info = {};
-    std::strcpy(request.payload.screen.data.datasets.info.description, "UTF-8 dataset description");
+    request.payload.screen.data.editDatasets().detail = true;
+    request.payload.screen.data.editDatasets().info = {};
+    std::strcpy(request.payload.screen.data.editDatasets().info.description, "UTF-8 dataset description");
     check(client.sendSync(TaskId::UI, destination, request, 0) == SyncSendResult::AwaitingResult,
           "full UI request is accepted from a caller-owned envelope");
     check(request.source == TaskId::Application && request.request_id && request.sequence,
@@ -218,11 +280,11 @@ static void testSyncCallerEnvelopeAndQueuedSnapshot() {
           request.request_id == first_id && request.sequence == first_sequence,
           "rejected overlapping sync does not mutate the outstanding envelope");
     request.payload.screen.generation = 99;
-    request.payload.screen.data.datasets.info.description[0] = 'X';
+    request.payload.screen.data.editDatasets().info.description[0] = 'X';
     UiRequest queued{};
     check(destination.receive(queued) && queued.request_id == first_id &&
           queued.payload.screen.generation == 42 &&
-          !std::strcmp(queued.payload.screen.data.datasets.info.description, "UTF-8 dataset description"),
+          !std::strcmp(queued.payload.screen.data.datasets().info.description, "UTF-8 dataset description"),
           "queue owns an independent value snapshot after the send returns");
     auto reply = terminal(queued);
     returns.send(reply);
@@ -321,6 +383,8 @@ int main() {
         testSendFailuresAndReturnIdentity();
         testDirectionalPayloadCopies();
         testSyncCallerEnvelopeAndQueuedSnapshot();
+        testExclusiveUiPages();
+        testScreenResourceLifetime();
         testUiActionOwnershipAndStaleUpdates();
         testRepeatedUiRoundTripsAndValueCopies();
         testMaps();

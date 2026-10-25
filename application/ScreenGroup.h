@@ -1,0 +1,31 @@
+#pragma once
+#include "task/ui/UiTypes.h"
+
+namespace geoputer {
+enum class ScreenGroup : uint8_t { Common, Map, Logs, Settings, Usb };
+inline ScreenGroup screenGroup(ScreenId screen) {
+    if (screen==ScreenId::Map) return ScreenGroup::Map;
+    if (isLogBrowser(screen)) return ScreenGroup::Logs;
+    if (screen==ScreenId::Settings) return ScreenGroup::Settings;
+    if (screen==ScreenId::UsbStorage) return ScreenGroup::Usb;
+    return ScreenGroup::Common;
+}
+
+// Prepare a value snapshot; no task-owned buffers or pending requests change.
+inline void prepareScreenView(UiData& data, ScreenId target, ScreenId previous) {
+    if (isLogBrowser(target)) {
+        auto& view=data.editBrowse();
+        view.loading=false;view.error=LogReadError::None;
+        if (target==ScreenId::Logs && previous!=ScreenId::LogDetail) {
+            view={};view.summary.first_utc=view.summary.last_utc=UINT64_MAX;view.loading=true;
+        } else if (target==ScreenId::LogDetail && previous==ScreenId::Logs) {
+            view.summary={};view.summary.first_utc=view.summary.last_utc=UINT64_MAX;view.loading=true;
+        } else if (target==ScreenId::LogPoint) {
+            view.point={};view.index=view.target=0;view.loading=true;
+        }
+        ++view.revision;
+    } else if (target==ScreenId::Settings ? !data.hasDatasets() :
+               target==ScreenId::UsbStorage ? !data.hasBrowse() : true) data.clearPage();
+    ++data.revision;
+}
+} // namespace geoputer

@@ -28,9 +28,9 @@ int main(int argc,char** argv) {
     data.settings.language=en?UiLanguage::English:UiLanguage::Japanese;
     data.storage.usb.ready=true;
     data.storage.usb.connected=std::strcmp(mode,"disconnected") && std::strcmp(mode,"complete");
-    data.browse.revision=1;data.browse.count=4;data.browse.has_older=true;
+    data.editBrowse().revision=1;data.editBrowse().count=4;data.editBrowse().has_older=true;
     const char* names[]={"20261017_093012_0.gps.dat","20261016_142801_0.gps.dat","20261015_081530_0.gps.dat","20261014_175205_0.gps.dat"};
-    for(unsigned n=0;n<4;++n)std::strcpy(data.browse.names[n],names[n]);
+    for(unsigned n=0;n<4;++n)std::strcpy(data.editBrowse().names[n],names[n]);
     std::strcpy(data.storage.export_job.name,names[0]);data.storage.export_job.format=ExportFormat::Gpx;
     if(!std::strcmp(mode,"no-sd"))data.storage.usb.ready=false;
     if(!std::strcmp(mode,"ejected"))data.storage.usb.ejected=true;
@@ -39,9 +39,9 @@ int main(int argc,char** argv) {
     if(!std::strcmp(mode,"eject"))job.phase=ExportPhase::WaitEject;
     if(!std::strcmp(mode,"files")||!std::strcmp(mode,"format")||!std::strcmp(mode,"long-format")||!std::strcmp(mode,"empty")||!std::strcmp(mode,"loading")) {
         job.phase=ExportPhase::Selecting;data.storage.usb.local=true;
-        if(!std::strcmp(mode,"empty"))data.browse.count=0;
-        if(!std::strcmp(mode,"loading"))data.browse.loading=true;
-        if(!std::strcmp(mode,"long-format"))std::strcpy(data.browse.names[0],"123456789012345678901234567890123456789.gps.dat");
+        if(!std::strcmp(mode,"empty"))data.editBrowse().count=0;
+        if(!std::strcmp(mode,"loading"))data.editBrowse().loading=true;
+        if(!std::strcmp(mode,"long-format"))std::strcpy(data.editBrowse().names[0],"123456789012345678901234567890123456789.gps.dat");
     }
     if(!std::strcmp(mode,"progress")||!std::strcmp(mode,"full-progress")) {
         job.phase=ExportPhase::Running;data.storage.usb.local=true;job.total=4096;job.processed=2048;

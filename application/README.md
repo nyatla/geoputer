@@ -6,6 +6,8 @@ Application・UI・GPS座標受信・Storageを実装する。ApplicationはArdu
 application/
   main.cpp                 メインタスクの入口
   Application.h/.cpp       全体状態、通知受信、UI・GPS・Storageの同期操作
+  ScreenGroup.h            画面群の分類と送信用表示データの準備
+  AppScreenResources.h     App専用の地図・ログ作業領域と排他共用
   Config.h                 UI色深度・SD予約枠・チャンク上限・GISキャッシュ・検索周期
   LogBrowser.cpp           一覧・詳細・測位点の要求、結果照合、10件キャッシュ
   Settings.h/.cpp          設定の初期値・値域検証・NVSレコード符号化
@@ -14,6 +16,7 @@ application/
   task/ui/
     UiTask.h/.cpp          UI受信ループ、キー入力、通知・結果返送
     UiModel.h/.cpp         選択状態、未処理確定操作、画面指定の保持
+    UiScreenResources.h    地図・設定・データセット・ライセンス・USBの画面内状態
     UiRenderer.h/.cpp      メイン画面とSettingsの描画
     UiCanvas.h             RGB565描画色と4bit・16色パレット画像の対応
     PixelFont.h/.cpp       8×8・16×16ドットの固定セル描画
@@ -33,6 +36,7 @@ application/
     GpsTypes.h             座標と受信状態の固定長の値型
   task/storage/
     StorageTask.h/.cpp     NVS・SDの受信ループ、同期受付、非同期実処理
+    StorageScreenResources.h 地図生成とログ閲覧のI/O資源
     SettingsStore.h/.cpp   PreferencesによるNVS設定保存・復元
     StorageTypes.h        設定保存・カード・操作状態の値型
     PlaceTypes.h          検索座標・地名結果・読出し状態の値型
@@ -266,9 +270,19 @@ M5Cardputer 1.1.1、M5Unified 0.2.26、M5GFX 0.2.33と依存するIRremote 4.7.1
 
 `Config.h`の`UiColorDepth = 4`で16色パレットの全画面バッファを使用する。現在の9色・240×135の解像度・字形・一括転送を維持し、RGB565色から番号への変換はUiCanvasに集約する。値16は従来のRGB565参照描画とし、プレビュー生成時に両者のRGBピクセルが一致することを確認する。SDのVFS予約枠は`SdMaxOpenFiles = 3`とする。地図・索引・WordbookのReaderは直接FatFsのFILを使用し、このVFS枠を消費しない。ファイルの所有者は引き続きStorageタスクとする。
 
-キューは用途ごとにUiRequest（1664 B）/ GpsRequest（16 B）/ StorageRequest（144 B）/ AppNotification（768 B）/ ReturnMessage（640 B）を使用する。UI更新以外のキューや結果保持領域へUIデータ全体を予約しない。Appの2キュー・サブタスクの各1キューと件数、同期結果の必須回収、値コピーによる所有権を維持する。起動ログの`[MEMORY]`に各型のサイズとSD枠・色深度を記録する。
+キューは用途ごとにUiRequest（1280 B）/ GpsRequest（16 B）/ StorageRequest（144 B）/ AppNotification（816 B）/ ReturnMessage（576 B）を使用する。UI更新以外のキューや結果保持領域へUIデータ全体を予約しない。Appの2キュー・サブタスクの各1キューと件数、同期結果の必須回収、値コピーによる所有権を維持する。各型のサイズは実機向けコンパイラのsizeofで確認する。
 
 実装・実測・検証範囲は[メモリ削減実装検証](../doc/検証/メモリ削減実装検証.md)にまとめる。
+
+UiDataのログ閲覧・USBファイル一覧とデータセット画面のデータは、種別付きunionで同じ領域を使う。読取りはbrowse() / datasets()、書込みはeditBrowse() / editDatasets()とし、読取りだけで保持種別を変えない。App・UI・キューはそれぞれ独立した値コピーを所有し、別種別へ移った後の古い完了結果は表示へ反映しない。UiDataは1696 Bから1248 B、UiRequestは1728 Bから1280 Bへ縮小した。変更範囲と検証は[画面専用UIデータの共用検証](../doc/検証/画面専用UIデータの共用検証.md)を参照する。
+
+### 画面群の専用リソース
+
+ScreenGroupは共通画面、地図、ログ閲覧、設定、USBに分類する。AppScreenResourcesは地図の転送・生成状態とログの要求・10件キャッシュを種別付きunionで共用する。ログ一覧・詳細・測位点の間では同じリソースを維持し、USBのファイル一覧もログ用の領域を使う。画面を離れた後も必要な要求ID・取消状態は共通の制御状態へ保持する。
+
+Appは既存のUiRequest内で次画面の表示データを準備し、UIが受け付けてから画面群のリソースを切り替える。拒否された場合は元のリソースと画面を維持する。別画面へ移った後の完了通知は現在の作業領域へ書き込まない。UIの地図画像・カーソル、設定・データセット編集・ライセンス位置、USB選択状態はUiScreenResourcesへ集約し、画面切替時に画像を解放して局所状態を初期化する。時計・電池・入力時刻・確定待ち操作は共通状態に残す。
+
+StorageのMapBuildJobとLogReaderはStorageScreenResourcesへまとめ、受付済みジョブの寿命に従う。画面を離れた後も取消・完了まで資源を保持し、結果は値コピーで返す。GPS受信・ログ保存・現在地キャッシュは画面の専用リソースに含めない。静的RAMはこの整理で67,752 Bから67,304 Bへ448 B減り、表示データの共用前69,096 Bからは合計1,792 B減った。詳細は[画面群リソース整理の検証](../doc/検証/画面群リソース整理の検証.md)を参照する。
 
 ### 起動モードとUSBストレージ
 

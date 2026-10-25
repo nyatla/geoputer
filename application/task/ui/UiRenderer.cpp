@@ -101,7 +101,7 @@ void UiRenderer::drawDialog(const UiModel& model, UiLanguage language) {
                 (japanese ? "このログを削除？" : "Delete this log?");
             accept = japanese ? "削除" : "Delete";
             const auto selected = model.snapshot().selected_setting;
-            if (selected < model.data().browse.count) detail = model.data().browse.names[selected];
+            if (selected < model.data().browse().count) detail = model.data().browse().names[selected];
             detail_role = TextRole::UI;
             break;
         }
@@ -346,7 +346,7 @@ void UiRenderer::drawLogBrowser(const UiModel& model, const UiSnapshot& content,
         font_.draw(frame_, x, y, value, item_role, color);
     };
     char line[64];
-    const auto& view=data.browse;
+    const auto& view=data.browse();
     const bool detail=content.screen==ScreenId::LogDetail;
     const bool points=content.screen==ScreenId::LogPoint;
     text(4,ViewHeaderTextY,points?"LOG POINT":detail?"LOG DETAIL":"LOGS",TFT_LIGHTGREY);
@@ -477,7 +477,7 @@ void UiRenderer::drawSettings(const UiModel& model, const UiSnapshot& content, c
     } else if (content.page != SettingsPage::About)
         valueText(132,236,ViewHeaderTextY,line,data.gps.fix.valid ? TFT_GREEN : TFT_LIGHTGREY);
     if (content.page == SettingsPage::DatasetList || content.page == SettingsPage::DatasetDetail) {
-        const auto& view = data.datasets;
+        const auto& view = data.datasets();
         frame_.fillRect(0,0,240,ViewHeaderBottom,TFT_BLACK);text(4,ViewHeaderTextY,content.page==SettingsPage::DatasetDetail?"DATASET DETAIL":
             view.purpose==DatasetPurpose::Rebuild?"REBUILD CACHE":view.purpose==DatasetPurpose::Verify?"VERIFY CACHE":"DATASETS",TFT_WHITE);
         if (view.loading || view.applying) {
@@ -605,7 +605,7 @@ void UiRenderer::drawSettings(const UiModel& model, const UiSnapshot& content, c
         if(reason!=DatasetError::None) notice(datasetErrorText(reason,japanese));
         else if(data.storage.dataset_failure.save_failed) notice("RELEASE NOT SAVED",TFT_RED);
     } else if(content.page==SettingsPage::DatasetIndex) {
-        const auto& view=data.datasets;const auto& progress=view.progress;
+        const auto& view=data.datasets();const auto& progress=view.progress;
         frame_.fillRect(0,0,240,ViewHeaderBottom,TFT_BLACK);text(4,ViewHeaderTextY,view.purpose==DatasetPurpose::Verify?"VERIFY CACHE":"REBUILD CACHE");
         std::snprintf(line,sizeof(line),"TARGET %02u / ALL LANGUAGES",view.number);text(4,26,line,TFT_LIGHTGREY);
         item(4,43,view.applying?(view.purpose==DatasetPurpose::Verify?(japanese?"検証中です":"Verifying..."):(japanese?"再生成中です":"Rebuilding...")):

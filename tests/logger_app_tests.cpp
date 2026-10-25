@@ -11,6 +11,10 @@ namespace {
 Application* app=nullptr;
 std::vector<MessageKind> calls;
 bool fail_open=false,hold_place_queries=false;
+AppNotification late_dataset{};bool deliver_dataset_on_ui_send=false;
+StorageRequest last_read{};
+MapBuildJob map_backend;
+bool reject_screen=false;
 void check(bool ok,const char* why){if(!ok)throw std::runtime_error(why);}
 void route(QueueHandle_t queue) {
     ReturnMessage reply{};
@@ -20,10 +24,17 @@ void route(QueueHandle_t queue) {
     }
     if(queue==app->ui_.inbox().handle_) {
         UiRequest command{};app->ui_.inbox().receive(command);
+        if(deliver_dataset_on_ui_send) {
+            deliver_dataset_on_ui_send=false;
+            app->handleNotification(late_dataset);
+        }
         prepareSyncReturn(reply,TaskId::UI,command,1);auto& result=reply.payload.result;
         if(command.kind==MessageKind::GetUiContent){result.content=app->ui_.model_.snapshot();result.status=OperationStatus::Ok;}
         else if(command.kind==MessageKind::UpdateUiContent)result.status=app->ui_.model_.updateContent(command.payload.update);
-        else if(command.kind==MessageKind::SetUiScreen)result.status=app->ui_.model_.setScreen(command.payload.screen);
+        else if(command.kind==MessageKind::SetUiScreen) {
+            result.status=reject_screen?OperationStatus::Unavailable:app->ui_.model_.setScreen(command.payload.screen);
+            reject_screen=false;
+        }
         else throw std::runtime_error("unexpected UI request");
         check(app->results_.send(reply),"UI return queue full");return;
     }
@@ -31,6 +42,19 @@ void route(QueueHandle_t queue) {
         if(hold_place_queries)return;
         StorageRequest command{};app->storage_.inbox().receive(command);calls.push_back(command.kind);
         prepareSyncReturn(reply,TaskId::Storage,command,1);auto& result=reply.payload.result;
+        if(command.kind==MessageKind::CancelLogRead)return;
+        if(command.kind==MessageKind::RequestMap || command.kind==MessageKind::CancelMap || command.kind==MessageKind::ReleaseMap) {
+            const bool ok=command.kind==MessageKind::RequestMap?map_backend.start(command.payload.map):map_backend.release(command.payload.map);
+            result.status=ok?OperationStatus::Ok:OperationStatus::Unavailable;
+            check(app->results_.send(reply),"map job return queue full");return;
+        }
+        if(command.kind==MessageKind::DatasetOperation || command.kind==MessageKind::ListLogs ||
+           command.kind==MessageKind::ReadLogSummary || command.kind==MessageKind::ReadLogRecords) {
+            last_read=command;result.status=OperationStatus::Ok;
+            result.storage=app->data_.storage;++result.storage.revision;
+            result.storage.busy=command.kind==MessageKind::DatasetOperation;
+            check(app->results_.send(reply),"read request return queue full");return;
+        }
         const auto& log=command.payload.log;auto& writer=app->storage_.log_writer_;
         const auto error=command.kind==MessageKind::OpenLogSession ? (fail_open?LogError::Io:writer.open(log.session_id,log.created_utc_ms)) :
             writer.requestFlush(log.session_id,log.sample_seq,command.kind==MessageKind::CloseLogSession);
@@ -60,15 +84,15 @@ void UiTask::run(){} void StorageTask::run(){}
 void StorageTask::sdBegin(){} void StorageTask::sdEnd(){} void StorageTask::cacheState(RgCacheState,bool){}
 LogError StorageTask::tryAppendLog(const LogCommand& command,LogSnapshot& snapshot){const auto error=log_writer_.append(command,taskTimeMs());snapshot=log_writer_.snapshot();return error;}
 // Unrelated App routes are peer boundaries in this test; reaching them is a failure.
-void Application::prepareLogScreen(ScreenId,ScreenId){}
-bool Application::operateBrowser(const UiAction&){throw std::runtime_error("unexpected browser operation");}
-bool Application::operateDataset(const UiAction&){throw std::runtime_error("unexpected dataset operation");}
-bool Application::requestDataset(DatasetRequest){throw std::runtime_error("unexpected dataset request");}
+
+
+
+
 bool Application::operateBootMode(const UiAction&){throw std::runtime_error("unexpected boot mode operation");}
 bool Application::operateUsbExport(const UiAction&){throw std::runtime_error("unexpected export operation");}
-bool Application::datasetChangeReady()const{return loggerStopped(data_.recording,data_.storage.log);}
-void Application::completeDataset(const DatasetView&){} void Application::completeBrowser(const LogReadReply&){} void Application::completeMap(const map::FrameInfo&){}
-bool Application::changeMapScale(uint8_t){return false;}
+
+
+
 }
 int main(){
     char directory[]="/tmp/rgp-app-log-XXXXXX";check(mkdtemp(directory)!=nullptr,"temp directory");
@@ -144,6 +168,88 @@ int main(){
     check(!app->storage_.inbox().receive(no_query),"background mode does not start place IO");
     app->mode_=DisplayMode::View;lookup("HIDDEN",true);lookup("THIRD AREA");
     std::puts("PASS: shared current-place lookup on map, changed-cell dispatch, same-cell suppression and map-job exclusion");
+    // A delayed catalog response must not overwrite the Logs page even when it
+    // arrives inside the synchronous SetUiScreen call, before generation changes.
+    hold_place_queries=false;app->data_.storage.busy=false;
+    app->data_.recording={};app->data_.storage.log={};app->data_.storage.settings_state=SettingsState::Loaded;
+    check(app->setScreen(ScreenId::Settings),"enter settings before catalog read");
+    DatasetRequest catalog{};catalog.action=DatasetAction::Open;
+    check(app->requestDataset(catalog) && app->data_.hasDatasets() && app->data_.datasets().loading,"catalog accepted");
+    late_dataset={};late_dataset.source=TaskId::Storage;late_dataset.kind=MessageKind::ReadCompleted;
+    auto& catalog_reply=late_dataset.payload.storage_completion;
+    catalog_reply.read_kind=StorageReadKind::DatasetBrowser;
+    catalog_reply.snapshot=app->data_.storage;++catalog_reply.snapshot.revision;catalog_reply.snapshot.busy=false;
+    catalog_reply.snapshot.settings=app->data_.settings;
+    catalog_reply.dataset_view.revision=app->dataset_waiting_;catalog_reply.dataset_view.count=1;
+    std::strcpy(catalog_reply.dataset_view.rows[0].title,"DELAYED DATASET");
+    deliver_dataset_on_ui_send=true;
+    check(app->setScreen(ScreenId::Logs),"shortcut from settings to logs while catalog is pending");
+    check(!app->dataset_waiting_ && app->data_.hasBrowse() && app->data_.browse().loading &&
+          !app->data_.browse().deleting && !app->data_.browse().names[0][0],"late catalog must release token without overwriting browser");
+    check(app->ui_.model_.data().hasBrowse(),"UI receives browser payload after the synchronous shortcut");
+    // Conversely, a late log result cannot replace the dataset payload.
+    app->processBrowser();check(last_read.kind==MessageKind::ListLogs,"browser queues a real read request");
+    const auto log_request=last_read.payload.log_read;
+    check(app->setScreen(ScreenId::Settings),"leave log read for settings");
+    check(app->requestDataset(catalog),"new catalog request selects dataset payload");
+    const auto catalog_token=app->dataset_waiting_;
+    LogReadReply late_log{};late_log.request=log_request;late_log.count=1;
+    std::strcpy(late_log.data.names[0],"must-not-overwrite-dataset.gps.dat");
+    app->completeBrowser(late_log);
+    check(app->data_.hasDatasets() && app->data_.datasets().loading && !app->browse_waiting_,
+          "late log releases its token but leaves dataset payload intact");
+    DatasetView ready{};ready.revision=catalog_token;ready.count=1;ready.rows[0].number=2;
+    std::strcpy(ready.rows[0].title,"CURRENT DATASET");app->completeDataset(ready);
+    check(app->data_.hasDatasets() && !app->data_.datasets().loading &&
+          !std::strcmp(app->data_.datasets().rows[0].title,"CURRENT DATASET"),"current catalog still completes normally");
+    // Preserve list names and selection through detail/point/back navigation.
+    check(app->setScreen(ScreenId::Logs),"reopen browser after dataset use");
+    auto& list=app->data_.editBrowse();list.loading=false;list.count=2;list.selected=1;++list.revision;
+    std::strcpy(list.names[0],"20261025_120000_0.gps.dat");std::strcpy(list.names[1],"20261025_130000_0.gps.dat");
+    UiAction open{};open.browse_action=BrowseAction::OpenFile;open.browse_index=1;open.browse_revision=list.revision;
+    check(app->operateBrowser(open) && app->screen_==ScreenId::LogDetail,"open detail with retained list");
+    app->data_.editBrowse().summary.records=20;
+    check(app->setScreen(ScreenId::LogPoint) && app->setScreen(ScreenId::LogDetail) && app->setScreen(ScreenId::Logs),"point and back navigation");
+    check(app->data_.hasBrowse() && app->data_.browse().selected==1 && app->data_.browse().count==2 &&
+          !std::strcmp(app->data_.browse().names[1],"20261025_130000_0.gps.dat"),"browser hierarchy retains list content and selection");
+    std::puts("PASS: exclusive UI page payloads, delayed dataset/log responses and retained browser hierarchy");
+    // Map work may still be owned by Storage when its display is left. App
+    // releases its own union; late map results and cancellation must spare Logs.
+    app->data_.storage.busy=false;app->data_.settings.dataset=1;app->place_flow_.refresh();
+    app->data_.gps.fix.valid=true;app->data_.gps.reception=GpsReception::Fix;
+    check(app->setScreen(ScreenId::Map),"enter map resource group");
+    app->processMap();check(map_backend.occupied() && app->map_request_.token,"map job accepted by Storage peer");
+    const auto old_map=map_backend.info();
+    check(app->setScreen(ScreenId::Logs) && app->screen_resources_.hasLogs() && app->map_cancel_,"Map -> Logs releases App map work and retains cancellation identity");
+    auto& log_work=app->screen_resources_.logs();log_work.cache_count=1;log_work.records[0][0]=0x5a;
+    app->completeMap(old_map);
+    check(log_work.cache_count==1 && log_work.records[0][0]==0x5a,"late map completion overwrote log work");
+    app->processMap();check(!map_backend.occupied() && !app->map_request_.token && log_work.records[0][0]==0x5a,
+          "off-screen cancellation must release Storage map job without reading App map union");
+    // A record request can finish after the work union has become a map again.
+    auto& point_view=app->data_.editBrowse();point_view.summary.session_id=81;point_view.summary.records=20;
+    check(app->setScreen(ScreenId::LogPoint),"open point resource group");
+    app->processBrowser();check(last_read.kind==MessageKind::ReadLogRecords,"record request accepted");
+    const auto stale_records=last_read.payload.log_read;
+    check(app->setScreen(ScreenId::Map) && app->screen_resources_.hasMap(),"Logs -> Map replaces log work");
+    auto& map_work=app->screen_resources_.map();map_work.transfer.pixels[0]=0xa5;map_work.row=17;
+    app->processMap();check(!app->map_request_.token,"new map request must wait for the old read's terminal result");
+    app->processBrowser(); // Send pending cancellation even without log work.
+    LogReadReply stale{};stale.request=stale_records;stale.count=1;
+    std::memset(stale.data.records,0xee,sizeof(stale.data.records));app->completeBrowser(stale);
+    check(!app->browse_waiting_ && app->screen_resources_.hasMap() && map_work.transfer.pixels[0]==0xa5 && map_work.row==17,
+          "late records must consume their token without touching the active map work");
+    // Failed screen acceptance leaves the original resources and display intact.
+    reject_screen=true;const auto before_generation=app->generation_;
+    check(!app->setScreen(ScreenId::Logs) && app->generation_==before_generation && app->screen_==ScreenId::Map &&
+          app->screen_resources_.hasMap() && map_work.transfer.pixels[0]==0xa5,"rejected screen transition released current resources");
+    for(unsigned n=0;n<30;++n) {
+        check(app->setScreen(ScreenId::Logs) && app->screen_resources_.hasLogs() && !app->screen_resources_.logs().cache_count,
+              "fresh Logs work contains an old map or record cache");
+        check(app->setScreen(ScreenId::Map) && app->screen_resources_.hasMap() && !app->screen_resources_.map().transfer.pixels[0],
+              "fresh Map work contains the previous log cache");
+    }
+    std::puts("PASS: screen resource handoff, worker cancellation after leave, stale map/record results, rejected transition and repeated union reuse");
     hostQueueHook=nullptr;std::filesystem::remove_all(directory);
     std::puts("PASS: production App logging, GPS pause/stop/restart, fresh epochs, async close, filename, failures and wake");
 }

@@ -78,7 +78,7 @@ bool Application::awaitSyncResult(SyncSendResult sent, SyncReturn& result) {
 }
 
 bool Application::setScreen(ScreenId target, uint32_t action_id, ActionResult action_result) {
-    if(isLogBrowser(target) || isLogBrowser(screen_)) prepareLogScreen(target,screen_);
+    const auto previous=screen_;
     UiRequest request{};
     request.kind = MessageKind::SetUiScreen;
     auto& command = request.payload.screen;
@@ -86,12 +86,19 @@ bool Application::setScreen(ScreenId target, uint32_t action_id, ActionResult ac
     command.mode = DisplayMode::View;
     command.generation = generation_ + 1;
     command.data = data_;
+    prepareScreenView(command.data,target,previous);
     command.processed_action_id = action_id;
     command.action_result = action_result;
-    const uint32_t sent_revision = data_.revision;
+    const uint32_t sent_revision = command.data.revision;
     SyncReturn result{};
     if (!callUi(request, result) || result.status != OperationStatus::Ok) return false;
-    map_anchor_={};map_retry_at_=0; // SetUiScreen clears the UI frame even for the same screen.
+    // Commit working-resource ownership only after UI accepts the screen.
+    // Old completions during the sync wait still see the original resources.
+    if(map_request_.token)map_cancel_=true;
+    screen_resources_.enter(screenGroup(target));
+    if(screen_resources_.hasMap())screen_resources_.map()={};
+    prepareScreenView(data_,target,previous);
+    if(isLogBrowser(target) || isLogBrowser(previous))prepareLogScreen(target,previous);
     screen_ = target;
     mode_ = DisplayMode::View;
     ++generation_;
@@ -108,8 +115,8 @@ bool Application::setScreen(ScreenId target, uint32_t action_id, ActionResult ac
 void Application::handleNotification(const AppNotification& event) {
     if(event.source==TaskId::Storage && event.kind==MessageKind::MapCompleted) {completeMap(event.payload.map);return;}
     if(event.source==TaskId::Storage && event.kind==MessageKind::DatasetProgress) {
-        if(dataset_applying_ && dataset_waiting_ && event.payload.index_progress.token==dataset_waiting_) {
-            data_.datasets.progress=event.payload.index_progress;++data_.datasets.revision;++data_.revision;ui_data_dirty_=true;
+        if(dataset_applying_ && dataset_waiting_ && data_.hasDatasets() && event.payload.index_progress.token==dataset_waiting_) {
+            data_.editDatasets().progress=event.payload.index_progress;++data_.editDatasets().revision;++data_.revision;ui_data_dirty_=true;
         }
         return;
     }
@@ -341,7 +348,7 @@ void Application::readUiContent() {
     const bool valid = !data_.boot.maintenance && action.kind == ActionKind::ChangeScreen && content.screen == screen_ &&
                        action.screen_generation == generation_ && content.screen_generation == generation_ &&
                        ((screen_ == ScreenId::Boot && data_.boot.complete && action.target == ScreenId::LivePlace) ||
-                        (rootScreenTransition(screen_, content.page, action.target) && !data_.browse.deleting) ||
+                        (rootScreenTransition(screen_, content.page, action.target) && !data_.browse().deleting) ||
                         (screen_==ScreenId::LogDetail && action.target==ScreenId::Logs) ||
                         (screen_==ScreenId::LogPoint && action.target==ScreenId::LogDetail));
     if (valid && action.action_id != last_processed_action_) {
@@ -375,9 +382,10 @@ void Application::applyStorage(const StorageSnapshot& state) {
     const auto log_result = data_.storage.log_result;
     data_.storage = state;
     if(usb_mode_ && old_export!=ExportPhase::Selecting && state.export_job.phase==ExportPhase::Selecting) {
-        data_.browse={};data_.browse.loading=true;++data_.browse.revision;
-        browse_request_={};browse_request_.kind=LogReadKind::List;browse_request_.count=4;
-        browse_need_=true;browse_cancel_=false;
+        data_.editBrowse()={};data_.editBrowse().loading=true;++data_.editBrowse().revision;
+        auto& logs=screen_resources_.logs();
+        logs.request={};logs.request.kind=LogReadKind::List;logs.request.count=4;
+        logs.need=true;browse_cancel_=false;
     }
     // App can have accepted more RAM records since Storage constructed this notification.
     if (applyLogSnapshot(data_.storage.log, log) ||
@@ -768,7 +776,7 @@ void Application::runOnce() {
         if (wait == portMAX_DELAY || wait > log_wait) wait = log_wait;
     }
     if(dataset_check_needed_ && !dataset_check_waiting_ && data_.storage.card_state == CardState::Mounted) { if(wait==portMAX_DELAY || wait>pdMS_TO_TICKS(50)) wait=pdMS_TO_TICKS(50); }
-    if(browse_cancel_ || (browse_need_ && !browse_waiting_)) { if(wait==portMAX_DELAY || wait>pdMS_TO_TICKS(50)) wait=pdMS_TO_TICKS(50); }
+    if(browse_cancel_ || (screen_resources_.hasLogs() && screen_resources_.logs().need && !browse_waiting_)) { if(wait==portMAX_DELAY || wait>pdMS_TO_TICKS(50)) wait=pdMS_TO_TICKS(50); }
     if (notifications_.receive(event, wait)) handleNotification(event);
 }
 

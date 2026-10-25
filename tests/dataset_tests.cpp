@@ -107,23 +107,23 @@ void navigationAndGate() {
     check(model.snapshot().page==SettingsPage::DatasetMenu && model.snapshot().action.kind==ActionKind::None,"Dataset opens its menu without reading or validating files");
     model.keyPressed(UiKey::Enter,8);
     check(model.snapshot().action.kind==ActionKind::Dataset && model.snapshot().action.dataset_action==DatasetAction::Open,"Select dataset opens the existing list");
-    auto publish=[&](){const auto action=model.snapshot().action;data.revision++;data.datasets.revision=model.data().datasets.revision+1;model.updateContent({DisplayMode::View,1,data,action.action_id,ActionResult::Applied});};
-    data.datasets.count=1;data.datasets.rows[0].number=2;std::strcpy(data.datasets.rows[0].title,"Tokyo");publish();
+    auto publish=[&](){const auto action=model.snapshot().action;data.revision++;data.editDatasets().revision=model.data().datasets().revision+1;model.updateContent({DisplayMode::View,1,data,action.action_id,ActionResult::Applied});};
+    data.editDatasets().count=1;data.editDatasets().rows[0].number=2;std::strcpy(data.editDatasets().rows[0].title,"Tokyo");publish();
     model.keyPressed(UiKey::Enter,9);check(model.snapshot().action.dataset_action==DatasetAction::Detail,"Enter opens details");
-    data.datasets={};data.datasets.detail=true;data.datasets.number=2;data.datasets.info.language_count=2;std::strcpy(data.datasets.info.language,"ja");std::strcpy(data.datasets.info.description,"説明文");publish();
-    const auto count=datasetDetailRows(data.datasets,true);
+    data.editDatasets()={};data.editDatasets().detail=true;data.editDatasets().number=2;data.editDatasets().info.language_count=2;std::strcpy(data.editDatasets().info.language,"ja");std::strcpy(data.editDatasets().info.description,"説明文");publish();
+    const auto count=datasetDetailRows(data.editDatasets(),true);
     for(unsigned i=0;i<count-2;++i)model.keyPressed(UiKey::Down,10+i);
     model.keyPressed(UiKey::Enter,40);model.keyPressed(UiKey::Right,41);
     check(model.snapshot().action.dataset_action==DatasetAction::Language && model.editing(),"language edits use L/R within settings");
-    data.datasets.loading=true;publish();
+    data.editDatasets().loading=true;publish();
     model.keyPressed(UiKey::Escape,42);
     check(model.snapshot().action.dataset_action==DatasetAction::CancelLanguage && !std::strcmp(model.snapshot().action.settings.wordbook_language,"ja"),"Esc restores the pre-edit language draft without saving");
-    data.datasets.loading=false;std::strcpy(data.datasets.info.language,"ja");publish();model.keyPressed(UiKey::Down,43);model.keyPressed(UiKey::Enter,44);
+    data.editDatasets().loading=false;std::strcpy(data.editDatasets().info.language,"ja");publish();model.keyPressed(UiKey::Down,43);model.keyPressed(UiKey::Enter,44);
     check(model.snapshot().action.dataset_action==DatasetAction::Apply,"last detail row requests validated apply/restart");
-    data.datasets.loading=data.datasets.applying=true;publish();model.keyPressed(UiKey::Escape,45);model.tick(100000);
+    data.editDatasets().loading=data.editDatasets().applying=true;publish();model.keyPressed(UiKey::Escape,45);model.tick(100000);
     check(model.snapshot().page==SettingsPage::DatasetDetail && model.snapshot().action.kind==ActionKind::None,"committed apply cannot be cancelled or put to sleep");
     for (const auto error : {DatasetError::IndexFailed,DatasetError::IndexRestoreFailed,DatasetError::SaveFailed}) {
-        data.datasets.loading=data.datasets.applying=false;data.datasets.error=error;publish();
+        data.editDatasets().loading=data.editDatasets().applying=false;data.editDatasets().error=error;publish();
         model.keyPressed(UiKey::Enter,100001);
         check(model.snapshot().action.dataset_action==DatasetAction::Apply,"index or selection-save failure allows explicit retry");
     }
@@ -145,7 +145,7 @@ void unselectedUi() {
     UiModel model;model.setScreen({ScreenId::Settings,DisplayMode::View,1,data,0,ActionResult::None});
     uint32_t now=0;auto key=[&](UiKey k){model.keyPressed(k,++now);};
     auto publish=[&](){const auto action=model.snapshot().action;++data.revision;
-        data.datasets.revision=model.data().datasets.revision+1;
+        data.editDatasets().revision=model.data().datasets().revision+1;
         model.updateContent({DisplayMode::View,1,data,action.action_id,ActionResult::Applied});};
     key(UiKey::Enter);for(unsigned i=0;i<5;++i)key(UiKey::Down);key(UiKey::Enter);
     key(UiKey::Down);
@@ -154,7 +154,7 @@ void unselectedUi() {
         "disabled menu does not require trying a confirmation");
     key(UiKey::Up);key(UiKey::Enter);
     check(model.snapshot().action.dataset_action==DatasetAction::Open && model.snapshot().action.dataset_purpose==DatasetPurpose::Select,"offline ordinary selection still opens");
-    data.datasets.count=1;publish();
+    data.editDatasets().count=1;publish();
     check(datasetRowBlock(model.data(),0)==DatasetError::AlreadyUnselected,"already unselected row is visibly disabled");
     key(UiKey::Enter);check(!model.confirming(),"disabled None row never opens a modal");
     data.settings.dataset=1;std::strcpy(data.settings.wordbook_language,"ja");data.dataset.state=PlaceState::DataError;publish();
@@ -180,7 +180,7 @@ void cacheFlow(DatasetPurpose purpose) {
     UiModel model;model.setScreen({ScreenId::Settings,DisplayMode::View,1,data,0,ActionResult::None});
     uint32_t now=0;auto key=[&](UiKey k){model.keyPressed(k,++now);};
     auto publish=[&](){const auto action=model.snapshot().action;++data.revision;
-        data.datasets.revision=model.data().datasets.revision+1;
+        data.editDatasets().revision=model.data().datasets().revision+1;
         model.updateContent({DisplayMode::View,1,data,action.action_id,ActionResult::Applied});};
     key(UiKey::Enter);for(unsigned i=0;i<5;++i)key(UiKey::Down);key(UiKey::Enter);
     const auto entry=static_cast<unsigned>(purpose);for(unsigned i=0;i<entry;++i)key(UiKey::Down);
@@ -191,9 +191,9 @@ void cacheFlow(DatasetPurpose purpose) {
     data.recording.state=RecordingState::Stopped;publish();key(UiKey::Enter);
     check(model.snapshot().page==SettingsPage::DatasetList && model.snapshot().action.dataset_action==DatasetAction::Open &&
         model.snapshot().action.dataset_purpose==purpose,"maintenance opens a target list without opening a detail reader");
-    data.datasets={};data.datasets.purpose=purpose;data.datasets.count=2;
-    data.datasets.rows[0].number=1;data.datasets.rows[0].error=DatasetError::Metadata;
-    data.datasets.rows[1].number=2;std::strcpy(data.datasets.rows[1].title,"Candidate");publish();
+    data.editDatasets()={};data.editDatasets().purpose=purpose;data.editDatasets().count=2;
+    data.editDatasets().rows[0].number=1;data.editDatasets().rows[0].error=DatasetError::Metadata;
+    data.editDatasets().rows[1].number=2;std::strcpy(data.editDatasets().rows[1].title,"Candidate");publish();
     key(UiKey::Enter);check(!model.confirming() && model.snapshot().action.kind==ActionKind::None && datasetRowBlock(model.data(),0)==DatasetError::Metadata,
         "metadata failure known from listing is disabled with its reason");
     key(UiKey::Down);key(UiKey::Enter);
@@ -203,16 +203,16 @@ void cacheFlow(DatasetPurpose purpose) {
     key(UiKey::Enter);key(UiKey::Right);key(UiKey::Enter);
     const auto action=model.snapshot().action;
     check(action.kind==ActionKind::Dataset && action.confirmed && action.dataset_action==(purpose==DatasetPurpose::Rebuild?DatasetAction::RebuildIndex:DatasetAction::VerifyIndex) &&
-        action.dataset_purpose==purpose && action.browse_index==1 && action.browse_revision==data.datasets.revision,
+        action.dataset_purpose==purpose && action.browse_index==1 && action.browse_revision==data.editDatasets().revision,
         "confirmed maintenance identifies the exact list revision and target, for map and all languages");
-    data.datasets.applying=data.datasets.loading=true;data.datasets.number=2;data.datasets.progress.phase=IndexPhase::TT;publish();
+    data.editDatasets().applying=data.editDatasets().loading=true;data.editDatasets().number=2;data.editDatasets().progress.phase=IndexPhase::TT;publish();
     key(UiKey::Escape);model.tick(1000000);
     check(model.snapshot().page==SettingsPage::DatasetIndex && model.snapshot().action.kind==ActionKind::None,"maintenance progress owns input and prevents sleep");
-    data.datasets.applying=data.datasets.loading=false;data.datasets.error=DatasetError::IndexMismatch;data.datasets.progress.phase=IndexPhase::Failed;publish();
+    data.editDatasets().applying=data.editDatasets().loading=false;data.editDatasets().error=DatasetError::IndexMismatch;data.editDatasets().progress.phase=IndexPhase::Failed;publish();
     check(model.snapshot().page==SettingsPage::DatasetIndex && !model.data().settings.dataset,"result does not select the maintenance target");
     key(UiKey::Enter);check(model.snapshot().page==SettingsPage::DatasetList && model.snapshot().action.dataset_action==DatasetAction::Open && model.snapshot().action.dataset_purpose==purpose,
         "result returns to the same kind of target list");
-    data.datasets.error=DatasetError::None;publish();key(UiKey::Escape);
+    data.editDatasets().error=DatasetError::None;publish();key(UiKey::Escape);
     check(model.snapshot().page==SettingsPage::DatasetMenu && model.snapshot().selected_setting==entry,"target list backs to its own menu entry");
     key(UiKey::Escape);check(model.snapshot().page==SettingsPage::Operation,"dataset menu backs to Operation");
 }
