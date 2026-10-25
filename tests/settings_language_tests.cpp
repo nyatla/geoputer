@@ -86,7 +86,7 @@ void testSettingsLanguage() {
         about.keyPressed(UiKey::Enter,20);
         check(about.snapshot().page==SettingsPage::About && about.snapshot().action.kind==ActionKind::None,
               "About opens locally from its own root item in both languages");
-        for(auto key : {UiKey::Up,UiKey::Down,UiKey::Left,UiKey::Right,UiKey::F1,UiKey::PauseLog,UiKey::DeleteLog})about.keyPressed(key,21);
+        for(auto key : {UiKey::Up,UiKey::Down,UiKey::Left,UiKey::Right,UiKey::Other,UiKey::DeleteLog})about.keyPressed(key,21);
         info.revision=1;info.storage.busy=true;
         about.updateContent({DisplayMode::View,1,info,0,ActionResult::None});
         check(about.snapshot().page==SettingsPage::About && about.snapshot().action.kind==ActionKind::None && !about.editing(),

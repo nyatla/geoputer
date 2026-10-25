@@ -7,10 +7,13 @@ struct FileIoTiming {
     uint64_t read_us = 0, seek_us = 0, open_us = 0, close_us = 0, stat_us = 0;
     uint32_t reads = 0, seeks = 0, opens = 0, closes = 0, stats = 0;
 };
+inline FileIoTiming* diagnosticTiming(FileIoTiming* timing) {
+    return config::DetailedDiagnostics ? timing : nullptr;
+}
 class FileIoTime {
 public:
     FileIoTime(FileIoTiming* timing, uint64_t FileIoTiming::* category)
-        : timing_(timing), category_(category), start_(timing ? monotonicMicros() : 0) {}
+        : timing_(diagnosticTiming(timing)), category_(category), start_(timing_ ? monotonicMicros() : 0) {}
     ~FileIoTime() {
         if (timing_) {
             const auto elapsed = monotonicMicros() - start_;

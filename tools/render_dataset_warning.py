@@ -18,12 +18,13 @@ int main(int argc, char** argv) {
     if(argc!=4)return 1;
     const bool ja=!std::strcmp(argv[1],"ja");
     const bool lost=!std::strcmp(argv[3],"lost");
-    const char* kinds[]={"missing","metadata","version","ambiguous","read","encoding","limit","memory","sd"};
-    const PlaceState states[]={PlaceState::DatasetMissing,PlaceState::MetadataError,PlaceState::VersionError,
-        PlaceState::AmbiguousFiles,PlaceState::DataError,PlaceState::EncodingError,PlaceState::TooManyChunks,
-        PlaceState::OutOfMemory,PlaceState::NoCard};
+    const struct {const char* name;PlaceState state;} causes[]={
+        {"missing",PlaceState::DatasetMissing},{"metadata",PlaceState::MetadataError},
+        {"version",PlaceState::VersionError},{"read",PlaceState::DataError},
+        {"encoding",PlaceState::EncodingError},{"limit",PlaceState::TooManyChunks},
+        {"memory",PlaceState::OutOfMemory},{"sd",PlaceState::NoCard}};
     PlaceState state=PlaceState::Ready;
-    for(unsigned n=0;n<9;++n)if(!std::strcmp(argv[2],kinds[n]))state=states[n];
+    for(const auto& cause:causes)if(!std::strcmp(argv[2],cause.name))state=cause.state;
     if(state==PlaceState::Ready)return 2;
     UiData data{};data.settings=defaultSettings();data.settings.language=ja?UiLanguage::Japanese:UiLanguage::English;
     data.storage.card_state=state==PlaceState::NoCard?CardState::NoCard:CardState::Mounted;
@@ -73,7 +74,7 @@ def main():
             '-I',str(work),'-I',str(ROOT/'application'),'-I',str(ROOT/'tests/support'),'-I',str(M5GFX/'Fonts'),str(work/'scene.cpp'),
             *map(str,sources),str(ROOT/'application/Settings.cpp'),'-o',str(exe)],check=True,timeout=180)
         for lang in ('ja','en'):
-            for kind in ('missing','metadata','version','ambiguous','read','encoding','limit','memory','sd'):
+            for kind in ('missing','metadata','version','read','encoding','limit','memory','sd'):
                 images=[]
                 for gps in ('fix','lost'):
                     frame=reference_frame(exe,lang,kind,gps)
@@ -83,6 +84,6 @@ def main():
                 stem=f'dataset-{kind}-{lang}'
                 images[0].save(output/f'{stem}.png')
                 images[0].resize((960,540),Image.Resampling.NEAREST).save(output/f'{stem}-preview.png')
-        print('PASS: 9 dataset errors x 2 languages x Fix/loss, native 240x135, stable two-line causes, normal controls, 4bpp == 16bpp')
+        print('PASS: 8 dataset errors x 2 languages x Fix/loss, native 240x135, stable two-line causes, normal controls, 4bpp == 16bpp')
 
 if __name__=='__main__':main()

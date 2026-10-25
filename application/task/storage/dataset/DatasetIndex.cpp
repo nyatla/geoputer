@@ -34,7 +34,7 @@ uint32_t nameCrc(const std::string& name) {
     return crcUpdate(UINT32_MAX,reinterpret_cast<const uint8_t*>(name.data()),name.size())^UINT32_MAX;
 }
 struct File : LogFile {
-    File(uint8_t drive,StorageObserver* observer,FileIoTiming* timing=nullptr):observer_(observer),timing_(timing) { setDrive(drive); }
+    File(uint8_t drive,StorageObserver* observer,FileIoTiming* timing=nullptr):observer_(observer),timing_(diagnosticTiming(timing)) { setDrive(drive); }
     ~File() { if (opened()) { SdAccessScope access(observer_); FileIoTime elapsed(timing_,&FileIoTiming::close_us); if(timing_)++timing_->closes; close(); } }
     File(const File&)=delete;
     File& operator=(const File&)=delete;
@@ -106,7 +106,7 @@ struct Progress {
 class Source final : public ByteReader {
 public:
     Source(uint8_t drive,const std::string& path,StorageObserver* observer,bool through=false,FileIoTiming* timing=nullptr)
-        : file_(std::make_unique<File>(drive,observer,timing)),observer_(observer),buffer_(config::IndexReadBufferBytes),through_(through),timing_(timing) {
+        : file_(std::make_unique<File>(drive,observer,timing)),observer_(observer),buffer_(config::IndexReadBufferBytes),through_(through),timing_(diagnosticTiming(timing)) {
         SdAccessScope access(observer_); uint64_t length=0;
         FileIoTime elapsed(timing_,&FileIoTiming::open_us); if(timing_)++timing_->opens;
         require(file_->openRead(path) && file_->size(length)); size_=u32(length);
@@ -596,12 +596,12 @@ DatasetMapIndex DatasetIndex::loadMap(const std::string& path,const std::string&
     MapHeader metadata;
     {
         SdAccessScope access(observer_);
-        { FileIoTime elapsed(map_timing,&FileIoTiming::stat_us); if(map_timing)++map_timing->stats; stamp=statFile(drive_,map); }
+        { FileIoTime elapsed(diagnosticTiming(map_timing),&FileIoTiming::stat_us); if(config::DetailedDiagnostics && map_timing)++map_timing->stats; stamp=statFile(drive_,map); }
         Source source(drive_,map,observer_,false,map_timing); metadata=mapHeader(source);
         stamp.header_crc=source.crc(0,metadata.chunk.end);
     }
     DatasetMapIndex info;
-    { FileIoTime elapsed(index_timing,&FileIoTiming::stat_us); if(index_timing)++index_timing->stats;
+    { FileIoTime elapsed(diagnosticTiming(index_timing),&FileIoTiming::stat_us); if(config::DetailedDiagnostics && index_timing)++index_timing->stats;
       if(!exists(drive_,path)) throw std::runtime_error("Missing _mapindex.dat; reapply dataset"); }
     try { Source index(drive_,path,observer_,false,index_timing); Validation(index).run(&info,book,language); }
     catch(const std::bad_alloc&) { throw; }
@@ -616,7 +616,7 @@ DatasetMapIndex DatasetIndex::loadMap(const std::string& path,const std::string&
 std::string DatasetIndex::checkWordBook(const DatasetWordBookIndex& info,const std::string& path,FileIoTiming* timing) const {
     SdAccessScope access(observer_);
     Stamp stamp;
-    { FileIoTime elapsed(timing,&FileIoTiming::stat_us); if(timing)++timing->stats; stamp=statFile(drive_,path); }
+    { FileIoTime elapsed(timing,&FileIoTiming::stat_us); if(config::DetailedDiagnostics && timing)++timing->stats; stamp=statFile(drive_,path); }
     Source source(drive_,path,observer_,false,timing);
     std::array<Chunk,4> chunks{};
     const char* names[]={"GW00","TM00","TT00","TI00"};

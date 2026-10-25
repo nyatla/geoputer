@@ -40,7 +40,7 @@ void GpsTask::notify() {
     event.sent_at_ms = taskTimeMs();
     event.payload.gps = receiver_.snapshot();
     if (failed_revision_ && failed_revision_ != event.payload.gps.revision) {
-        ++coalesced_;  // Display-only stage: retain the latest snapshot rather than accumulate a log.
+        if constexpr (config::DetailedDiagnostics) ++coalesced_;  // Retain the latest snapshot when the notification queue is full.
         failed_revision_ = 0;
     }
     if (sendSpeculative(notifications_, event) == SpeculativeResult::Queued) {
@@ -68,13 +68,13 @@ void GpsTask::run() {
             for (unsigned bytes = 0; bytes < 1024 && serial_.available(); ++bytes) {
                 const int byte = serial_.read();
                 if (byte >= 0) {
-                    ++received_bytes;
+                    if constexpr (config::DetailedDiagnostics) ++received_bytes;
                     receiver_.feed(static_cast<char>(byte), now);
                 }
             }
             receiver_.poll(now);
             notify();
-            if (now - diagnostic_at >= 5000) {
+            if (config::DetailedDiagnostics && now - diagnostic_at >= 5000) {
                 diagnostic_at = now;
                 Console.printf("[GPS] RX=%lu NMEA=%lu rejected=%lu coalesced=%lu state=%s\n",
                               static_cast<unsigned long>(received_bytes),

@@ -1,5 +1,6 @@
 """Isolate the old RAW decoder in a temporary diagnostic, sharing all I/O code."""
 import shutil
+from benchmark_support import install_background_latch
 
 def prepare_raw_comparison(root,work,source_path,source,wait_background=False):
     headers=work/"include/galuchat"
@@ -38,13 +39,4 @@ inline uint64_t raw_benchmark_pixels=0,raw_benchmark_target=0;
     source_path.with_name("RawBeforeMapReader.h").write_text(source_path.with_suffix(".h").read_text().replace("DiskIndexedMapReader","RawBeforeMapReader"))
     shutil.copyfile(root/"tests/performance/RawCellBenchmark.h",work/"application/benchmark/RawCellBenchmark.h")
     if wait_background:
-        p=work/"application/benchmark/DecodeProfile.h";s=p.read_text().replace("#pragma once","#pragma once\n#include <atomic>",1)
-        s=s.replace("namespace geoputer::benchmark {","namespace geoputer::benchmark {\ninline std::atomic<uint32_t> background_since_ms{0};",1);p.write_text(s)
-        p=work/"application/task/ui/UiTask.cpp";s=p.read_text().replace('#include "UiTask.h"','#include "UiTask.h"\n#include "../../benchmark/DecodeProfile.h"',1)
-        needle="        if (ready && model_.takeRedraw()) renderer.draw(model_);";assert s.count(needle)==1
-        s=s.replace(needle,needle+"""
-        if(ready && model_.mode()==DisplayMode::Background) {
-            if(!benchmark::background_since_ms.load(std::memory_order_relaxed))
-                benchmark::background_since_ms.store(now,std::memory_order_relaxed);
-        } else benchmark::background_since_ms.store(0,std::memory_order_relaxed);
-""");p.write_text(s)
+        install_background_latch(work,'background_since_ms','DecodeProfile.h')

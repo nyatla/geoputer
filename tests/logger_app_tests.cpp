@@ -127,7 +127,7 @@ int main(){
         if(hidden)app->mode_=DisplayMode::Background;
         app->handleNotification(event);app->publishUiContent();
         if(hidden) {
-            check(app->place_flow_.waitMs(host_tick,app->data_.gps.sample_seq,app->data_.gps.fix,10000,10000)==0,
+            check(app->place_flow_.waitMs(app->data_.gps.sample_seq,app->data_.gps.fix,10000,10000)==0,
                   "hidden completion must not suppress the lookup after wake");
             app->mode_=DisplayMode::View;
         } else check(!std::strcmp(app->ui_.model_.data().place[0],name),"map accepts current-place result without rebuilding image");

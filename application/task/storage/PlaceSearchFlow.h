@@ -24,13 +24,13 @@ public:
             std::round(fix.longitude*unit_x)==std::round(last_longitude_*unit_x) &&
             std::round(fix.latitude*unit_y)==std::round(last_latitude_*unit_y);
     }
-    uint32_t waitMs(uint32_t, uint32_t sample) const {
+    uint32_t waitMs(uint32_t sample) const {
         return pending() || (!force_ && sample==last_sample_) ? UINT32_MAX : 0;
     }
-    uint32_t waitMs(uint32_t now,uint32_t sample,const GpsFix& fix,int unit_x,int unit_y) const {
-        return sameCell(fix,unit_x,unit_y) ? UINT32_MAX : waitMs(now,sample);
+    uint32_t waitMs(uint32_t sample,const GpsFix& fix,int unit_x,int unit_y) const {
+        return sameCell(fix,unit_x,unit_y) ? UINT32_MAX : waitMs(sample);
     }
-    void sent(uint32_t id, const PlaceRequest& request, uint32_t) {
+    void sent(uint32_t id, const PlaceRequest& request) {
         pending_id_ = id; pending_generation_ = request.screen_generation;
         last_sample_ = request.sample_seq;
         last_latitude_ = request.fix.latitude; last_longitude_ = request.fix.longitude; last_fix_valid_ = request.fix.valid;

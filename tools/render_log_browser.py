@@ -30,9 +30,6 @@ int main(int argc,char** argv) {
     if(usb_mode){screen=ScreenId::UsbStorage;data.storage.usb.ready=true;}
     if(!std::strcmp(mode,"usb-error")){data.storage.usb.ready=false;data.storage.usb.io_error=true;}
     if(!std::strcmp(mode,"usb-ejected"))data.storage.usb.ejected=true;
-    if(!std::strcmp(mode,"logger")||!std::strcmp(mode,"logger-paused")||!std::strcmp(mode,"logger-confirm"))screen=ScreenId::GpsLogger;
-    if(!std::strcmp(mode,"logger-paused"))data.recording.state=RecordingState::Paused;
-    if(!std::strcmp(mode,"pause-confirm"))screen=ScreenId::LivePlace;
     if(!std::strcmp(mode,"detail")||!std::strcmp(mode,"long-name")||!std::strcmp(mode,"partial-tail"))screen=ScreenId::LogDetail;
     if(!std::strcmp(mode,"point")||!std::strcmp(mode,"unknown")||!std::strcmp(mode,"loading")||!std::strcmp(mode,"crc-error")||!std::strcmp(mode,"bounds"))screen=ScreenId::LogPoint;
     if(!std::strcmp(mode,"empty")){data.browse.count=0;data.browse.has_older=false;}
@@ -63,8 +60,6 @@ int main(int argc,char** argv) {
         data.browse.index=134217710;data.browse.summary.records=134217711;
     }
     UiModel model;model.setScreen({screen,DisplayMode::View,1,data,0,ActionResult::None});
-    if(!std::strcmp(mode,"logger-confirm"))model.keyPressed(UiKey::Enter,1);
-    if(!std::strcmp(mode,"pause-confirm"))model.keyPressed(UiKey::PauseLog,1);
     if(usb_mode && (!std::strcmp(mode,"usb") || !std::strcmp(mode,"usb-selected")))model.keyPressed(UiKey::Escape,1);
     if(!std::strcmp(mode,"usb-selected"))model.keyPressed(UiKey::Right,2);
     if(delete_confirm)model.keyPressed(UiKey::DeleteLog,1);
@@ -81,9 +76,6 @@ int main(int argc,char** argv) {
         glyph(152,84,english?'E':U'終',!std::strcmp(mode,"usb-selected")?TFT_CYAN:TFT_WHITE);
     }
     if(screen==ScreenId::LogDetail)glyph(20,101,english?'R':U'再',TFT_WHITE);
-    if(!std::strcmp(mode,"logger"))glyph(20,83,english?'S':U'停',TFT_CYAN);
-    if(!std::strcmp(mode,"logger-paused"))glyph(20,83,english?'R':U'再',TFT_CYAN);
-    if(!std::strcmp(mode,"logger-confirm")||!std::strcmp(mode,"pause-confirm"))glyph(56,80,english?'C':U'取',TFT_CYAN);
     if(delete_confirm) {
         const bool short_name=!std::strcmp(mode,"delete-short");
         const int y=short_name?80:85;
@@ -130,7 +122,7 @@ def main():
                 ppm=work/'screen.ppm'
                 with ppm.open('wb') as target:target.write(reference_frame(exe,mode,language))
                 with Image.open(ppm) as source: image=source.convert('RGB')
-                folder=ROOT/'doc/画面・操作'/('usb-storage' if mode.startswith('usb') else 'live-place' if mode=='pause-confirm' else 'gps-logger' if mode.startswith('logger') else 'logs' if mode in ('list','empty','sd-error','delete-confirm','delete-selected','delete-protected','delete-short','delete-longest','deleting','delete-error') else 'log-detail')
+                folder=ROOT/'doc/画面・操作'/('usb-storage' if mode.startswith('usb') else 'logs' if mode in ('list','empty','sd-error','delete-confirm','delete-selected','delete-protected','delete-short','delete-longest','deleting','delete-error') else 'log-detail')
                 folder.mkdir(parents=True,exist_ok=True)
                 stem=f'log-browser-{mode}' if language=='ja' else f'log-browser-en-{mode}'
                 image.save(folder/f'{stem}.png')

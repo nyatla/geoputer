@@ -18,10 +18,10 @@ private:
     void drawScreenGuide(const UiModel& model);
     void drawKeyArrow(int x, int y, UiKey direction, bool enabled);
     void drawDialogGuide(const ChoiceDialog& dialog);
-    void drawBoot(const UiModel& model, const UiSnapshot& content, const Settings& settings);
+    void drawBoot(const UiModel& model, const Settings& settings);
     void drawLivePlace(const UiModel& model, const UiSnapshot& content, const Settings& settings);
     void drawLogBrowser(const UiModel& model, const UiSnapshot& content, const Settings& settings);
-    void drawGpsLogger(const UiModel& model, const UiSnapshot& content, const Settings& settings);
+    void drawGpsLogger(const UiModel& model);
     void drawSettings(const UiModel& model, const UiSnapshot& content, const Settings& settings);
 
     void text(int x, int y, const char* value, uint16_t color = TFT_WHITE);

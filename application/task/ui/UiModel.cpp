@@ -145,8 +145,17 @@ void UiModel::copyData(const UiData& data) {
             if (data_.datasets.count) dataset_list_start_ = data_.datasets.rows[0].number;
         }
     }
+    updateDialogState();
+    data_.message[sizeof(data_.message) - 1] = '\0';
+}
+
+bool UiModel::canDeleteLog() const {
+    return selection_ < data_.browse.count && !(data_.browse.active_mask & (1u << selection_));
+}
+
+void UiModel::updateDialogState() {
     if (dialog_.kind() == DialogKind::DeleteLog)
-        dialog_.setActionEnabled(selection_ < data_.browse.count && !(data_.browse.active_mask & (1u << selection_)));
+        dialog_.setActionEnabled(canDeleteLog());
     if (dialog_.kind() == DialogKind::EnterUsbMode) dialog_.setActionEnabled(system_usb_mode_ && usbEntryAllowed(data_));
     if (dialog_.kind() == DialogKind::ClearDataset || dialog_.kind() == DialogKind::RebuildIndex || dialog_.kind() == DialogKind::VerifyIndex)
         dialog_.setActionEnabled(data_.datasets.purpose==dataset_purpose_ && selection_<data_.datasets.count &&
@@ -156,7 +165,6 @@ void UiModel::copyData(const UiData& data) {
         else for (unsigned i = 0; i < dialog_.choices(); ++i)
             dialog_.setChoiceEnabled(i, gpsControlAllowed(data_, gpsControlAction(gps_dialog_state_, i)));
     }
-    data_.message[sizeof(data_.message) - 1] = '\0';
 }
 
 void UiModel::acknowledge(uint32_t action_id, ActionResult result) {
@@ -171,6 +179,91 @@ void UiModel::changed() {
     ++revision_;
     notification_pending_ = true;
     redraw_ = true;
+}
+
+unsigned UiModel::selectionCount() const {
+    if (screen_ == ScreenId::Menu) return MenuCount;
+    switch (page_) {
+        case SettingsPage::Root: return SettingsRootCount;
+        case SettingsPage::Operation: return OperationRowCount;
+        case SettingsPage::System: return SettingsSystemCount;
+        case SettingsPage::Storage: return 4;
+        case SettingsPage::Reset: return 1;
+        case SettingsPage::DatasetMenu: return 3;
+        case SettingsPage::DatasetList: return data_.datasets.count;
+        case SettingsPage::DatasetDetail:
+            return !data_.datasets.loading && data_.datasets.error==DatasetError::None ?
+                datasetDetailRows(data_.datasets,data_.settings.language==UiLanguage::Japanese) : 0;
+        default: return 0;
+    }
+}
+
+uint32_t UiModel::licenseTarget(UiKey key) const {
+    if (key==UiKey::Up && license_offset_) return license_offset_-1;
+    if (key==UiKey::Down && license_offset_+SettingsLayout::LicenseRows<licenseLineCount()) return license_offset_+1;
+    if (key==UiKey::Right) {
+        for (size_t n=0;n<licenseSectionCount();++n)
+            if (licenseSectionStart(n)>license_offset_) return licenseSectionStart(n);
+    } else if (key==UiKey::Left && licenseSectionCount()) {
+        size_t current=0;
+        while(current+1<licenseSectionCount() && licenseSectionStart(current+1)<=license_offset_)++current;
+        return license_offset_<licenseSectionStart(0)?0:licenseSectionStart(current?current-1:0);
+    }
+    return license_offset_;
+}
+
+UiKeyGuide UiModel::keyGuide() const {
+    UiKeyGuide guide;
+    guide.accepting=action_.kind==ActionKind::None && !switchingMode(data_) &&
+        !(isLogBrowser(screen_) && data_.browse.deleting);
+    guide.root=!data_.boot.maintenance && isScreenRoot(screen_,page_) && !editing_ && !card_info_;
+    guide.system=!data_.boot.maintenance;
+    const bool dataset_page=screen_==ScreenId::Settings && (page_==SettingsPage::DatasetMenu ||
+        page_==SettingsPage::DatasetList || page_==SettingsPage::DatasetDetail || page_==SettingsPage::DatasetIndex);
+    const bool dataset_wait=dataset_page && data_.datasets.applying;
+    guide.back=guide.accepting && !dataset_wait &&
+        !(screen_==ScreenId::Settings && page_==SettingsPage::DatasetIndex && data_.storage.busy);
+    auto list=[&](unsigned count) {
+        guide.vertical=true;guide.up=selection_>0;guide.down=selection_+1u<count;
+    };
+    if (screen_==ScreenId::Map) {
+        guide.vertical=true;guide.up=map::supportedScale(data_.map.scale) && data_.map.scale>1;
+        guide.down=map::supportedScale(data_.map.scale) && data_.map.scale<4;
+    } else if (screen_==ScreenId::Logs) {
+        const auto& view=data_.browse;
+        guide.vertical=true;guide.up=!view.loading && (selection_>0 || view.has_newer);
+        guide.down=!view.loading && (selection_+1u<view.count || view.has_older);
+        guide.remove=!view.loading && canDeleteLog();
+    } else if (screen_==ScreenId::LogPoint) {
+        guide.vertical=true;guide.up=data_.browse.target>0;
+        guide.down=uint64_t(data_.browse.target)+1<data_.browse.summary.records;
+    } else if (screen_==ScreenId::LogDetail) {
+        guide.vertical=true;guide.up=!data_.browse.loading && selection_>0;
+        guide.down=!data_.browse.loading && selection_<1;
+    } else if (screen_==ScreenId::Menu) list(MenuCount);
+    else if (screen_==ScreenId::Settings && !card_info_) {
+        if (editing_) {
+            guide.horizontal=true;
+            guide.left=guide.right=!dataset_wait && (page_==SettingsPage::System ||
+                (page_==SettingsPage::Operation && settingChoices(selection_)>1) ||
+                (page_==SettingsPage::DatasetDetail && !data_.datasets.loading && data_.datasets.error==DatasetError::None && data_.datasets.info.language_count>1));
+        } else if (page_==SettingsPage::Licenses) {
+            guide.vertical=guide.horizontal=true;
+            guide.up=licenseTarget(UiKey::Up)!=license_offset_;guide.down=licenseTarget(UiKey::Down)!=license_offset_;
+            guide.left=licenseTarget(UiKey::Left)!=license_offset_;guide.right=licenseTarget(UiKey::Right)!=license_offset_;
+        } else if (page_==SettingsPage::DatasetList) {
+            const auto& view=data_.datasets;guide.vertical=true;
+            const bool ready=!view.loading && !view.applying && view.error==DatasetError::None;
+            guide.up=ready && (selection_>0 || view.has_older);guide.down=ready && (selection_+1u<view.count || view.has_newer);
+        } else if (page_!=SettingsPage::About && page_!=SettingsPage::Reset && page_!=SettingsPage::DatasetIndex) {
+            const bool ready=!dataset_wait && (page_!=SettingsPage::DatasetDetail ||
+                (!data_.datasets.loading && data_.datasets.error==DatasetError::None));
+            list(ready?selectionCount():0);
+            if (!ready) guide.up=guide.down=false;
+        }
+    }
+    if (!guide.accepting) guide.up=guide.down=guide.left=guide.right=guide.remove=false;
+    return guide;
 }
 
 void UiModel::keyPressed(UiKey key, uint32_t now_ms) {
@@ -190,13 +283,9 @@ void UiModel::keyPressed(UiKey key, uint32_t now_ms) {
     }
     if (mode_ == DisplayMode::Background) { action(ActionKind::Wake); return; }
     if (dialog_.active()) {
+        updateDialogState();
+        if (!dialog_.active()) { changed(); return; }
         const auto kind = dialog_.kind();
-        if (kind == DialogKind::DeleteLog)
-            dialog_.setActionEnabled(selection_ < data_.browse.count && !(data_.browse.active_mask & (1u << selection_)));
-        if (kind == DialogKind::EnterUsbMode) dialog_.setActionEnabled(system_usb_mode_ && usbEntryAllowed(data_));
-        if (kind == DialogKind::ClearDataset || kind == DialogKind::RebuildIndex || kind == DialogKind::VerifyIndex)
-            dialog_.setActionEnabled(data_.datasets.purpose==dataset_purpose_ && selection_<data_.datasets.count &&
-            data_.datasets.rows[selection_].number==dataset_dialog_number_ && datasetRowBlock(data_,selection_)==DatasetError::None);
         const auto choice = dialog_.choice();
         const auto result = dialog_.keyPressed(key);
         if (kind == DialogKind::GpsControl && result == DialogInput::Accepted) {
@@ -219,11 +308,12 @@ void UiModel::keyPressed(UiKey key, uint32_t now_ms) {
         if (key == UiKey::ScreenOff) { action(ActionKind::Sleep); return; }
         if (key == UiKey::GpsControl) { openGpsControls(); return; }
     }
+    if (!keyGuide().allowsDirection(key)) return;
     if (!data_.boot.maintenance && isScreenRoot(screen_, page_) && !editing_ && !card_info_) {
         if (screen_ == ScreenId::Menu) {
-            if (key == UiKey::Up && selection_) { --selection_; changed(); return; }
-            if (key == UiKey::Down && selection_ + 1u < MenuCount) { ++selection_; changed(); return; }
-            if (key == UiKey::Enter) { action(ActionKind::ChangeScreen, MenuTargets[selection_]); return; }
+            if (key == UiKey::Up) { --selection_; changed(); return; }
+            if (key == UiKey::Down) { ++selection_; changed(); return; }
+            if (key == UiKey::Enter) { action(ActionKind::ChangeScreen, MenuScreens[selection_].screen); return; }
             if (key == UiKey::Escape) { action(ActionKind::ChangeScreen, ScreenId::LivePlace); return; }
         }
         ScreenId target;
@@ -236,16 +326,13 @@ void UiModel::keyPressed(UiKey key, uint32_t now_ms) {
     if (screen_ == ScreenId::Menu) return;
     if (screen_ == ScreenId::Map) {
         const auto scale=data_.map.scale;
-        if(map::supportedScale(scale) && ((key==UiKey::Up && scale>1) || (key==UiKey::Down && scale<4))) {
+        if(key==UiKey::Up || key==UiKey::Down) {
             action(ActionKind::MapScale);
             action_.map_scale=key==UiKey::Up ? scale/2 : scale*2;
         } else if(key==UiKey::Escape)action(ActionKind::ChangeScreen);
         return;
     }
-    if (screen_ == ScreenId::LivePlace) {
-        livePlaceKey(key);
-        return;
-    }
+    if (screen_ == ScreenId::LivePlace) return;
     if (screen_ == ScreenId::GpsLogger) {
         gpsLoggerKey(key);
         return;
@@ -257,13 +344,10 @@ void UiModel::keyPressed(UiKey key, uint32_t now_ms) {
     settingsKey(key);
 }
 
-void UiModel::livePlaceKey(UiKey) {}
-
 void UiModel::openGpsControls() {
     gps_dialog_state_ = data_.recording.state;
     dialog_.openActions(DialogKind::GpsControl, gpsControlChoices(data_), gpsControlDefault(gps_dialog_state_));
-    for (unsigned i = 0; i < dialog_.choices(); ++i)
-        dialog_.setChoiceEnabled(i, gpsControlAllowed(data_, gpsControlAction(gps_dialog_state_, i)));
+    updateDialogState();
     changed();
 }
 
@@ -279,14 +363,14 @@ void UiModel::logBrowserKey(UiKey key) {
         return;
     }
     if(screen_==ScreenId::LogPoint) {
-        if(key==UiKey::Up && view.target) browseAction(BrowseAction::Point,view.target-1);
-        if(key==UiKey::Down && view.target+1<view.summary.records) browseAction(BrowseAction::Point,view.target+1);
+        if(key==UiKey::Up) browseAction(BrowseAction::Point,view.target-1);
+        if(key==UiKey::Down) browseAction(BrowseAction::Point,view.target+1);
         return;
     }
     if(view.loading) return;
     if(screen_==ScreenId::Logs) {
         if(key==UiKey::DeleteLog && selection_<view.count) {
-            dialog_.open(DialogKind::DeleteLog, !(view.active_mask & (1u << selection_))); changed();
+            dialog_.open(DialogKind::DeleteLog, canDeleteLog()); changed();
         } else if(key==UiKey::Up) {
             if(selection_) { --selection_; changed(); }
             else if(view.has_newer) browseAction(BrowseAction::Newer);
@@ -298,8 +382,8 @@ void UiModel::logBrowserKey(UiKey key) {
             else browseAction(BrowseAction::Reload);
         }
     } else {
-        if(key==UiKey::Up && selection_) { --selection_; changed(); }
-        if(key==UiKey::Down && selection_<1) { ++selection_; changed(); }
+        if(key==UiKey::Up) { --selection_; changed(); }
+        if(key==UiKey::Down) { ++selection_; changed(); }
         if(key==UiKey::Enter) {
             if(selection_ || !view.summary.session_id) browseAction(BrowseAction::Reload);
             else if(view.summary.records) browseAction(BrowseAction::Points);
@@ -348,14 +432,14 @@ void UiModel::settingsKey(UiKey key) {
             if (key == UiKey::Enter && datasetRecoverable(view.error) && datasetSelectionBlock(data_,true)==DatasetError::None) datasetAction(DatasetAction::Apply);
             return;
         }
-        const unsigned count = datasetDetailRows(view, data_.settings.language == UiLanguage::Japanese);
+        const unsigned count = selectionCount();
         if (editing_) {
             if (key == UiKey::Enter) { editing_ = false; changed(); }
             else if (key == UiKey::Left || key == UiKey::Right) datasetAction(DatasetAction::Language,key==UiKey::Right?1:0);
             return;
         }
-        if (key == UiKey::Up && selection_) { --selection_; changed(); }
-        if (key == UiKey::Down && selection_+1u<count) { ++selection_; changed(); }
+        if (key == UiKey::Up) { --selection_; changed(); }
+        if (key == UiKey::Down) { ++selection_; changed(); }
         if (key == UiKey::Enter) {
             if (selection_ == count-2) {
                 std::strcpy(dataset_edit_original_,view.info.language);editing_ = true; changed();
@@ -367,8 +451,8 @@ void UiModel::settingsKey(UiKey key) {
     if(screen_==ScreenId::Settings && page_==SettingsPage::DatasetMenu) {
         if(data_.datasets.applying)return;
         if(key==UiKey::Escape) {page_=SettingsPage::Operation;selection_=static_cast<uint8_t>(SettingId::Dataset);changed();return;}
-        if(key==UiKey::Up && selection_) {--selection_;changed();}
-        if(key==UiKey::Down && selection_<2) {++selection_;changed();}
+        if(key==UiKey::Up) {--selection_;changed();}
+        if(key==UiKey::Down) {++selection_;changed();}
         if(key==UiKey::Enter && datasetMenuBlock(data_,selection_)==DatasetError::None) {
             dataset_purpose_=static_cast<DatasetPurpose>(selection_);
             dataset_list_start_=dataset_purpose_==DatasetPurpose::Select?0:1;
@@ -395,8 +479,8 @@ void UiModel::settingsKey(UiKey key) {
             else if (key == UiKey::Enter) { system_usb_mode_ = edit_value_ != 0; editing_ = false; changed(); }
         } else if (key == UiKey::Escape) {
             system_usb_mode_ = false; page_ = SettingsPage::Root; selection_ = SettingsSystemRow; changed();
-        } else if (key == UiKey::Up && selection_) { --selection_; changed(); }
-        else if (key == UiKey::Down && selection_ + 1u < SettingsSystemCount) { ++selection_; changed(); }
+        } else if (key == UiKey::Up) { --selection_; changed(); }
+        else if (key == UiKey::Down) { ++selection_; changed(); }
         else if (key == UiKey::Enter && !data_.storage.busy) {
             if (!selection_) { edit_value_ = system_usb_mode_; editing_ = true; changed(); }
             else if (selection_ == 2 && system_usb_mode_ && usbEntryAllowed(data_)) {
@@ -440,24 +524,12 @@ void UiModel::settingsKey(UiKey key) {
         return;
     }
     if (page_ == SettingsPage::Licenses) {
-        if (key == UiKey::Up && license_offset_ > 0) { --license_offset_; changed(); }
-        if (key == UiKey::Down && license_offset_ + SettingsLayout::LicenseRows < licenseLineCount()) { ++license_offset_; changed(); }
-        if (key == UiKey::Right) {
-            for (size_t section = 0; section < licenseSectionCount(); ++section) {
-                const auto start = licenseSectionStart(section);
-                if (start > license_offset_) { license_offset_ = start; changed(); break; }
-            }
-        } else if (key == UiKey::Left && licenseSectionCount()) {
-            size_t current = 0;
-            while (current + 1 < licenseSectionCount() && licenseSectionStart(current + 1) <= license_offset_) ++current;
-            const auto target = license_offset_ < licenseSectionStart(0) ? 0 : licenseSectionStart(current ? current - 1 : 0);
-            if (target != license_offset_) { license_offset_ = target; changed(); }
-        }
+        const auto target = licenseTarget(key);
+        if (target != license_offset_) { license_offset_ = target; changed(); }
         return;
     }
-    const unsigned count = page_ == SettingsPage::Root ? SettingsRootCount : page_ == SettingsPage::Operation ? OperationRowCount : page_ == SettingsPage::Reset ? 1 : 4;
-    if (key == UiKey::Up && selection_ > 0) { --selection_; changed(); }
-    if (key == UiKey::Down && static_cast<unsigned>(selection_) + 1 < count) { ++selection_; changed(); }
+    if (key == UiKey::Up) { --selection_; changed(); }
+    if (key == UiKey::Down) { ++selection_; changed(); }
     if (key != UiKey::Enter) return;
     if (page_ == SettingsPage::Root) {
         switch (static_cast<SettingsRootItem>(selection_)) {
@@ -532,10 +604,6 @@ void UiModel::acceptDialog(DialogKind kind) {
     switch (kind) {
         case DialogKind::RestartLogger:
             action(ActionKind::RestartLogger); action_.confirmed = true; break;
-        case DialogKind::PauseLog: case DialogKind::StopLog:
-            action(ActionKind::Logging);
-            action_.log_action = kind == DialogKind::PauseLog ? LogAction::Pause : LogAction::Stop;
-            break;
         case DialogKind::DeleteLog:
             browseAction(BrowseAction::Delete, selection_);
             break;

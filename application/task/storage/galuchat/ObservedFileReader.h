@@ -32,7 +32,7 @@ class ObservedFileReader final : public galuchat::ByteReader {
 public:
     ObservedFileReader(const std::string& path, size_t source_size, size_t offset, StorageObserver* observer,
                        FileIoTiming* timing = nullptr, FileReadOptions options = {}, uint8_t drive = 0)
-        : observer_(observer), timing_(timing), origin_(offset),
+        : observer_(observer), timing_(diagnosticTiming(timing)), origin_(offset),
           read_through_skip_bytes_(options.read_through_skip_bytes) {
         options.validate();
         if (offset > source_size) throw std::runtime_error("invalid reader offset");
@@ -173,7 +173,7 @@ class ObservedFileReaderFactory final : public galuchat::ReaderFactory {
 public:
     ObservedFileReaderFactory(std::string path, StorageObserver* observer, FileIoTiming* timing = nullptr,
                               FileReadOptions options = {}, uint8_t drive = 0)
-        : path_(std::move(path)), observer_(observer), timing_(timing), options_(options), drive_(drive) {
+        : path_(std::move(path)), observer_(observer), timing_(diagnosticTiming(timing)), options_(options), drive_(drive) {
         options_.validate();
         SdAccessScope access(observer_);
 #ifdef ARDUINO_ARCH_ESP32

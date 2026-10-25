@@ -11,7 +11,7 @@ void testKeyBindings() {
     const char keys[]={'1','2','3','4','0'};
     for(bool fn:{false,true}) {
         for(unsigned i=0;i<MenuCount;++i) {
-            ScreenId target;check(screenShortcut(mapPhysicalKey(keys[i],fn),target) && target==MenuTargets[i],"numeric root destination");
+            ScreenId target;check(screenShortcut(mapPhysicalKey(keys[i],fn),target) && target==MenuScreens[i].screen,"numeric root destination");
         }
         check(mapPhysicalKey('s',fn)==UiKey::ScreenOff && mapPhysicalKey('g',fn)==UiKey::GpsControl && mapPhysicalKey('p',fn)==UiKey::Other,"S/G replace P");
         check(mapPhysicalKey('`',fn)==UiKey::Escape,"Fn-free physical Esc");
@@ -22,7 +22,7 @@ void testKeyBindings() {
         for(unsigned i=0;i<MenuCount;++i) {
             UiModel ui;ui.setScreen({from,DisplayMode::View,1,data,0,ActionResult::None});
             ui.keyPressed(mapPhysicalKey(keys[i],false),1);auto a=ui.snapshot().action;
-            check(from==MenuTargets[i]?a.kind==ActionKind::None:a.kind==ActionKind::ChangeScreen && a.target==MenuTargets[i],"direct root transition");
+            check(from==MenuScreens[i].screen?a.kind==ActionKind::None:a.kind==ActionKind::ChangeScreen && a.target==MenuScreens[i].screen,"direct root transition");
             check(ui.data().recording.state==RecordingState::Recording,"navigation changed recording");
         }
         UiModel ui;ui.setScreen({from,DisplayMode::View,1,data,0,ActionResult::None});
@@ -34,7 +34,7 @@ void testKeyBindings() {
     for(unsigned i=0;i<MenuCount;++i) {
         UiModel ui;ui.setScreen({ScreenId::Menu,DisplayMode::View,1,data,0,ActionResult::None});
         for(unsigned row=0;row<i;++row)ui.keyPressed(UiKey::Down,1);
-        ui.keyPressed(UiKey::Enter,2);check(ui.snapshot().action.target==MenuTargets[i],"menu selection equals shortcut");
+        ui.keyPressed(UiKey::Enter,2);check(ui.snapshot().action.target==MenuScreens[i].screen,"menu selection equals shortcut");
     }
     for(auto child:{ScreenId::LogDetail,ScreenId::LogPoint,ScreenId::Settings}) {
         UiModel ui;ui.setScreen({child,DisplayMode::View,1,data,0,ActionResult::None});

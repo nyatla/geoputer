@@ -1,10 +1,5 @@
 #pragma once
 
-#include <cmath>
-#include <cstdio>
-#include <cstring>
-#include "../gps/GpsTypes.h"
-
 namespace geoputer {
 namespace LivePlaceLayout {
 constexpr int AddressX = 4, AddressY = 20, AddressStep = 20;
@@ -21,51 +16,4 @@ inline int speedTextWidth(const char* text) {
     return width;
 }
 
-struct LiveGpsText {
-    char speed[16], speed_unit[5], heading[16], latitude[16], longitude[16], altitude[16], satellites[8];
-};
-
-// Format optional fields independently: missing data must never look like zero.
-inline LiveGpsText formatLiveGps(const GpsSnapshot& gps, const GpsFix& place_fix) {
-    LiveGpsText text{};
-    std::snprintf(text.speed, sizeof(text.speed), "--");
-    std::snprintf(text.speed_unit, sizeof(text.speed_unit), "km/h");
-    std::snprintf(text.heading, sizeof(text.heading), "--°");
-    std::snprintf(text.latitude, sizeof(text.latitude), "--");
-    std::snprintf(text.longitude, sizeof(text.longitude), "--");
-    std::snprintf(text.altitude, sizeof(text.altitude), "--");
-    std::snprintf(text.satellites, sizeof(text.satellites), "--");
-    if (!gps.fix.valid || gps.reception != GpsReception::Fix) return text;
-    const auto& fix = gps.fix;
-    const auto& coordinate = place_fix.valid ? place_fix : fix;
-    if (std::isfinite(coordinate.latitude) && std::abs(coordinate.latitude) <= 90)
-        std::snprintf(text.latitude, sizeof(text.latitude), "%+.6f", coordinate.latitude);
-    if (std::isfinite(coordinate.longitude) && std::abs(coordinate.longitude) <= 180)
-        std::snprintf(text.longitude, sizeof(text.longitude), "%+.6f", coordinate.longitude);
-    if ((fix.fields & GpsSpeed) && std::isfinite(fix.speed_kmh) && fix.speed_kmh >= 0) {
-        // Keep km/h and at most three digits. Discard sub-1 km/h movement;
-        // promote rounded boundaries before selecting the decimal precision.
-        const double kmh = fix.speed_kmh;
-        const double hundredths = std::round(kmh * 100) / 100;
-        const double tenths = std::round(kmh * 10) / 10;
-        if (kmh < 1) {
-            std::snprintf(text.speed, sizeof(text.speed), "0");
-        } else if (hundredths < 10) {
-            std::snprintf(text.speed, sizeof(text.speed), "%.2f", hundredths);
-        } else if (tenths < 100) {
-            std::snprintf(text.speed, sizeof(text.speed), "%.1f", tenths);
-        } else if (std::round(kmh) <= 999) {
-            std::snprintf(text.speed, sizeof(text.speed), "%.0f", std::round(kmh));
-        } else std::snprintf(text.speed, sizeof(text.speed), "OVR");
-    }
-    if ((fix.fields & GpsCourse) && std::isfinite(fix.course_deg) && fix.course_deg >= 0 && fix.course_deg < 360)
-        std::snprintf(text.heading, sizeof(text.heading), "%ld°", std::lround(fix.course_deg) % 360);
-    if ((fix.fields & GpsAltitude) && std::isfinite(fix.altitude_m)) {
-        const auto count = std::snprintf(text.altitude, sizeof(text.altitude), "%.1fm", fix.altitude_m);
-        if (count < 0 || count > 11) std::snprintf(text.altitude, sizeof(text.altitude), "OVR");
-    }
-    if (fix.fields & GpsSatellites)
-        std::snprintf(text.satellites, sizeof(text.satellites), "%u", fix.satellites);
-    return text;
-}
 }  // namespace geoputer

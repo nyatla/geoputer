@@ -110,7 +110,7 @@ void navigationAndGate() {
     auto publish=[&](){const auto action=model.snapshot().action;data.revision++;data.datasets.revision=model.data().datasets.revision+1;model.updateContent({DisplayMode::View,1,data,action.action_id,ActionResult::Applied});};
     data.datasets.count=1;data.datasets.rows[0].number=2;std::strcpy(data.datasets.rows[0].title,"Tokyo");publish();
     model.keyPressed(UiKey::Enter,9);check(model.snapshot().action.dataset_action==DatasetAction::Detail,"Enter opens details");
-    data.datasets={};data.datasets.detail=true;data.datasets.number=2;std::strcpy(data.datasets.info.language,"ja");std::strcpy(data.datasets.info.description,"説明文");publish();
+    data.datasets={};data.datasets.detail=true;data.datasets.number=2;data.datasets.info.language_count=2;std::strcpy(data.datasets.info.language,"ja");std::strcpy(data.datasets.info.description,"説明文");publish();
     const auto count=datasetDetailRows(data.datasets,true);
     for(unsigned i=0;i<count-2;++i)model.keyPressed(UiKey::Down,10+i);
     model.keyPressed(UiKey::Enter,40);model.keyPressed(UiKey::Right,41);

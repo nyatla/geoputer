@@ -43,7 +43,7 @@ void testBoot() {
     check(progress.finish() && progress.hasIssues() &&
           progress.checks[static_cast<unsigned>(BootItem::SD)].state == BootCheckState::Passed,
           "invalid NVS does not overwrite valid SD outcome");
-    for (const auto state : {PlaceState::DatasetMissing, PlaceState::AmbiguousFiles, PlaceState::EncodingError, PlaceState::DataError,
+    for (const auto state : {PlaceState::DatasetMissing,  PlaceState::EncodingError, PlaceState::DataError,
                              PlaceState::TooManyChunks, PlaceState::OutOfMemory, PlaceState::MetadataError, PlaceState::VersionError, PlaceState::NoCard}) {
         progress = ready(); progress.dataset(state);
         check(progress.finish() && progress.hasIssues(), "dataset errors are visible and nonfatal");
@@ -63,7 +63,7 @@ void testBoot() {
     command.data.settings = defaultSettings();
     check(ui.setScreen(command) == OperationStatus::Ok, "Boot is a valid screen");
     ui.tick(100); ui.tick(100000);
-    for (auto key : {UiKey::Enter, UiKey::Back, UiKey::F1, UiKey::OpenSettings, UiKey::Up, UiKey::Down, UiKey::Left, UiKey::Right}) ui.keyPressed(key, 100001);
+    for (auto key : {UiKey::Enter, UiKey::Back, UiKey::Other, UiKey::OpenSettings, UiKey::Up, UiKey::Down, UiKey::Left, UiKey::Right}) ui.keyPressed(key, 100001);
     check(ui.snapshot().action.kind == ActionKind::None, "unfinished boot neither sleeps nor accepts screen/menu actions");
     UpdateUiContent update{};
     update.generation = 1; update.mode = DisplayMode::View; update.data = command.data;
@@ -101,9 +101,9 @@ void testBoot() {
           "settings cannot be saved before startup NVS restoration completes");
     command={};command.screen=ScreenId::Boot;command.mode=DisplayMode::View;command.generation=1;
     command.data.settings=defaultSettings();
-    for(const auto key:{UiKey::F1,UiKey::Back}) {
+    for(const auto key:{UiKey::Other,UiKey::Back}) {
         UiModel unrelated;unrelated.keyPressed(key,1);unrelated.setScreen(command);unrelated.keyPressed(key,2);
-        check(unrelated.snapshot().action.kind==ActionKind::None,"F1 and Del cannot select maintenance at boot");
+        check(unrelated.snapshot().action.kind==ActionKind::None,"Unmapped keys and Del cannot select maintenance at boot");
     }
     for (const bool fatal : {false,true}) {
         UiModel recovery;
@@ -148,8 +148,8 @@ void testBoot() {
         command.screen=ScreenId::LivePlace;
         command.data.storage.card_state=CardState::NoCard;
         command.data.recording.state=recording?RecordingState::Recording:RecordingState::Stopped;
-        runtime.setScreen(command);runtime.keyPressed(UiKey::Back,8);runtime.keyPressed(UiKey::F1,9);
-        check(runtime.snapshot().action.kind==ActionKind::None,"runtime Del/F1 do not enter maintenance");
+        runtime.setScreen(command);runtime.keyPressed(UiKey::Back,8);runtime.keyPressed(UiKey::Other,9);
+        check(runtime.snapshot().action.kind==ActionKind::None,"runtime Del/unmapped keys do not enter maintenance");
         runtime.keyPressed(UiKey::Escape,10);
         check(runtime.snapshot().action.kind==ActionKind::ChangeScreen && runtime.snapshot().action.target==ScreenId::Menu,
               "runtime errors use maintenance when stopped and normal settings while recording");

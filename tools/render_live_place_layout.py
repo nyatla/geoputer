@@ -20,6 +20,7 @@ SCENE = r'''
 #include <cstring>
 #include "task/ui/UiRenderer.h"
 #include "task/ui/LivePlaceLayout.h"
+#include "task/ui/GpsPresentation.h"
 #include "task/ui/PlacePresentation.h"
 #include "task/ui/Shinonome.h"
 #include "task/storage/galuchat/TextEncoding.h"
@@ -137,7 +138,7 @@ int main(int argc, char** argv) {
     }
     check_ascii(4,62,"SPD");check_ascii(4,85,"HDG");
     check_ascii(84,73,"km/h");
-    const auto speed_detail=formatLiveGps(model.data().gps,model.data().place_fix);
+    const auto speed_detail=formatGpsText(model.data().gps,model.data().place_fix);
     if(speedTextWidth(speed_detail.speed)>56) throw std::runtime_error("speed exceeded its three-digit viewport");
     const int speed_left=84-speedTextWidth(speed_detail.speed);
     if(speed_left<28) throw std::runtime_error("speed overlaps the SPD label");

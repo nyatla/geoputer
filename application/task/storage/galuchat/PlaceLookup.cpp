@@ -2,29 +2,16 @@
 #include "TextEncoding.h"
 #include "ObservedFileReader.h"
 #include "../dataset/DatasetMetadata.h"
-#include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
-#include <dirent.h>
 #include <sys/stat.h>
 
 namespace geoputer {
 
-namespace {
-bool endsWith(const std::string& name, const char* suffix) {
-    const std::string end(suffix);
-    if (name.size() < end.size()) return false;
-    for (size_t i = 0; i < end.size(); ++i)
-        if (std::tolower(static_cast<unsigned char>(name[name.size() - end.size() + i])) != end[i]) return false;
-    return true;
-}
-
-}  // namespace
-
 void PlaceLookup::configure(std::string directory, std::string language) {
     directory_ = std::move(directory); language_ = directory_.empty() ? "" : std::move(language);
-    close(); manifest_ = true;
+    close();
 }
 void PlaceLookup::releaseReaders() {
     const bool had_reader = wordbook_ || map_;
@@ -54,8 +41,7 @@ PlaceState PlaceLookup::open() {
     if (datasetInactive(dataset_.state)) return dataset_.state;
     dataset_.limit = config::MaxDatasetChunks;
     std::string mapPath, wordbookPath;
-    unsigned maps = 0, books = 0;
-    if (manifest_) {
+    {
         const auto metadata = readDatasetMetadata(directory_, UiLanguage::Japanese, language_.c_str(), observer_);
         if (metadata.error != DatasetError::None) {
             switch (metadata.error) {
@@ -73,25 +59,6 @@ PlaceState PlaceLookup::open() {
         struct stat status{};
         if (stat(mapPath.c_str(), &status) || !S_ISREG(status.st_mode) ||
             stat(wordbookPath.c_str(), &status) || !S_ISREG(status.st_mode)) return PlaceState::DatasetMissing;
-    } else {
-    {
-    SdAccessScope directory_access(observer_);
-    std::unique_ptr<DIR, int (*)(DIR*)> dir(opendir(directory_.c_str()), closedir);
-    if (!dir) return PlaceState::DatasetMissing;
-    // Discovery paths survive the short directory I/O scope.
-
-    while (const auto* entry = readdir(dir.get())) {
-        const std::string name(entry->d_name);
-        if (name.empty() || name[0] == '.') continue;
-        const auto path = directory_ + "/" + name;
-        struct stat status{};
-        if (stat(path.c_str(), &status) || !S_ISREG(status.st_mode)) continue;
-        if (endsWith(name, ".glc")) { ++maps; mapPath = path; }
-        if (endsWith(name, ".giswordbook")) { ++books; wordbookPath = path; }
-    }
-    if (maps > 1 || books > 1) return PlaceState::AmbiguousFiles;
-    if (!maps || !books) return PlaceState::DatasetMissing;
-    }
     }
     // Preserve the SDK ReaderFactory/Reader API. Readers use the existing
     // mounted FatFs drive directly on ESP32; do not mount SD twice.
@@ -141,7 +108,7 @@ PlaceResult PlaceLookup::prepare() {
 }
 
 PlaceResult PlaceLookup::search(const PlaceRequest& request) {
-    timing_ = {};
+    if constexpr (config::DetailedDiagnostics) timing_ = {};
     ElapsedTime total(timing_.total_us);
     PlaceResult result{};
     result.request = request;

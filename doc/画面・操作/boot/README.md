@@ -35,7 +35,7 @@ ESC MAINT          ENTER START
 | NVS SETTINGS | 保存領域の準備、設定レコードの読込み・形式・検査値 | LOADED、DEFAULT、INVALID、NVS ERROR |
 | SD CARD | カードの認識、マウントとFAT32判定 | FAT32、NO CARD、NOT FAT32、SD ERROR |
 | GPS UART | Mesh KitのUART受信準備 | UART OK、UART ERR |
-| GALUCHAT DATA | 保存済み番号・言語のファイル検出、Reader生成、ヘッダー・辞書形式・文字コード確認 | OPEN OK、NO SD、MISSING、MULTIPLE、CONFIG、VERSION、ENCODING、DATA ERR、TOO LARGE、NO MEMORY |
+| GALUCHAT DATA | 保存済み番号・言語のファイル検出、Reader生成、ヘッダー・辞書形式・文字コード確認 | OPEN OK、NO SD、MISSING、CONFIG、VERSION、ENCODING、DATA ERR、TOO LARGE、NO MEMORY |
 
 Galuchatの確認はGPS Fixを要求しない。データをRAMへ全展開せず、検索用のReaderを準備する。OPEN OKは起動時に必要な読出し準備の成功を表し、地図・辞書の全領域の走査や全地名の復号を完了した意味ではない。実検索中の読込異常はLive Placeへ別途表示する。
 

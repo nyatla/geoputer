@@ -4,12 +4,23 @@
 
 namespace geoputer {
 
-inline constexpr ScreenId MenuTargets[] = {ScreenId::LivePlace, ScreenId::Map, ScreenId::GpsLogger, ScreenId::Logs, ScreenId::Settings};
-inline constexpr unsigned MenuCount = sizeof(MenuTargets) / sizeof(*MenuTargets);
+struct MenuScreen {
+    ScreenId screen;
+    UiKey key;
+    char shortcut;
+    const char* japanese;
+    const char* english;
+};
+inline constexpr MenuScreen MenuScreens[] = {
+    {ScreenId::LivePlace, UiKey::OpenLivePlace, '1', "1 メイン", "1 Main"},
+    {ScreenId::Map, UiKey::OpenMap, '2', "2 地図", "2 Map"},
+    {ScreenId::GpsLogger, UiKey::OpenGpsLogger, '3', "3 GPS・記録", "3 GPS / Logger"},
+    {ScreenId::Logs, UiKey::OpenLogs, '4', "4 ログ一覧", "4 Logs"},
+    {ScreenId::Settings, UiKey::OpenSettings, '0', "0 設定", "0 Settings"},
+};
+inline constexpr unsigned MenuCount = sizeof(MenuScreens) / sizeof(*MenuScreens);
 inline const char* menuLabel(unsigned row, bool ja) {
-    const char* en[] = {"1 Main", "2 Map", "3 GPS / Logger", "4 Logs", "0 Settings"};
-    const char* jp[] = {"1 メイン", "2 地図", "3 GPS・記録", "4 ログ一覧", "0 設定"};
-    return row < MenuCount ? (ja ? jp[row] : en[row]) : "";
+    return row < MenuCount ? (ja ? MenuScreens[row].japanese : MenuScreens[row].english) : "";
 }
 
 // Shared by UI dispatch and App validation. Child pages keep their own Back keys.
@@ -19,15 +30,10 @@ inline bool isScreenRoot(ScreenId screen, SettingsPage page = SettingsPage::Root
 }
 
 inline bool screenShortcut(UiKey key, ScreenId& target) {
-    switch (key) {
-        case UiKey::OpenLivePlace: target = ScreenId::LivePlace; return true;
-        case UiKey::OpenGpsLogger: target = ScreenId::GpsLogger; return true;
-        case UiKey::OpenMap: target = ScreenId::Map; return true;
-        case UiKey::OpenLogs: target = ScreenId::Logs; return true;
-        case UiKey::OpenSettings: target = ScreenId::Settings; return true;
-        case UiKey::Escape: target = ScreenId::Menu; return true;
-        default: return false;
-    }
+    if (key == UiKey::Escape) { target = ScreenId::Menu; return true; }
+    for (const auto& item : MenuScreens)
+        if (item.key == key) { target = item.screen; return true; }
+    return false;
 }
 
 inline bool rootScreenTransition(ScreenId from, SettingsPage page, ScreenId to) {

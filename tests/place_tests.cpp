@@ -78,37 +78,36 @@ void testPlace() {
 
     PlaceSearchFlow flow;
     PlaceRequest request{7, 1, {35.68, 140.02, 0, true}};
-    check(flow.waitMs(0xFFFFFF00, 1) == 0, "first valid fix can search immediately");
-    flow.sent(100, request, 0xFFFFFF00);
+    check(flow.waitMs(1) == 0, "first valid fix can search immediately");
+    flow.sent(100, request);
     check(flow.accepts(100, 7, 7) && !flow.accepts(99, 7, 7) && !flow.accepts(100, 8, 7),
           "only current request progress can light an access lamp");
-    check(flow.waitMs(2000, 9) == UINT32_MAX, "new GPS fixes cannot flood a pending search");
+    check(flow.waitMs(9) == UINT32_MAX, "new GPS fixes cannot flood a pending search");
     check(!flow.completed(99, 7, 7) && flow.pending(), "unrelated result cannot release request");
     check(flow.completed(100, 7, 7) && !flow.pending(), "matching completion releases request");
-    check(flow.waitMs(0xFFFFFF00 + 2000u, 2) == 0, "changed fix is not delayed by a five-second timer");
-    check(flow.waitMs(0xFFFFFF00 + 5000u, 2) == 0, "changed fix remains eligible across timer wrap");
-    check(flow.waitMs(9000, 1) == UINT32_MAX, "same GPS sample is not searched repeatedly");
-    flow.sent(101, request, 9000);
+    check(flow.waitMs(2) == 0, "changed fix is not delayed by a five-second timer");
+    check(flow.waitMs(1) == UINT32_MAX, "same GPS sample is not searched repeatedly");
+    flow.sent(101, request);
     flow.refresh();
     check(flow.pending(), "view change cannot abandon accepted operation");
     check(!flow.completed(101, 7, 8), "old view completion cannot update current view");
-    check(flow.waitMs(9001, 1) == 0, "new view requests a fresh snapshot after old completion");
-    flow.sent(102, request, 10000);
+    check(flow.waitMs(1) == 0, "new view requests a fresh snapshot after old completion");
+    flow.sent(102, request);
     flow.refresh();  // GPS became invalid and recovered in the same view.
     check(!flow.accepts(102, 7, 7), "late progress cannot light a lamp after fix loss");
     check(!flow.completed(102, 7, 7), "fix invalidation rejects old result even in same view");
 
     PlaceSearchFlow lattice;
     PlaceRequest cell_request{7,1,{35.68,140.02,0,true}};
-    lattice.sent(1,cell_request,0);check(lattice.completed(1,7,7),"lattice first result");
+    lattice.sent(1,cell_request);check(lattice.completed(1,7,7),"lattice first result");
     auto moved=cell_request.fix;moved.longitude+=0.00001;
-    check(lattice.waitMs(1,2,moved,10000,10000)==UINT32_MAX,"same dataset cell avoids a new request");
+    check(lattice.waitMs(2,moved,10000,10000)==UINT32_MAX,"same dataset cell avoids a new request");
     moved.longitude+=0.00006;
-    check(lattice.waitMs(1,2,moved,10000,10000)==0,"changed cell searches immediately without timer delay");
+    check(lattice.waitMs(2,moved,10000,10000)==0,"changed cell searches immediately without timer delay");
     moved=cell_request.fix;moved.latitude+=0.00006;
-    check(lattice.waitMs(1,2,moved,10000,10000)==0,"north-south lattice crossing also searches");
+    check(lattice.waitMs(2,moved,10000,10000)==0,"north-south lattice crossing also searches");
     lattice.refresh();
-    check(lattice.waitMs(1,2,cell_request.fix,10000,10000)==0,"refresh invalidates same-cell suppression");
+    check(lattice.waitMs(2,cell_request.fix,10000,10000)==0,"refresh invalidates same-cell suppression");
     check(!lattice.sameCell(cell_request.fix,0,0),"unopened dataset cannot suppress a lookup");
 
     UiData data{};
@@ -184,7 +183,7 @@ void testPlace() {
 
 
     for (auto failure : {PlaceState::DatasetMissing,PlaceState::MetadataError,PlaceState::VersionError,
-             PlaceState::AmbiguousFiles,PlaceState::DataError,PlaceState::EncodingError,
+             PlaceState::DataError,PlaceState::EncodingError,
              PlaceState::TooManyChunks,PlaceState::OutOfMemory,PlaceState::NoCard}) {
         check(datasetUnavailable(failure),"all dataset faults disable reverse geocoding");
         for(bool ja : {false,true}) {

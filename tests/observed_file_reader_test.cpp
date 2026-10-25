@@ -334,6 +334,28 @@ void fatFsFailuresAndDrive() {
 
 int main() {
     File file(std::max<size_t>(128 * Buffer, 4 * Threshold + 4 * Buffer + 100));
+    if (!geoputer::config::DetailedDiagnostics) {
+        Observer observer;
+        geoputer::FileIoTiming io{};
+        uint64_t elapsed=77;
+        {
+            geoputer::ElapsedTime timer(elapsed);
+            geoputer::ObservedFileReaderFactory factory(file.readPath(),&observer,&io);
+            auto reader=factory.createRange(7,20000);
+            require(reader->readByte()==file.bytes[7],"normal reader data");
+            reader->skipInByte(9000);
+            require(reader->readByte()==file.bytes[9008],"normal reader seek data");
+        }
+        observer.balanced();
+        require(observer.begins>0,"disabling diagnostics must retain SD activity notifications");
+        require(!io.reads && !io.seeks && !io.opens && !io.closes && !io.stats && !io.bytes && !io.elapsed_us &&
+                !io.read_us && !io.seek_us && !io.open_us && !io.close_us && !io.stat_us && elapsed==77,
+                "normal firmware must not collect counters or timing");
+        mixedBitsAndSkips(file);
+        outsideBounds(file);
+        std::cout << "ObservedFileReader: normal mode preserves data, bit skips, errors and SD activity without diagnostic counters/timing\n";
+        return 0;
+    }
     bufferedAndShort(file);
     thresholdBoundary(file);
     endAndTruncation();

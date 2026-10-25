@@ -1,5 +1,6 @@
 """Generate four diagnostic destinations; production has no comparison switches."""
 import shutil
+from benchmark_support import install_background_latch
 
 def prepare_span_fill_comparison(root, work, source_path, source, wait_background=False):
     headers=work/'include/galuchat'
@@ -45,18 +46,4 @@ template<class Raster> struct SpanBenchmarkFlags<Raster,std::void_t<
         source_path.with_name(name+'.h').write_text(header.replace('DiskIndexedMapReader',name))
 
     if wait_background:
-        profile=work/'application/benchmark/DecodeProfile.h'
-        text=profile.read_text().replace('#pragma once','#pragma once\n#include <atomic>',1)
-        text=text.replace('namespace geoputer::benchmark {','namespace geoputer::benchmark {\ninline std::atomic<uint32_t> background_since_ms{0};',1)
-        profile.write_text(text)
-        ui=work/'application/task/ui/UiTask.cpp'
-        text=ui.read_text().replace('#include "UiTask.h"','#include "UiTask.h"\n#include "../../benchmark/DecodeProfile.h"',1)
-        needle='        if (ready && model_.takeRedraw()) renderer.draw(model_);'
-        assert text.count(needle)==1
-        text=text.replace(needle,needle+'''
-        if(ready && model_.mode()==DisplayMode::Background) {
-            if(!benchmark::background_since_ms.load(std::memory_order_relaxed))
-                benchmark::background_since_ms.store(now,std::memory_order_relaxed);
-        } else benchmark::background_since_ms.store(0,std::memory_order_relaxed);
-''')
-        ui.write_text(text)
+        install_background_latch(work,'background_since_ms','DecodeProfile.h')

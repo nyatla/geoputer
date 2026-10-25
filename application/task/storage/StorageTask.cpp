@@ -357,9 +357,9 @@ void StorageTask::completeJob() {
     bool ok = false;
     state_.error = 0;
     PlaceResult place{};
-    const uint32_t started_us = micros();
-    const auto cache_before = place_lookup_.cacheStats();
-    const auto wordbook_before = place_lookup_.wordBookCacheStats();
+    const uint32_t started_us = config::DetailedDiagnostics ? micros() : 0;
+    const auto cache_before = config::DetailedDiagnostics ? place_lookup_.cacheStats() : MapCacheStats{};
+    const auto wordbook_before = config::DetailedDiagnostics ? place_lookup_.wordBookCacheStats() : WordBookCacheStats{};
     if (search_job || dataset_job) {
         if (dataset_job) configureDataset();
         if (!state_.settings.dataset || (mounted_ && state_.card_state == CardState::Mounted))
@@ -420,58 +420,64 @@ void StorageTask::completeJob() {
     result.place = place;
     has_completion_ = true;
     job_kind_ = JobKind::None;
-    if (search_job || dataset_job) {
-        const auto cache = place_lookup_.cacheStats();
-        const auto wordbook = place_lookup_.wordBookCacheStats();
-        Console.printf("[DATASET] chunks=%llu max=%lu state=%s\n",
-                      static_cast<unsigned long long>(place.dataset.chunks), static_cast<unsigned long>(place.dataset.limit),
-                      placeStateName(place.state));
-        Console.printf("[GIS] %s code=%lld detail=%s stack_free=%u heap=%u min_heap=%u largest=%u\n",
-                                  placeStateName(place.state), static_cast<long long>(place.region_code), place.detail,
-                                  static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)), ESP.getFreeHeap(),
-                                  ESP.getMinFreeHeap(), static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT)));
-        if (search_job) Console.printf("[CACHE] %s bytes=%u hit=%lu miss=%lu fill=%lu valid=%u rect=%d,%d,%d,%d elapsed_us=%lu\n",
-                                      cache.valid ? (cache.hits > cache_before.hits ? "HIT" : "MISS") : "INVALID",
-                                      static_cast<unsigned>(cache.bytes), static_cast<unsigned long>(cache.hits),
-                                      static_cast<unsigned long>(cache.misses), static_cast<unsigned long>(cache.fills),
-                                      cache.valid, cache.bounds.x, cache.bounds.y, CachedMapReader::Side, CachedMapReader::Side,
-                                      static_cast<unsigned long>(micros() - started_us));
-        if (search_job) Console.printf("[WORDBOOK] %s entries=%u/%u hit=%lu miss=%lu\n",
-                                      place.state != PlaceState::Ready ? "NONE" :
-                                      wordbook.hits != wordbook_before.hits ? "HIT" : "MISS",
-                                      static_cast<unsigned>(wordbook.entries), static_cast<unsigned>(WordBookCache::Capacity),
-                                      static_cast<unsigned long>(wordbook.hits),
-                                      static_cast<unsigned long>(wordbook.misses));
-        if (search_job && mounted_ && state_.card_state == CardState::Mounted) {
-            const auto& time = place_lookup_.readTiming();
-            Console.printf("[READ-TIME] total_us=%llu open_us=%llu map_us=%llu rect_us=%llu wordbook_us=%llu text_us=%llu\n",
-                          static_cast<unsigned long long>(time.total_us), static_cast<unsigned long long>(time.open_us),
-                          static_cast<unsigned long long>(time.map_us), static_cast<unsigned long long>(time.rect_us),
-                          static_cast<unsigned long long>(time.wordbook_us), static_cast<unsigned long long>(time.text_us));
-            Console.printf("[READ-IO] map_us=%llu map_bytes=%llu map_reads=%lu map_seeks=%lu map_opens=%lu map_closes=%lu book_us=%llu book_bytes=%llu book_reads=%lu book_seeks=%lu book_opens=%lu book_closes=%lu\n",
-                          static_cast<unsigned long long>(time.map_io.elapsed_us), static_cast<unsigned long long>(time.map_io.bytes),
-                          static_cast<unsigned long>(time.map_io.reads), static_cast<unsigned long>(time.map_io.seeks),
-                          static_cast<unsigned long>(time.map_io.opens), static_cast<unsigned long>(time.map_io.closes),
-                          static_cast<unsigned long long>(time.wordbook_io.elapsed_us), static_cast<unsigned long long>(time.wordbook_io.bytes),
-                          static_cast<unsigned long>(time.wordbook_io.reads), static_cast<unsigned long>(time.wordbook_io.seeks),
-                          static_cast<unsigned long>(time.wordbook_io.opens), static_cast<unsigned long>(time.wordbook_io.closes));
-            auto print_io_time = [](const char* name, const FileIoTiming& io) {
-                Console.printf("[%s-IO-TIME] read_us=%llu seek_us=%llu open_us=%llu close_us=%llu stat_us=%llu\n", name,
-                              static_cast<unsigned long long>(io.read_us), static_cast<unsigned long long>(io.seek_us),
-                              static_cast<unsigned long long>(io.open_us), static_cast<unsigned long long>(io.close_us),
-                              static_cast<unsigned long long>(io.stat_us));
-            };
-            print_io_time("MAP", time.map_io);
-            print_io_time("BOOK", time.wordbook_io);
-            print_io_time("INDEX", time.index_io);
-            Console.printf("[INDEX-IO] bytes=%llu reads=%lu seeks=%lu opens=%lu closes=%lu\n",
-                static_cast<unsigned long long>(time.index_io.bytes),static_cast<unsigned long>(time.index_io.reads),
-                static_cast<unsigned long>(time.index_io.seeks),static_cast<unsigned long>(time.index_io.opens),static_cast<unsigned long>(time.index_io.closes));
-        }
-    } else Console.printf("[STORAGE] op=%u ok=%u NVS=%u SD=%s error=%ld stack_free=%u\n",
-                  static_cast<unsigned>(state_.operation), ok, static_cast<unsigned>(state_.settings_state),
-                  cardStateName(state_.card_state), static_cast<long>(state_.error),
-                  static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)));
+    if constexpr (config::DetailedDiagnostics) {
+        if (search_job || dataset_job) {
+            const auto cache = place_lookup_.cacheStats();
+            const auto wordbook = place_lookup_.wordBookCacheStats();
+            Console.printf("[DATASET] chunks=%llu max=%lu state=%s\n",
+                          static_cast<unsigned long long>(place.dataset.chunks), static_cast<unsigned long>(place.dataset.limit),
+                          placeStateName(place.state));
+            Console.printf("[GIS] %s code=%lld detail=%s stack_free=%u heap=%u min_heap=%u largest=%u\n",
+                                      placeStateName(place.state), static_cast<long long>(place.region_code), place.detail,
+                                      static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)), ESP.getFreeHeap(),
+                                      ESP.getMinFreeHeap(), static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT)));
+            if (search_job) Console.printf("[CACHE] %s bytes=%u hit=%lu miss=%lu fill=%lu valid=%u rect=%d,%d,%d,%d elapsed_us=%lu\n",
+                                          cache.valid ? (cache.hits > cache_before.hits ? "HIT" : "MISS") : "INVALID",
+                                          static_cast<unsigned>(cache.bytes), static_cast<unsigned long>(cache.hits),
+                                          static_cast<unsigned long>(cache.misses), static_cast<unsigned long>(cache.fills),
+                                          cache.valid, cache.bounds.x, cache.bounds.y, CachedMapReader::Side, CachedMapReader::Side,
+                                          static_cast<unsigned long>(micros() - started_us));
+            if (search_job) Console.printf("[WORDBOOK] %s entries=%u/%u hit=%lu miss=%lu\n",
+                                          place.state != PlaceState::Ready ? "NONE" :
+                                          wordbook.hits != wordbook_before.hits ? "HIT" : "MISS",
+                                          static_cast<unsigned>(wordbook.entries), static_cast<unsigned>(WordBookCache::Capacity),
+                                          static_cast<unsigned long>(wordbook.hits),
+                                          static_cast<unsigned long>(wordbook.misses));
+            if (search_job && mounted_ && state_.card_state == CardState::Mounted) {
+                const auto& time = place_lookup_.readTiming();
+                Console.printf("[READ-TIME] total_us=%llu open_us=%llu map_us=%llu rect_us=%llu wordbook_us=%llu text_us=%llu\n",
+                              static_cast<unsigned long long>(time.total_us), static_cast<unsigned long long>(time.open_us),
+                              static_cast<unsigned long long>(time.map_us), static_cast<unsigned long long>(time.rect_us),
+                              static_cast<unsigned long long>(time.wordbook_us), static_cast<unsigned long long>(time.text_us));
+                Console.printf("[READ-IO] map_us=%llu map_bytes=%llu map_reads=%lu map_seeks=%lu map_opens=%lu map_closes=%lu book_us=%llu book_bytes=%llu book_reads=%lu book_seeks=%lu book_opens=%lu book_closes=%lu\n",
+                              static_cast<unsigned long long>(time.map_io.elapsed_us), static_cast<unsigned long long>(time.map_io.bytes),
+                              static_cast<unsigned long>(time.map_io.reads), static_cast<unsigned long>(time.map_io.seeks),
+                              static_cast<unsigned long>(time.map_io.opens), static_cast<unsigned long>(time.map_io.closes),
+                              static_cast<unsigned long long>(time.wordbook_io.elapsed_us), static_cast<unsigned long long>(time.wordbook_io.bytes),
+                              static_cast<unsigned long>(time.wordbook_io.reads), static_cast<unsigned long>(time.wordbook_io.seeks),
+                              static_cast<unsigned long>(time.wordbook_io.opens), static_cast<unsigned long>(time.wordbook_io.closes));
+                auto print_io_time = [](const char* name, const FileIoTiming& io) {
+                    Console.printf("[%s-IO-TIME] read_us=%llu seek_us=%llu open_us=%llu close_us=%llu stat_us=%llu\n", name,
+                                  static_cast<unsigned long long>(io.read_us), static_cast<unsigned long long>(io.seek_us),
+                                  static_cast<unsigned long long>(io.open_us), static_cast<unsigned long long>(io.close_us),
+                                  static_cast<unsigned long long>(io.stat_us));
+                };
+                print_io_time("MAP", time.map_io);
+                print_io_time("BOOK", time.wordbook_io);
+                print_io_time("INDEX", time.index_io);
+                Console.printf("[INDEX-IO] bytes=%llu reads=%lu seeks=%lu opens=%lu closes=%lu\n",
+                    static_cast<unsigned long long>(time.index_io.bytes),static_cast<unsigned long>(time.index_io.reads),
+                    static_cast<unsigned long>(time.index_io.seeks),static_cast<unsigned long>(time.index_io.opens),static_cast<unsigned long>(time.index_io.closes));
+            }
+        } else Console.printf("[STORAGE] op=%u ok=%u NVS=%u SD=%s error=%ld stack_free=%u\n",
+                      static_cast<unsigned>(state_.operation), ok, static_cast<unsigned>(state_.settings_state),
+                      cardStateName(state_.card_state), static_cast<long>(state_.error),
+                      static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)));
+    } else if ((search_job || dataset_job) && datasetUnavailable(place.state)) {
+        Console.printf("[GIS] ERROR %s: %s\n",placeStateName(place.state),place.detail);
+    } else if (!read_job && !ok) {
+        Console.printf("[STORAGE] ERROR op=%u code=%ld\n",static_cast<unsigned>(state_.operation),static_cast<long>(state_.error));
+    }
 }
 
 void StorageTask::notify() {
@@ -567,7 +573,7 @@ void StorageTask::stepLogRead() {
     auto& result=completion_.payload.storage_completion;
     result.request_id=read_request_id_; result.snapshot=state_; result.read_kind=StorageReadKind::LogBrowse;
     result.logs=read; has_completion_=true;
-    Console.printf("[BROWSE] kind=%u token=%lu error=%u count=%u records=%lu start=%lu stack_free=%u\n",
+    if constexpr (config::DetailedDiagnostics) Console.printf("[BROWSE] kind=%u token=%lu error=%u count=%u records=%lu start=%lu stack_free=%u\n",
                   static_cast<unsigned>(read.request.kind),static_cast<unsigned long>(read.request.token),static_cast<unsigned>(read.error),
                   read.count,static_cast<unsigned long>(read.summary.records),static_cast<unsigned long>(read.request.start),
                   static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)));
@@ -576,11 +582,11 @@ void StorageTask::stepLogRead() {
 void StorageTask::stepMap() {
     if(map_job_.reading()) {
         const auto request=map_job_.info().request;
-        const auto started=taskTimeMs();
+        const auto started=config::DetailedDiagnostics ? taskTimeMs() : 0;
         reportMapHeap("read-begin",request.token);
         map_job_.loaded(readBoundaryMap(DatasetCatalog{}.directory(state_.settings.dataset),
             state_.settings.wordbook_language,request,drive_,this));
-        Console.printf("[MAP] read token=%lu error=%u elapsed_ms=%lu heap=%u\n",
+        if constexpr (config::DetailedDiagnostics) Console.printf("[MAP] read token=%lu error=%u elapsed_ms=%lu heap=%u\n",
             static_cast<unsigned long>(request.token),static_cast<unsigned>(map_job_.info().error),
             static_cast<unsigned long>(taskTimeMs()-started),ESP.getFreeHeap());
         reportMapHeap("render-begin",request.token);

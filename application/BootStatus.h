@@ -62,7 +62,6 @@ struct BootStatus {
             case PlaceState::Ready: set(BootItem::Dataset, BootCheckState::Passed, "OPEN OK"); break;
             case PlaceState::NoCard: set(BootItem::Dataset, BootCheckState::Warning, "NO SD"); break;
             case PlaceState::DatasetMissing: set(BootItem::Dataset, BootCheckState::Warning, "MISSING"); break;
-            case PlaceState::AmbiguousFiles: set(BootItem::Dataset, BootCheckState::Failed, "MULTIPLE"); break;
             case PlaceState::MetadataError: set(BootItem::Dataset, BootCheckState::Failed, "CONFIG"); break;
             case PlaceState::VersionError: set(BootItem::Dataset, BootCheckState::Failed, "VERSION"); break;
             case PlaceState::EncodingError: set(BootItem::Dataset, BootCheckState::Failed, "ENCODING"); break;

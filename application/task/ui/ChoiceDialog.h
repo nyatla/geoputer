@@ -4,15 +4,15 @@
 
 namespace geoputer {
 
-enum class DialogKind : uint8_t { None, PauseLog, StopLog, DeleteLog, FormatSd, ResetSettings, EnterUsbMode, ExitUsbMode, RestartLogger, RebuildIndex, VerifyIndex, ClearDataset, GpsControl };
+enum class DialogKind : uint8_t { None, DeleteLog, FormatSd, ResetSettings, EnterUsbMode, ExitUsbMode, RestartLogger, RebuildIndex, VerifyIndex, ClearDataset, GpsControl };
 enum class DialogInput : uint8_t { Ignored, Changed, Cancelled, Accepted };
 
 // Confirmation dialogs select Cancel initially. Action menus omit that item and
 // select a caller-specified action; Escape cancels either kind.
 class ChoiceDialog {
 public:
-    void open(DialogKind kind, bool enabled = true, unsigned choices = 2) {
-        kind_ = kind; selected_ = 0; choices_ = choices == 3 ? 3 : 2; cancel_choice_ = true; setActionEnabled(enabled);
+    void open(DialogKind kind, bool enabled = true) {
+        kind_ = kind; selected_ = 0; choices_ = 2; cancel_choice_ = true; setActionEnabled(enabled);
     }
     void openActions(DialogKind kind, unsigned choices, unsigned initial) {
         kind_ = kind; choices_ = choices >= 1 && choices <= 3 ? choices : 1;

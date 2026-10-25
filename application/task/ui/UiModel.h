@@ -3,6 +3,7 @@
 #include "UiTypes.h"
 #include "DisplayClock.h"
 #include "ChoiceDialog.h"
+#include "UiKeyGuide.h"
 #include "../../map/MapFrameReceiver.h"
 #include "../../map/MapTracking.h"
 #include "../../TaskMessages.h"
@@ -33,6 +34,7 @@ public:
     bool confirming() const { return dialog_.active(); }
     bool confirmChoice() const { return dialog_.selected(); }
     const ChoiceDialog& dialog() const { return dialog_; }
+    UiKeyGuide keyGuide() const;
     uint32_t licenseOffset() const { return license_offset_; }
     uint8_t datasetDialogNumber() const { return dataset_dialog_number_; }
     static constexpr uint32_t DatasetNoticeMs = 5000;
@@ -58,13 +60,16 @@ public:
     }
 
 private:
-    void livePlaceKey(UiKey key);
     void openGpsControls();
     void gpsLoggerKey(UiKey key);
     void logBrowserKey(UiKey key);
     void settingsKey(UiKey key);
 
     void copyData(const UiData& data);
+    void updateDialogState();
+    bool canDeleteLog() const;
+    unsigned selectionCount() const;
+    uint32_t licenseTarget(UiKey key) const;
     void acknowledge(uint32_t action_id, ActionResult result);
     void changed();
     void datasetAction(DatasetAction kind, uint32_t index = 0);

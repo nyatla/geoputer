@@ -6,13 +6,13 @@
 namespace geoputer {
 
 enum class PlaceState : uint8_t {
-    Waiting, Searching, Ready, NoFix, NoCard, DatasetMissing, AmbiguousFiles,
+    Waiting, Searching, Ready, NoFix, NoCard, DatasetMissing,
     NotFound, EncodingError, DataError, TooManyChunks, OutOfMemory, MetadataError, VersionError, Unselected
 };
 
 inline bool datasetUnavailable(PlaceState state) {
     return state == PlaceState::TooManyChunks || state == PlaceState::OutOfMemory ||
-           state == PlaceState::DatasetMissing || state == PlaceState::AmbiguousFiles ||
+           state == PlaceState::DatasetMissing ||
            state == PlaceState::EncodingError || state == PlaceState::DataError ||
            state == PlaceState::MetadataError || state == PlaceState::VersionError || state == PlaceState::NoCard;
 }
@@ -60,7 +60,6 @@ inline const char* placeStateName(PlaceState state) {
         case PlaceState::NoFix: return "WAIT GPS FIX";
         case PlaceState::NoCard: return "SD NOT READY";
         case PlaceState::DatasetMissing: return "DATASET 01 MISSING";
-        case PlaceState::AmbiguousFiles: return "MULTIPLE DATA FILES";
         case PlaceState::NotFound: return "PLACE NOT FOUND";
         case PlaceState::EncodingError: return "ENCODING ERROR";
         case PlaceState::MetadataError: return "DATASET CONFIG ERROR";

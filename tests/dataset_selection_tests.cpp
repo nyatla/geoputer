@@ -16,7 +16,7 @@ void transitions() {
     Preferences::records["other/component"]={1,2,3};
     SettingsStore store;check(store.begin(),"selection test NVS opens");
     const auto selected=selectedSettings();
-    for(const auto reason:{PlaceState::NoCard,PlaceState::DatasetMissing,PlaceState::AmbiguousFiles,PlaceState::MetadataError,
+    for(const auto reason:{PlaceState::NoCard,PlaceState::DatasetMissing,PlaceState::MetadataError,
                           PlaceState::VersionError,PlaceState::DataError,PlaceState::EncodingError,PlaceState::TooManyChunks,PlaceState::OutOfMemory}) {
         StorageSnapshot state{};state.settings=selected;state.settings_state=SettingsState::Loaded;
         state.log.open=true;state.log.buffered=64;state.log.session_id=123;

@@ -193,11 +193,11 @@ void Application::handleNotification(const AppNotification& event) {
         ++data_.revision;
         ui_data_dirty_ = true;
         // No nested synchronous UI request here, including during another task's result wait.
-        if (data_.gps.fix.valid) {
-            Console.printf("[GPS] FIX LAT=%.6f LON=%.6f sample=%lu\n", data_.gps.fix.latitude,
-                          data_.gps.fix.longitude, static_cast<unsigned long>(data_.gps.sample_seq));
-        } else if (old_state != data_.gps.reception) {
+        if (old_state != data_.gps.reception)
             Console.printf("[GPS] %s\n", gpsReceptionName(data_.gps.reception));
+        if constexpr (config::DetailedDiagnostics) {
+            if (data_.gps.fix.valid) Console.printf("[GPS] FIX LAT=%.6f LON=%.6f sample=%lu\n", data_.gps.fix.latitude,
+                          data_.gps.fix.longitude, static_cast<unsigned long>(data_.gps.sample_seq));
         }
     }
 }
@@ -452,7 +452,6 @@ bool Application::canSearchPlace() const {
 }
 
 void Application::requestPlace() {
-    const auto now = taskTimeMs();
     if (!canSearchPlace()) return;
     if (place_flow_.sameCell(data_.gps.fix,data_.dataset.unit_inv_x,data_.dataset.unit_inv_y)) {
         // The area is already known: keep the main-screen coordinates current
@@ -462,16 +461,16 @@ void Application::requestPlace() {
         }
         return;
     }
-    if (place_flow_.waitMs(now, data_.gps.sample_seq) != 0) return;
+    if (place_flow_.waitMs(data_.gps.sample_seq) != 0) return;
     StorageRequest request{};
     request.kind = MessageKind::SearchPlace;
     request.source = TaskId::Application;
     if (++place_request_id_ == 0) ++place_request_id_;
     request.request_id = place_request_id_;
-    request.sent_at_ms = now;
+    request.sent_at_ms = taskTimeMs();
     request.payload.place_request = {generation_, data_.gps.sample_seq, data_.gps.fix};
     if (sendSpeculative(storage_.inbox(), request) != SpeculativeResult::Queued) return;
-    place_flow_.sent(request.request_id, request.payload.place_request, now);
+    place_flow_.sent(request.request_id, request.payload.place_request);
     beginPlacePresentation(data_, request.payload.place_request);
     ++data_.revision;
     ui_data_dirty_ = true;
@@ -760,7 +759,7 @@ void Application::runOnce() {
             wait = pdMS_TO_TICKS(50);  // Only retry requests that were not queued.
         }
     } else if (canSearchPlace()) {
-        const auto remaining = place_flow_.waitMs(taskTimeMs(), data_.gps.sample_seq,data_.gps.fix,data_.dataset.unit_inv_x,data_.dataset.unit_inv_y);
+        const auto remaining = place_flow_.waitMs(data_.gps.sample_seq,data_.gps.fix,data_.dataset.unit_inv_x,data_.dataset.unit_inv_y);
         if (remaining != UINT32_MAX) wait = pdMS_TO_TICKS(remaining ? remaining : 50);
     }
     if(screen_==ScreenId::Map || map_request_.token) {if(wait==portMAX_DELAY || wait>pdMS_TO_TICKS(20))wait=pdMS_TO_TICKS(20);}

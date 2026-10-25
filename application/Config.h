@@ -3,7 +3,14 @@
 #include <cstddef>
 #include <cstdint>
 
+// Enable only for diagnostic firmware / profiling tests.
+#ifndef REVERSEGEOPUTER_DIAGNOSTICS
+#define REVERSEGEOPUTER_DIAGNOSTICS 0
+#endif
+
 namespace geoputer::config {
+inline constexpr bool DetailedDiagnostics = REVERSEGEOPUTER_DIAGNOSTICS != 0;
+
 
 // Cardputer ADV EXT pins reserved for disabling the unused Mesh Kit radio.
 inline constexpr uint8_t LoraResetPin = 3;
@@ -40,7 +47,7 @@ inline constexpr unsigned MapViewRowsPerStep = 8;
 inline constexpr uint8_t MapViewScale = 1; // Boot scale; Map Up/Down selects 1, 2, 4 for this session.
 inline constexpr unsigned MapCursorRadius = 32; // Display pixels in each direction from the committed map center.
 inline constexpr uint32_t MapViewRetryMs = 1000;
-inline constexpr bool MapHeapDiagnostics = true; // Phase snapshots; no extra map buffers or sampling task.
+inline constexpr bool MapHeapDiagnostics = DetailedDiagnostics; // Phase snapshots; no extra map buffers or sampling task.
 inline constexpr size_t DatasetLineBytes = 256;  // 255 UTF-8 bytes plus NUL.
 inline constexpr size_t DatasetLanguageBytes = 32;
 inline constexpr unsigned DatasetPageRows = 4;

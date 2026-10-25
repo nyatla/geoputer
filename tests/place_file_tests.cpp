@@ -125,12 +125,13 @@ int main(int argc, char** argv) {
               "missing dataset is latched without repeated directory access");
         lookup.close();
         fs::create_directories(data);
+        std::ofstream(data / "dataset.ini") << "[dataset]\nversion=1\nmap=area.glc\ndefault_language=ja\n[ja]\ntitle=Test\nwordbook=names.giswordbook\n";
         // Invalid dictionary content proves that oversized maps are rejected
         // before opening the dictionary or allocating a raster.
         { std::ofstream book(data / "names.giswordbook"); book << "invalid"; }
         for (const unsigned count : {1501u, 2000u}) {
             const auto bytes = oversizedMapFixture(count);
-            { std::ofstream map(data / "area.GLC", std::ios::binary);
+            { std::ofstream map(data / "area.glc", std::ios::binary);
               map.write(reinterpret_cast<const char*>(bytes.data()), bytes.size()); }
             const auto rejected = lookup.prepare();
             check(rejected.state == PlaceState::TooManyChunks && rejected.dataset.chunks == count &&
@@ -144,11 +145,11 @@ int main(int argc, char** argv) {
                   "GPS updates and repeated checks do not re-read a rejected dataset");
             lookup.close();
         }
-        fs::remove(data / "area.GLC");
+        fs::remove(data / "area.glc");
         fs::remove(data / "names.giswordbook");
-        fs::copy_file(argv[2], data / "area.GLC");
+        fs::copy_file(argv[2], data / "area.glc");
         fs::copy_file(argv[3], data / "names.giswordbook");
-        test_index::generate(data.string(),"area.GLC","names.giswordbook");
+        test_index::generate(data.string(),"area.glc","names.giswordbook");
         {
             PlaceLookup no_memory(data.string());no_memory.setObserver(&activity);
             fail_next_allocation=true;
@@ -227,20 +228,18 @@ int main(int argc, char** argv) {
         check(!lookup.wordBookCacheStats().entries && !lookup.wordBookCacheStats().hits && !lookup.wordBookCacheStats().misses,
               "closing the dataset clears the wordbook cache and counters");
         fs::copy_file(argv[2], data / "duplicate.glc");
-        check(lookup.prepare().state == PlaceState::AmbiguousFiles, "startup reports duplicate data files");
-        check(lookup.search(request).state == PlaceState::AmbiguousFiles, "ambiguous datasets are not arbitrarily selected");
-        const auto ambiguous_accesses=activity.accesses;
-        check(lookup.prepare().state==PlaceState::AmbiguousFiles && activity.accesses==ambiguous_accesses,"ambiguous dataset is not rediscovered on each request");
+        check(lookup.prepare().state == PlaceState::Ready && lookup.search(request).state==PlaceState::Ready,
+              "INI selects the exact file even when other GLC files are present");
         fs::remove(data / "duplicate.glc");
         lookup.close();
-        { std::ofstream bad(data / "area.GLC", std::ios::binary | std::ios::trunc); bad << "bad"; }
+        { std::ofstream bad(data / "area.glc", std::ios::binary | std::ios::trunc); bad << "bad"; }
         check(lookup.prepare().state == PlaceState::DataError, "startup reports corrupt headers");
         check(lookup.search(request).state == PlaceState::DataError, "corrupt file is recoverable error");
-        fs::copy_file(argv[2], data / "area.GLC", fs::copy_options::overwrite_existing);
+        fs::copy_file(argv[2], data / "area.glc", fs::copy_options::overwrite_existing);
         const auto failed_accesses=activity.accesses;
         check(lookup.search(request).state==PlaceState::DataError && lookup.prepare().state==PlaceState::DataError && activity.accesses==failed_accesses,
               "repairing file bytes does not silently retry or clear the rejection");
-        test_index::generate(data.string(),"area.GLC","names.giswordbook");
+        test_index::generate(data.string(),"area.glc","names.giswordbook");
         lookup.close();
         check(lookup.search(request).state == PlaceState::Ready, "explicit reapply and reopen validate corrected dataset");
         fs::remove(data / "names.giswordbook");
@@ -264,7 +263,7 @@ int main(int argc, char** argv) {
             output.write(bytes.data(), bytes.size());
         }
         lookup.close();
-        test_index::generate(data.string(),"area.GLC","names.giswordbook");
+        test_index::generate(data.string(),"area.glc","names.giswordbook");
         check(lookup.search(request).state == PlaceState::EncodingError && !lookup.wordBookCacheStats().entries,
               "invalid text is never inserted into the wordbook cache");
         const auto encoding_accesses=activity.accesses;
@@ -273,7 +272,7 @@ int main(int argc, char** argv) {
         lookup.close();
         fs::copy_file(argv[3], data / "names.giswordbook", fs::copy_options::overwrite_existing);
         lookup.close();
-        test_index::generate(data.string(),"area.GLC","names.giswordbook");
+        test_index::generate(data.string(),"area.glc","names.giswordbook");
         check(lookup.search(request).state == PlaceState::Ready && lookup.wordBookCacheStats().misses == 1,
               "reopening a repaired dataset resolves names again without a stale cache entry");
         lookup.close();
@@ -297,7 +296,7 @@ int main(int argc, char** argv) {
             std::ofstream output(data / "names.giswordbook", std::ios::binary | std::ios::trunc);
             output.write(bytes.data(), bytes.size());
             output.close();
-            test_index::generate(data.string(),"area.GLC","names.giswordbook");
+            test_index::generate(data.string(),"area.glc","names.giswordbook");
             const bool supported = metadata.find("cp932") == std::string::npos &&
                 metadata.find("sjis") == std::string::npos && metadata.find("shift") == std::string::npos &&
                 metadata.find("utf16") == std::string::npos && metadata != "{}";
@@ -311,13 +310,13 @@ int main(int argc, char** argv) {
         if (argc == 5) {
             lookup.close();
             fs::copy_file(argv[4], data / "names.giswordbook", fs::copy_options::overwrite_existing);
-            test_index::generate(data.string(),"area.GLC","names.giswordbook");
+            test_index::generate(data.string(),"area.glc","names.giswordbook");
             check(lookup.prepare().state == PlaceState::EncodingError &&
                   lookup.search(request).state == PlaceState::EncodingError &&
                   !lookup.wordBookCacheStats().entries && lookup.cacheStats().bytes == 0 && activity.depth == 0,
                   "real legacy Wordbook is rejected before raster allocation and name lookup");
             std::cout << "PASS: supplied legacy Wordbook is rejected without character conversion\n";
         }
-        std::cout << "PASS: real file-based SDK lookup, UTF-8 names/encoding rejection, repeated seeks, missing/duplicate/corrupt data and recovery\n";
+        std::cout << "PASS: real file-based SDK lookup, UTF-8 names/encoding rejection, repeated seeks, missing/explicit-selection/corrupt data and recovery\n";
     } catch (const std::exception& e) { std::cerr << "FAIL: " << e.what() << '\n'; return 1; }
 }

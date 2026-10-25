@@ -7,13 +7,13 @@ static void check(bool value, const char* message) {
 }
 
 void testDialogs() {
-    for (auto kind : {DialogKind::PauseLog, DialogKind::StopLog, DialogKind::DeleteLog,
+    for (auto kind : {DialogKind::DeleteLog,
                       DialogKind::FormatSd, DialogKind::ResetSettings, DialogKind::EnterUsbMode, DialogKind::ExitUsbMode, DialogKind::RestartLogger}) {
         ChoiceDialog dialog;
         dialog.open(kind);
         check(dialog.active() && !dialog.selected(), "all dialogs default to Cancel");
         for (auto key : {UiKey::Up, UiKey::Down, UiKey::OpenGpsLogger, UiKey::OpenSettings,
-                         UiKey::OpenLogs, UiKey::F1,UiKey::PauseLog, UiKey::DeleteLog})
+                         UiKey::OpenLogs, UiKey::Other, UiKey::DeleteLog})
             check(dialog.keyPressed(key) == DialogInput::Ignored && !dialog.selected(),
                   "a horizontal modal ignores vertical navigation and unrelated keys");
         check(dialog.keyPressed(UiKey::Enter) == DialogInput::Cancelled && !dialog.active(),

@@ -1,5 +1,6 @@
 #pragma once
 #include <cstdint>
+#include "../Config.h"
 #ifdef ARDUINO_ARCH_ESP32
 #include <esp_timer.h>
 #else
@@ -15,11 +16,12 @@ inline uint64_t monotonicMicros() {
         std::chrono::steady_clock::now().time_since_epoch()).count());
 #endif
 }
-// Record wall time on success, early return, and exception, before any logging.
+// Diagnostic wall time on success, early return and exception. Normal builds
+// perform no clock reads and leave the destination unchanged.
 class ElapsedTime {
 public:
-    explicit ElapsedTime(uint64_t& elapsed) : elapsed_(elapsed), start_(monotonicMicros()) {}
-    ~ElapsedTime() { elapsed_ = monotonicMicros() - start_; }
+    explicit ElapsedTime(uint64_t& elapsed) : elapsed_(elapsed), start_(config::DetailedDiagnostics ? monotonicMicros() : 0) {}
+    ~ElapsedTime() { if constexpr (config::DetailedDiagnostics) elapsed_ = monotonicMicros() - start_; }
     ElapsedTime(const ElapsedTime&) = delete;
     ElapsedTime& operator=(const ElapsedTime&) = delete;
 private:

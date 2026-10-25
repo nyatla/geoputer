@@ -21,7 +21,7 @@ inline const char* datasetFailureLabel(PlaceState state) {
     switch(state) {
         case PlaceState::NoCard:return "NO SD";
         case PlaceState::DatasetMissing:return "MISSING";
-        case PlaceState::AmbiguousFiles:case PlaceState::MetadataError:return "CONFIG";
+        case PlaceState::MetadataError:return "CONFIG";
         case PlaceState::VersionError:return "VERSION";
         case PlaceState::EncodingError:return "ENCODING";
         case PlaceState::TooManyChunks:return "TOO LARGE";
@@ -38,7 +38,7 @@ inline DatasetIssueText datasetIssueText(PlaceState state, bool ja) {
         case PlaceState::Unselected: return ja ? DatasetIssueText{"データセット", "未選択"} : DatasetIssueText{"DATASET", "UNSELECTED"};
         case PlaceState::NoCard: return ja ? DatasetIssueText{"SDカードが","利用できません"} : DatasetIssueText{"SD CARD","NOT READY"};
         case PlaceState::DatasetMissing: return ja ? DatasetIssueText{"データセットが","見つかりません"} : DatasetIssueText{"DATASET","NOT FOUND"};
-        case PlaceState::AmbiguousFiles: case PlaceState::MetadataError:
+        case PlaceState::MetadataError:
             return ja ? DatasetIssueText{"データセットの","構成が不正です"} : DatasetIssueText{"DATASET","CONFIG ERROR"};
         case PlaceState::VersionError: return ja ? DatasetIssueText{"データセットの","形式に未対応です"} : DatasetIssueText{"DATASET","BAD VERSION"};
         case PlaceState::EncodingError: return ja ? DatasetIssueText{"データセットの","文字コードが未対応です"} : DatasetIssueText{"WORDBOOK","BAD ENCODING"};

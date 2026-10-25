@@ -1,20 +1,16 @@
 #pragma once
 
-#include "UiTypes.h"
+#include "ScreenNavigation.h"
 
 namespace geoputer {
 
 // Input is the unshifted value of a physical Cardputer key, independent of Fn.
 // Del and Enter are supplied separately by the keyboard driver's state flags.
 inline UiKey mapPhysicalKey(char key, bool /*fn*/) {
+    for (const auto& item : MenuScreens) if (item.shortcut == key) return item.key;
     switch (key) {
         case 's': return UiKey::ScreenOff;
         case 'g': return UiKey::GpsControl;
-        case '0': return UiKey::OpenSettings;
-        case '1': return UiKey::OpenLivePlace;
-        case '2': return UiKey::OpenMap;
-        case '3': return UiKey::OpenGpsLogger;
-        case '4': return UiKey::OpenLogs;
         case 'd': return UiKey::DeleteLog;
         case ';': return UiKey::Up;
         case '.': return UiKey::Down;

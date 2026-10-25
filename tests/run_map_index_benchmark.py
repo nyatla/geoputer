@@ -39,7 +39,7 @@ if __name__=='__main__':
     args=parser.parse_args();args.output.mkdir(parents=True,exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='rgp-index-benchmark-') as folder:
         binary=Path(folder)/'benchmark'
-        subprocess.run(['g++','-O2','-DNDEBUG','-std=c++17','-Wall','-Wextra','-Werror','-pedantic',
+        subprocess.run(['g++','-O2','-DNDEBUG','-std=c++17','-DREVERSEGEOPUTER_DIAGNOSTICS=1','-Wall','-Wextra','-Werror','-pedantic',
             '-I'+str(ROOT/'application'),'-I'+str(ROOT/'third_party/galuchat/include'),
             '-I'+str(ROOT/'tests/performance'),str(ROOT/'tests/performance/index_benchmark_host.cpp'),
             str(ROOT/'tests/performance/baseline/RamCachedMapReader.cpp'),

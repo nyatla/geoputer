@@ -7,6 +7,7 @@
 #include "SettingsLayout.h"
 #include "SettingsText.h"
 #include "LivePlaceLayout.h"
+#include "GpsPresentation.h"
 #include "PlacePresentation.h"
 #include "DatasetPresentation.h"
 #include <cstdio>
@@ -94,14 +95,6 @@ void UiRenderer::drawDialog(const UiModel& model, UiLanguage language) {
         case DialogKind::RestartLogger:
             title = japanese ? "通常起動へ戻る？" : "Restart logger?";
             accept = japanese ? "再起動" : "Restart";
-            break;
-        case DialogKind::PauseLog:
-            title = japanese ? "記録を一時停止？" : "Pause logging?";
-            accept = japanese ? "一時停止" : "Pause";
-            break;
-        case DialogKind::StopLog:
-            title = japanese ? "記録を停止？" : "Stop logging?";
-            accept = japanese ? "停止" : "Stop";
             break;
         case DialogKind::DeleteLog: {
             title = !dialog.actionEnabled() ? (japanese ? "記録中は削除不可" : "Log is in use") :
@@ -197,7 +190,7 @@ void UiRenderer::draw(const UiModel& model) {
         frame_.pushSprite(0,0); return;
     }
     if (content.screen == ScreenId::Boot) {
-        drawBoot(model, content, settings);
+        drawBoot(model, settings);
     } else if(content.screen==ScreenId::Map) {
         drawLivePlace(model,content,settings);
         drawMap(model);
@@ -214,7 +207,7 @@ void UiRenderer::draw(const UiModel& model) {
             font_.draw(frame_,20,25+row*18,menuLabel(row,language==UiLanguage::Japanese),role,color);
         }
     } else if (content.screen == ScreenId::GpsLogger) {
-        drawGpsLogger(model, content, settings);
+        drawGpsLogger(model);
     } else {
         drawSettings(model, content, settings);
     }
@@ -232,7 +225,7 @@ void UiRenderer::draw(const UiModel& model) {
     frame_.pushSprite(0, 0);
 }
 
-void UiRenderer::drawBoot(const UiModel& model, const UiSnapshot&, const Settings& settings) {
+void UiRenderer::drawBoot(const UiModel& model, const Settings& settings) {
     const auto& data = model.data();
     char line[64];
     text(4, 8, "GEOPUTER", TFT_CYAN);
@@ -312,19 +305,16 @@ void UiRenderer::drawLivePlace(const UiModel& model, const UiSnapshot& content, 
                     LivePlaceLayout::InfoBottom - LivePlaceLayout::AddressBottom + 1, TFT_WHITE);
     frame_.drawFastHLine(0, LivePlaceLayout::SpeedBottom, LivePlaceLayout::DividerX, TFT_WHITE);
     frame_.drawFastHLine(0, LivePlaceLayout::InfoBottom, 240, TFT_WHITE);
-    const auto detail = formatLiveGps(gps, datasetInactive(issue) ? GpsFix{} : data.place_fix);
+    const auto detail = formatGpsText(gps, datasetInactive(issue) ? GpsFix{} : data.place_fix);
     text(4, 62, "SPD");
     speedText(detail.speed);
-    text(LivePlaceLayout::SpeedUnitX, LivePlaceLayout::SpeedUnitY, detail.speed_unit);
+    text(LivePlaceLayout::SpeedUnitX, LivePlaceLayout::SpeedUnitY, "km/h");
     text(4, 85, "HDG");
-    char heading[16]="--";
-    if (gps.fix.valid && gps.reception==GpsReception::Fix && (gps.fix.fields & GpsCourse) &&
-        std::isfinite(gps.fix.course_deg) && gps.fix.course_deg>=0 && gps.fix.course_deg<360)
-        std::snprintf(heading,sizeof(heading),"%ld",std::lround(gps.fix.course_deg)%360);
-    largeText(84-static_cast<int>(std::strlen(heading))*16,89,heading);
+    largeText(84-static_cast<int>(std::strlen(detail.heading))*16,89,detail.heading);
     largeText(84,89,"°");
+    char altitude[16];
     static const char* const labels[] = {"LAT", "LON", "ALT", "SAT"};
-    const char* const values[] = {detail.latitude, detail.longitude, detail.altitude, detail.satellites};
+    const char* const values[] = {detail.latitude, detail.longitude, liveAltitude(detail,altitude), detail.satellites};
     for (unsigned row = 0; row < 4; ++row) {
         const int y = LivePlaceLayout::DetailY + row * LivePlaceLayout::DetailStep;
         text(LivePlaceLayout::DetailLabelX, y, labels[row]);
@@ -420,15 +410,14 @@ void UiRenderer::drawLogBrowser(const UiModel& model, const UiSnapshot& content,
     }
 }
 
-void UiRenderer::drawGpsLogger(const UiModel& model, const UiSnapshot&, const Settings& settings) {
+void UiRenderer::drawGpsLogger(const UiModel& model) {
     const auto& data = model.data();
     const auto& gps = data.gps;
-    const auto& fix = gps.fix;
     const auto& log = data.storage.log;
     char line[80];
     text(4,ViewHeaderTextY,"GPS / LOGGER",TFT_LIGHTGREY);
     text(148,ViewHeaderTextY,log.closing ? "SAVING" : recordingName(data.recording.state),TFT_CYAN);
-    const auto detail = formatLiveGps(gps, {});
+    const auto detail = formatGpsText(gps, {}, true);
     // Two 116-pixel columns. Coordinates share a row; labels never depend on values.
     text(4,23,"LAT"); valueText(28,116,23,detail.latitude);
     text(124,23,"LON"); valueText(148,236,23,detail.longitude);
@@ -437,20 +426,11 @@ void UiRenderer::drawGpsLogger(const UiModel& model, const UiSnapshot&, const Se
     if (gps.received) std::snprintf(line,sizeof(line),"%lu",static_cast<unsigned long>((data.recording.now_ms-gps.received_at_ms)/1000));
     else std::snprintf(line,sizeof(line),"--");
     valueText(148,228,33,line);text(228,33,"s");
-    char hdop[16]="--", satellites[8]="--";
-    if(fix.fields & GpsSatellites)std::snprintf(satellites,sizeof(satellites),"%u",fix.satellites);
-    if((fix.fields & GpsHdop) && std::isfinite(fix.hdop))std::snprintf(hdop,sizeof(hdop),"%.1f",fix.hdop);
-    char altitude[24]="--";
-    if(fix.valid && gps.reception==GpsReception::Fix && (fix.fields & GpsAltitude) && std::isfinite(fix.altitude_m))
-        std::snprintf(altitude,sizeof(altitude),"%.1f",fix.altitude_m);
-    text(4,43,"ALT");valueText(28,108,43,altitude);text(108,43,"m");
-    text(124,43,"HDOP");valueText(156,236,43,hdop);
-    char heading[16]="--";
-    if(fix.valid && gps.reception==GpsReception::Fix && (fix.fields & GpsCourse) && std::isfinite(fix.course_deg) && fix.course_deg>=0 && fix.course_deg<360)
-        std::snprintf(heading,sizeof(heading),"%ld",std::lround(fix.course_deg)%360);
+    text(4,43,"ALT");valueText(28,108,43,detail.altitude);text(108,43,"m");
+    text(124,43,"HDOP");valueText(156,236,43,detail.hdop);
     text(4,53,"SPD");valueText(28,84,53,detail.speed);text(84,53,"km/h");
-    text(124,53,"HDG");valueText(148,212,53,heading);text(212,53,"deg");
-    text(4,63,"SAT");valueText(28,116,63,satellites);
+    text(124,53,"HDG");valueText(148,212,53,detail.heading);text(212,53,"deg");
+    text(4,63,"SAT");valueText(28,116,63,detail.satellites);
     text(124,63,gps.reception==GpsReception::Unavailable?"GPS ERROR":"GPS ACTIVE",TFT_LIGHTGREY);
     const auto seconds = data.recording.elapsed_ms/1000;
     std::snprintf(line,sizeof(line),"%02lu:%02lu:%02lu",static_cast<unsigned long>(seconds/3600),
@@ -465,7 +445,6 @@ void UiRenderer::drawGpsLogger(const UiModel& model, const UiSnapshot&, const Se
         std::snprintf(line,sizeof(line),"%.29s",log.name[0]?log.name:"FILE --");text(4,93,line,TFT_LIGHTGREY);
         if(std::strlen(log.name)>29)text(4,103,log.name+29,TFT_LIGHTGREY);
     }
-    (void)settings;
 }
 
 void UiRenderer::drawSettings(const UiModel& model, const UiSnapshot& content, const Settings& settings) {
@@ -701,80 +680,27 @@ void UiRenderer::drawDialogGuide(const ChoiceDialog& dialog) {
 }
 
 void UiRenderer::drawScreenGuide(const UiModel& model) {
-    const auto content=model.snapshot();const auto& data=model.data();
-    const auto screen=content.screen;
-    const bool maintenance=data.boot.maintenance;
-    const bool root=isScreenRoot(screen,content.page) && !model.cardInfo() && !model.editing() && !maintenance;
-    const bool switching=data.storage.busy && (data.storage.operation==StorageOperation::EnterUsbMode || data.storage.operation==StorageOperation::ExitUsbMode);
-    const bool accepting=content.action.kind==ActionKind::None && !switching && !(isLogBrowser(screen) && data.browse.deleting);
-    const bool dataset_wait=screen==ScreenId::Settings && data.datasets.applying &&
-        (content.page==SettingsPage::DatasetMenu || content.page==SettingsPage::DatasetList ||
-         content.page==SettingsPage::DatasetDetail || content.page==SettingsPage::DatasetIndex);
-    const bool back=accepting && !dataset_wait && !(screen==ScreenId::Settings && content.page==SettingsPage::DatasetIndex && data.storage.busy);
-    const auto key_color=accepting?TFT_WHITE:TFT_DARKGREY;
-    text(4,124,root && screen!=ScreenId::Menu?"ESC:MENU":"ESC DEL",back?TFT_CYAN:TFT_DARKGREY);
-    if(root) {
-        constexpr ScreenId targets[] = {ScreenId::LivePlace,ScreenId::Map,ScreenId::GpsLogger,ScreenId::Logs,ScreenId::Settings};
-        constexpr char numbers[]="12340";
-        for(unsigned i=0;i<5;++i) {
-            char key[]={numbers[i],0};text(84+i*8,124,key,!accepting?TFT_DARKGREY:targets[i]==screen?TFT_CYAN:TFT_LIGHTGREY);
+    const auto screen=model.snapshot().screen;
+    const auto guide=model.keyGuide();
+    text(4,124,guide.root && screen!=ScreenId::Menu?"ESC:MENU":"ESC DEL",guide.back?TFT_CYAN:TFT_DARKGREY);
+    if (guide.root) {
+        for (unsigned i=0;i<MenuCount;++i) {
+            const char key[]={MenuScreens[i].shortcut,0};
+            text(84+i*8,124,key,!guide.accepting?TFT_DARKGREY:MenuScreens[i].screen==screen?TFT_CYAN:TFT_LIGHTGREY);
         }
     }
-    if (!maintenance) {text(root?148:84,124,"S",key_color);text(root?164:100,124,"G",key_color);}
-    bool arrows=false,up=false,down=false;const unsigned selected=content.selected_setting;
-    if(screen==ScreenId::Map) {
-        arrows=true;up=map::supportedScale(data.map.scale) && data.map.scale>1;
-        down=map::supportedScale(data.map.scale) && data.map.scale<4;
-    } else if(screen==ScreenId::Logs) {
-        const auto& view=data.browse;
-        arrows=true;up=!view.loading && (selected>0 || view.has_newer);
-        down=!view.loading && (selected+1<view.count || view.has_older);
-        const bool remove=accepting && !view.loading && selected<view.count && !(view.active_mask&(1u<<selected));
-        text(180,124,"D",remove?TFT_WHITE:TFT_DARKGREY);
-    } else if(screen==ScreenId::LogPoint) {
-        arrows=true;up=data.browse.target>0;down=uint64_t(data.browse.target)+1<data.browse.summary.records;
-    } else if(screen==ScreenId::LogDetail) {
-        arrows=true;up=!data.browse.loading && selected>0;down=!data.browse.loading && selected<1;
-    } else if(screen==ScreenId::Menu) {
-        arrows=true;up=selected>0;down=selected+1<MenuCount;
-    } else if(screen==ScreenId::Settings && !model.cardInfo()) {
-        const auto page=content.page;
-        if (model.editing()) {
-            const bool change=accepting && !dataset_wait && (page==SettingsPage::System ||
-                (page==SettingsPage::Operation && settingChoices(selected)>1) ||
-                (page==SettingsPage::DatasetDetail && !data.datasets.loading && data.datasets.error==DatasetError::None && data.datasets.info.language_count>1));
-            drawKeyArrow(124,124,UiKey::Left,change);drawKeyArrow(136,124,UiKey::Right,change);
-        } else if (page==SettingsPage::Licenses) {
-            arrows=true;const auto offset=model.licenseOffset();
-            up=offset>0;down=offset+SettingsLayout::LicenseRows<licenseLineCount();
-            size_t target=offset;
-            if(licenseSectionCount()) {
-                size_t current=0;
-                while(current+1<licenseSectionCount() && licenseSectionStart(current+1)<=offset)++current;
-                target=offset<licenseSectionStart(0)?0:licenseSectionStart(current?current-1:0);
-            }
-            bool right=false;
-            for(size_t n=0;n<licenseSectionCount();++n)if(licenseSectionStart(n)>offset)right=true;
-            drawKeyArrow(160,124,UiKey::Left,accepting && target!=offset);
-            drawKeyArrow(172,124,UiKey::Right,accepting && right);
-        } else if(page==SettingsPage::DatasetList) {
-            const auto& view=data.datasets;arrows=true;
-            const bool ready=!view.loading && !view.applying && view.error==DatasetError::None;
-            up=ready && (selected>0 || view.has_older);
-            down=ready && (selected+1<view.count || view.has_newer);
-        } else if(page!=SettingsPage::About && page!=SettingsPage::Reset && page!=SettingsPage::DatasetIndex) {
-            const bool ready=!dataset_wait && (page!=SettingsPage::DatasetDetail ||
-                (!data.datasets.loading && data.datasets.error==DatasetError::None));
-            const unsigned count=!ready?0:page==SettingsPage::Root?SettingsRootCount:
-                page==SettingsPage::Operation?OperationRowCount:page==SettingsPage::System?SettingsSystemCount:
-                page==SettingsPage::DatasetMenu?3:page==SettingsPage::DatasetDetail?datasetDetailRows(data.datasets,data.settings.language==UiLanguage::Japanese):4;
-            arrows=true;up=ready && selected>0;down=ready && selected+1<count;
-        }
+    if (guide.system) {
+        const auto color=guide.accepting?TFT_WHITE:TFT_DARKGREY;
+        text(guide.root?148:84,124,"S",color);text(guide.root?164:100,124,"G",color);
     }
-    if(arrows) {
-        const int x=screen==ScreenId::Logs?200:root?188:124;
-        drawKeyArrow(x,124,UiKey::Up,accepting && up);
-        drawKeyArrow(x+12,124,UiKey::Down,accepting && down);
+    if (screen==ScreenId::Logs) text(180,124,"D",guide.remove?TFT_WHITE:TFT_DARKGREY);
+    if (guide.vertical) {
+        const int x=screen==ScreenId::Logs?200:guide.root?188:124;
+        drawKeyArrow(x,124,UiKey::Up,guide.up);drawKeyArrow(x+12,124,UiKey::Down,guide.down);
+    }
+    if (guide.horizontal) {
+        const int x=guide.vertical?160:124;
+        drawKeyArrow(x,124,UiKey::Left,guide.left);drawKeyArrow(x+12,124,UiKey::Right,guide.right);
     }
 }
 

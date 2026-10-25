@@ -15,7 +15,9 @@ namespace geoputer {
 // Owned and called exclusively by StorageTask. No file handles cross task queues.
 class PlaceLookup {
 public:
-    explicit PlaceLookup(std::string directory = "/sd/dataset/01") : directory_(std::move(directory)) {}
+    explicit PlaceLookup(std::string directory = {}) : directory_(std::move(directory)) {
+        dataset_.state = directory_.empty() ? PlaceState::Unselected : PlaceState::Waiting;
+    }
     PlaceLookup(const PlaceLookup&) = delete;
     PlaceLookup& operator=(const PlaceLookup&) = delete;
     void setObserver(StorageObserver* observer) { observer_ = observer; }
@@ -36,7 +38,6 @@ private:
     std::string directory_;
     std::string language_;
     PlaceDisplayFormat display_;
-    bool manifest_ = false;
     uint8_t drive_=0;
     PlaceReadTiming timing_{}; // Must outlive the Readers that refer to its I/O counters.
     std::unique_ptr<CachedMapReader> map_;
