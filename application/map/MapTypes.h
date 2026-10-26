@@ -4,27 +4,43 @@
 
 namespace geoputer::map {
 using RegionCode = uint32_t;
+enum class SessionId : uint8_t { Live, Log };
 enum class Error : uint8_t { None, InvalidInput, TooLarge, NoMemory, NoFix, NoDataset, NoCard, ReadError, Stale };
+constexpr size_t MaxWidth = 240, MaxHeight = 101;
+constexpr size_t BoundaryBytes = ((MaxWidth + 3) / 4) * MaxHeight;
+// A UI-owned back image, lent to one Storage operation until explicit return.
+struct BufferLease {
+    uint8_t* data = nullptr;
+    size_t capacity = 0;
+    uint32_t id = 0;
+};
+inline bool validBuffer(const BufferLease& buffer) {
+    return buffer.data && buffer.id && buffer.capacity >= BoundaryBytes;
+}
+inline bool sameBuffer(const BufferLease& a,const BufferLease& b) {
+    return a.data==b.data && a.capacity==b.capacity && a.id==b.id;
+}
 struct Request {
     uint32_t token = 0, screen_generation = 0, dataset_generation = 0, sample_seq = 0;
     double latitude = 0, longitude = 0;
-    uint16_t row = 0;
+    BufferLease buffer;
     uint8_t scale = 1; // Input cells per stored sample: 1, 2 or 4.
+    SessionId session = SessionId::Live;
+    RegionCode region = 0;
+    bool region_known = false, reuse = false;
 };
 struct FrameInfo {
     Request request;
     uint16_t width = 0, height = 0;
     double meters_per_pixel = 0;
-    RegionCode region = 0; // Generation-center region for boundary highlighting, not the live place.
+    RegionCode region = 0; // Highlighted region; may be updated from retained pixels without moving the map.
     Error error = Error::None;
 };
-constexpr size_t TransferRows = 8, MaxWidth = 240, MaxHeight = 101;
-constexpr size_t TransferBytes = ((MaxWidth + 3) / 4) * TransferRows;
-struct Transfer {
-    FrameInfo info;
-    uint16_t row = 0, rows = 0;
-    uint8_t pixels[TransferBytes]{};
-};
+inline bool sameRequest(const Request& a,const Request& b) {
+    return a.token==b.token && a.screen_generation==b.screen_generation &&
+        a.dataset_generation==b.dataset_generation && a.session==b.session &&
+        a.scale==b.scale && sameBuffer(a.buffer,b.buffer);
+}
 constexpr bool supportedScale(unsigned scale) { return scale==1 || scale==2 || scale==4; }
 inline const char* scaleText(unsigned scale) { return scale==4?"1/4":scale==2?"1/2":"1/1"; }
 struct ViewState { bool busy = false; Error error = Error::None; uint8_t scale = 1; };

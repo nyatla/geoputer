@@ -6,7 +6,11 @@
 namespace geoputer {
 inline std::string fatFsPath(uint8_t drive, const std::string& path) {
     if (path.compare(0, 4, "/sd/") != 0) throw std::runtime_error("SD path is outside /sd");
-    return std::to_string(drive) + ":" + path.substr(3);
+    auto native = std::to_string(drive);
+    native.reserve(native.size() + 1 + path.size() - 3);
+    native.push_back(':');
+    native.append(path, 3, std::string::npos);
+    return native;
 }
 
 // Native paths remain unchanged in the host filesystem adapters.

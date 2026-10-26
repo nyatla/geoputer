@@ -11,6 +11,7 @@
 #include "export/LogExporter.h"
 #include "../../TaskMessages.h"
 #include "StorageScreenResources.h"
+#include "StorageReplies.h"
 #include "../../utils/Task.h"
 
 namespace geoputer {
@@ -69,6 +70,7 @@ private:
     StorageScreenResources screen_resources_;
     uint64_t read_barrier_session_=0;
     uint32_t read_barrier_=0, read_request_id_=0;
+    uint32_t browse_release_generation_=0;
     bool has_read_=false, read_prepared_=false;
     unsigned sd_depth_ = 0;
     bool sd_dirty_ = false, rg_dirty_ = false;
@@ -76,8 +78,7 @@ private:
     PlaceRequest place_request_{};
     SPIClass spi_{FSPI};  // LCD uses SPI3/HSPI. SD owns the other SPI peripheral.
     StorageSnapshot state_{};
-    ReturnMessage pending_return_{};
-    AppNotification completion_{};
+    StorageReplies replies_;
     StorageCommand job_{};
     uint32_t job_request_id_ = 0;
     uint32_t sequence_ = 0;
@@ -86,9 +87,7 @@ private:
     bool mounted_ = false;
     bool initialized_ = false;
     bool usb_mode_ = false, usb_dirty_ = false;
-    bool has_return_ = false;
     JobKind job_kind_ = JobKind::None;
-    bool has_completion_ = false;
     DatasetRequest dataset_request_{};
     IndexProgress index_progress_{};
     uint32_t index_started_at_=0,index_progress_at_=0;

@@ -25,7 +25,7 @@ private:
     void mapState(bool busy,map::Error error);
     map::Error mapAvailability() const;
     [[gnu::noinline]] bool mapStorageCommand(MessageKind kind,const map::Request& command);
-    [[gnu::noinline]] bool mapUiCommand(MessageKind kind,const map::Transfer& transfer);
+    [[gnu::noinline]] bool mapUiCommand(MessageKind kind,const map::FrameInfo& info,map::BufferLease* buffer=nullptr);
     bool callUi(UiRequest& request, SyncReturn& result);
     template <typename Request>
     bool callTask(TaskId peer, Queue<Request, 1>& destination, Request& request, SyncReturn& result) {
@@ -50,6 +50,8 @@ private:
     void refreshPlace();
     bool canSearchPlace() const;
     void requestPlace();
+    [[gnu::noinline]] void processPlace();
+    [[gnu::noinline]] bool placeUiCommand(MessageKind kind,const PlaceRequest& request,map::BufferLease* buffer=nullptr);
     void advanceBoot();
     void processDatasetCheck();
     void initializeGps();
@@ -65,6 +67,7 @@ private:
     void prepareLogScreen(ScreenId target,ScreenId previous);
     bool operateBrowser(const UiAction& action);
     void processBrowser();
+    void processReplay();
     void completeBrowser(const LogReadReply& reply);
     bool showCachedPoint();
     bool operateDataset(const UiAction& action);
@@ -94,12 +97,16 @@ private:
     bool log_adopted_ = false;
     AppScreenResources screen_resources_;
     // Monotonic tokens and cancellation survive display-resource replacement.
-    uint32_t browse_token_=0,browse_waiting_=0;
+    uint32_t browse_token_=0,browse_waiting_=0,browse_release_generation_=0;
     bool browse_cancel_=false;
-    map::Request map_request_{};
+    map::Request map_request_{},map_session_{};
+    bool map_session_close_=false,map_session_ready_=false;
     uint32_t map_token_=0xa0000000u;
-    bool map_cancel_=false;
+    bool map_cancel_=false,map_storage_owned_=false;
     PlaceSearchFlow place_flow_;
+    // Loan ownership survives screen replacement and accepted async work.
+    PlaceRequest place_borrow_{};
+    bool place_completion_ready_=false,place_queued_=false,place_discard_=false;
     uint32_t dataset_token_ = 0, dataset_waiting_ = 0;
     bool dataset_applying_ = false, restart_pending_ = false;
     DatasetAction dataset_operation_ = DatasetAction::Open;

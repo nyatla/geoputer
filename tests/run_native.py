@@ -14,6 +14,7 @@ with tempfile.TemporaryDirectory(prefix="geoputer-native-") as directory:
         "-fsanitize=undefined", "-fno-sanitize-recover=all", "-D_GLIBCXX_ASSERTIONS", "-g", "-pthread",
         "-I", str(root / "tests/support"), "-I", str(root / "application"),
         str(root / "tests/native_tests.cpp"),
+        str(root / "tests/storage_reply_tests.cpp"),
         str(root / "tests/logging_tests.cpp"),
         str(root / "tests/log_ring_tests.cpp"),
         str(root / "tests/log_reader_tests.cpp"),
@@ -59,14 +60,7 @@ with tempfile.TemporaryDirectory(prefix="geoputer-native-") as directory:
     subprocess.run([str(guard)], check=True, timeout=5)
     setup_body = (root/'application/main.cpp').read_text().split('void setup() {', 1)[1].lstrip()
     assert setup_body.startswith('geoputer::holdUnusedLoraInReset();'), "Guard must precede mode selection and peripheral initialization"
-    keyboard = Path(directory) / 'keyboard-reader-tests'
-    subprocess.run(['g++', '-std=c++17', '-Wall', '-Wextra', '-Werror', '-pedantic',
-                    '-fsanitize=undefined', '-fno-sanitize-recover=all',
-                    '-I', str(root/'tests/support/keyboard'), '-I', str(root/'application'),
-                    '-I', str(root/'.pio/libdeps/cardputer-adv/M5Cardputer/src'),
-                    str(root/'tests/keyboard_reader_tests.cpp'), str(root/'application/hardware/AdvKeyboardReader.cpp'),
-                    '-o', str(keyboard)], check=True, timeout=30)
-    subprocess.run([str(keyboard)], check=True, timeout=5)
+    subprocess.run([sys.executable, str(root/'tests/run_keyboard.py')], check=True, timeout=180)
     export_folder=Path(directory)/'export-fixtures'
     subprocess.run([str(binary)], check=True, timeout=15,
                    env=dict(os.environ,GEOPUTER_EXPORT_FIXTURES=str(export_folder)))

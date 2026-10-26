@@ -8,6 +8,7 @@
 #include "../../../../application/Settings.cpp"
 #include "../../../../application/task/ui/UiModel.cpp"
 #include "../../../../application/task/ui/UiRenderer.cpp"
+#include "../../../../application/task/ui/UsbRenderer.cpp"
 #include "../../../../application/task/ui/SettingsText.cpp"
 #include "../../../../application/task/ui/PixelFont.cpp"
 #include "../../../../application/task/ui/Shinonome.cpp"

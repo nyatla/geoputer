@@ -25,8 +25,8 @@ struct UiUsbResources {
     UsbPage page=UsbPage::Menu,return_page=UsbPage::Menu;
     uint8_t file=0;
 };
-// UI alone owns these resources. Images are allocated only on the Map screen;
-// screen entry releases both image buffers and resets all departed local state.
+// UI alone owns these resources. Two image arrays remain at fixed addresses.
+// Screen entry hides old images and resets local state; pending loans survive.
 struct UiScreenResources {
     UiMapResources map;
     UiSettingsResources settings;

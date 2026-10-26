@@ -19,9 +19,9 @@ struct BatteryStatus { int8_t percent = -1; bool charging = false; bool charge_k
 enum class ActionKind : uint8_t { None, ChangeScreen, SaveSettings, ResetSettings, Storage, Sleep, Wake, Logging, Browse, Dataset, UsbExport, Maintenance, RestartLogger, MapScale };
 enum class UsbPage : uint8_t { Menu, WaitEject, Files, Format, Progress, Complete, Error, Busy };
 enum class UsbAction : uint8_t { Begin, Start, Publish, Older, Newer };
-enum class BrowseAction : uint8_t { OpenFile, Older, Newer, Points, Reload, Point, Delete };
+enum class BrowseAction : uint8_t { OpenFile, Older, Newer, Points, Reload, Point, Delete, Map, Replay, ToggleView, Playback, PausePlayback };
 enum class ActionResult : uint8_t { None, Applied, Rejected };
-enum class UiKey : uint8_t { OpenGpsLogger, OpenSettings, OpenLogs, DeleteLog, Escape, Up, Down, Left, Right, Enter, Other, Back, OpenLivePlace, OpenMap, ScreenOff, GpsControl };
+enum class UiKey : uint8_t { OpenGpsLogger, OpenSettings, OpenLogs, DeleteLog, Escape, Up, Down, Left, Right, Enter, Other, Back, OpenLivePlace, OpenMap, ScreenOff, GpsControl, ToggleView, ZoomIn, FirstPoint, LastPoint, Playback, ZoomOut };
 enum class SettingsPage : uint8_t { Root, Operation, Storage, Reset, Licenses, DatasetList, DatasetDetail, About, DatasetIndex, DatasetMenu, System };
 // Menu commands are separate from persisted settings and page identifiers.
 enum class SettingsRootItem : uint8_t { Operation, System, Storage, About, Licenses, Count };
@@ -58,6 +58,7 @@ struct UiData {
     PlaceState place_state;
     DatasetInfo dataset;
     GpsFix place_fix;
+    map::RegionCode place_region=0;
     GpsSnapshot gps;
     Settings settings;
     StorageSnapshot storage;
@@ -101,6 +102,16 @@ private:
 
 static_assert(std::is_trivially_copyable<UiData>::value, "UI page data must remain safe for value-copy queues");
 
+inline bool viewingLogPoint(ScreenId screen) { return screen==ScreenId::LogPoint; }
+inline bool showingMap(ScreenId screen,const UiData& data) {
+    return screen==ScreenId::Map || (viewingLogPoint(screen) && data.browse().map_mode);
+}
+inline const GpsFix& displayedFix(ScreenId screen,const UiData& data) {
+    return viewingLogPoint(screen)?data.browse().point:data.gps.fix;
+}
+inline bool logMapAvailable(const UiData& data) {
+    return data.storage.card_state==CardState::Mounted && data.settings.dataset && data.dataset.state==PlaceState::Ready;
+}
 inline bool usbEntryAllowed(const UiData& data) {
     return loggerStopped(data.recording, data.storage.log) && !data.storage.busy &&
         !data.datasets().loading && !data.datasets().applying && data.storage.settings_state != SettingsState::Unavailable;

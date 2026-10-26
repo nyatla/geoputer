@@ -26,10 +26,10 @@ int main(int argc,char** argv) {
     test_index::generate(argv[2],"map.glc","names.giswordbook");
     map::Request request{};request.token=1;request.screen_generation=1;request.dataset_generation=1;
     request.latitude=35.681641;request.longitude=140.027194;request.scale=std::atoi(argv[3]);
-    MapBuildJob job;check(job.start(request));job.loaded(readBoundaryMap(argv[2],"ja",request,0,nullptr));
-    for(int n=0;n<20&&!job.complete();++n)job.step();
-    check(job.complete() && job.info().error==map::Error::None);
-    M5GFX display;UiRenderer renderer(display);check(renderer.begin(previewColorDepth()));
+    M5GFX display;UiRenderer renderer(display);alignas(4) uint8_t backing[240*135*2+4]{};
+    const auto depth=previewColorDepth();
+    const auto capacity=sizeof(backing);
+    check(renderer.begin(depth,std::getenv("GEOPUTER_PREVIEW_EXTERNAL") ? backing : nullptr,capacity));
     UiData data{};data.settings=defaultSettings();data.settings.dataset=1;data.dataset.generation=1;data.map.scale=request.scale;
     data.storage.card_state=CardState::Mounted;data.storage.rg.state=RgCacheState::Ready;
     data.recording.state=RecordingState::Paused;data.place_state=PlaceState::Ready;
@@ -40,13 +40,15 @@ int main(int argc,char** argv) {
     UiModel model;model.tick(1000);model.setBattery(72,false,true);
     check(model.setScreen({ScreenId::Map,DisplayMode::View,1,data,0,ActionResult::None})==OperationStatus::Ok);
     const bool reading=!std::strcmp(mode,"reading");
-    map::Transfer transfer{};transfer.info=job.info();
+    map::FrameInfo origin{};
+    map::MapSession session;MapBuildJob job;
     if(!reading) {
-    check(model.beginMapFrame(transfer)==OperationStatus::Ok);
-    for(unsigned row=0;row<101;row+=8) {
-        request.row=row;check(job.read(request,transfer));check(model.writeMapRows(transfer)==OperationStatus::Ok);
-    }
-    check(model.commitMapFrame(transfer)==OperationStatus::Ok);
+        check(model.beginMapFrame(request,request.buffer)==OperationStatus::Ok);
+        check(job.start(request,session));job.loaded(readBoundaryMap(argv[2],"ja",request,0,nullptr));
+        for(int n=0;n<20&&!job.complete();++n)job.step();
+        check(job.complete() && job.info().error==map::Error::None);
+        origin=job.info();check(job.release(request));
+        check(model.commitMapFrame(origin)==OperationStatus::Ok);
     }
     if(reading)data.map.busy=true;
     if(!std::strcmp(mode,"updating")){data.map.busy=true;data.map.scale=request.scale==4?2:request.scale*2;}
@@ -56,7 +58,6 @@ int main(int argc,char** argv) {
     if(!std::strcmp(mode,"cursor-near")){marker_dx=20;marker_dy=20;}
     if(!std::strcmp(mode,"cursor-edge")){marker_dx=32;marker_dy=32;}
     if(!std::strcmp(mode,"cursor-lost")){marker_dx=12;marker_dy=20;}
-    const auto& origin=job.info();
     data.gps.fix.latitude-=marker_dy*origin.meters_per_pixel/111320.;
     data.gps.fix.longitude+=marker_dx*origin.meters_per_pixel/(111320.*std::cos(origin.request.latitude*3.14159265358979323846/180));
     const auto current_place=lookup.search({1,2,data.gps.fix});
@@ -73,8 +74,13 @@ int main(int argc,char** argv) {
         check(display.pixels[(68+marker_dy)*240+125+marker_dx]==(data.map.error==map::Error::None?TFT_CYAN:TFT_DARKGREY));
     }
     for(int y=17;y<120;++y)for(int x=0;x<240;++x)check(display.pixels[y*240+x]!=TFT_YELLOW);
-    check(display.pixels[124*240+191]==(data.map.scale>1?TFT_WHITE:TFT_DARKGREY));
-    check(display.pixels[130*240+203]==(data.map.scale<4?TFT_WHITE:TFT_DARKGREY));
+    auto zoom_key=[&](int left,char key,bool enabled) {
+        for(int y=0;y<8;++y)for(int x=0;x<8;++x) {
+            const bool ink=font8x8_c64[(key-32)*8+x]&(1u<<y);
+            check(display.pixels[(124+y)*240+left+x]==(ink?(enabled?TFT_WHITE:TFT_DARKGREY):TFT_BLACK));
+        }
+    };
+    zoom_key(188,'+',data.map.scale>1);zoom_key(204,'-',data.map.scale<4);
     const char* ratio=map::scaleText(request.scale);
     for(unsigned n=0;ratio[n];++n)for(int y=0;y<8;++y)for(int x=0;x<8;++x) {
         const bool ink=font8x8_c64[(ratio[n]-32)*8+x]&(1u<<y);
@@ -149,7 +155,7 @@ def main():
                 with Image.open(ppm) as source:
                     image=source.convert('RGB')
                     if mode=='ready':complete_frame=image.crop((0,0,240,121)).tobytes()
-                    if mode=='updating' and image.crop((0,0,240,121)).tobytes()!=complete_frame:raise AssertionError('updating must preserve the displayed map; footer arrows follow the requested scale')
+                    if mode=='updating' and image.crop((0,0,240,121)).tobytes()!=complete_frame:raise AssertionError('updating must preserve the displayed map; footer +/- keys follow the requested scale')
                     image.save(output/f'map-view-{suffix}{mode}.png')
                     image.resize((960,540),Image.Resampling.NEAREST).save(output/f'map-view-{suffix}{mode}-preview.png')
                 print(f'PASS: scale=1/{scale} {mode}, indexed and RGB565 renderers match at native 240x135')

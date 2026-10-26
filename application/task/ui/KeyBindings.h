@@ -11,6 +11,12 @@ inline UiKey mapPhysicalKey(char key, bool /*fn*/) {
     switch (key) {
         case 's': return UiKey::ScreenOff;
         case 'g': return UiKey::GpsControl;
+        case 'v': return UiKey::ToggleView;
+        case '=': case '+': return UiKey::ZoomIn;
+        case '-': return UiKey::ZoomOut;
+        case 'b': return UiKey::FirstPoint;
+        case 'e': return UiKey::LastPoint;
+        case 'p': return UiKey::Playback;
         case 'd': return UiKey::DeleteLog;
         case ';': return UiKey::Up;
         case '.': return UiKey::Down;

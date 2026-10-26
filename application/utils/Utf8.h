@@ -1,10 +1,10 @@
 #pragma once
 #include <cstdint>
-#include <string>
+#include <string_view>
 
 namespace geoputer {
 // Reject embedded NUL, overlong sequences, surrogates and values above U+10FFFF.
-inline bool validUtf8(const std::string& source) {
+inline bool validUtf8(std::string_view source) {
     for (size_t i = 0; i < source.size();) {
         const auto c = static_cast<unsigned char>(source[i++]);
         if (c > 0 && c < 0x80) continue;

@@ -7,7 +7,9 @@ namespace geoputer {
 
 bool PixelFont::begin() {
     glyph_.setColorDepth(1);
-    if (!glyph_.createSprite(8, 16)) return false;
+    glyph_.setBuffer(glyph_buffer_, 8, 16, 1);
+    const uint16_t colors[] = {TFT_BLACK, TFT_WHITE};
+    if (!glyph_.createPalette(colors, 2)) return false;
     glyph_.setTextDatum(top_left);
     glyph_.setTextColor(TFT_WHITE, TFT_BLACK);
     return true;

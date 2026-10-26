@@ -105,7 +105,7 @@ void concurrentAndRetry(const std::string& path) {
     const auto complete=writer.snapshot();
     check(complete.saved==104 && complete.buffered==0 && !complete.open && !complete.closing && !writer.needsFlush(),
           "all accepted records finish exactly once");
-    const auto file=read(writer.path());
+    const auto file=read(path+"/"+writer.snapshot().name);
     check(file.size()==512+104*32 && validLogHeader(file.data()),"ring wrap and retry preserve the portable file format");
     for(unsigned n=1;n<=104;++n) {
         uint8_t expected[32];
@@ -144,7 +144,7 @@ void parallelStream(const std::string& path) {
     producer.join();
     check(!failed,"parallel producer and consumer keep coherent counters");
     check(writer.requestFlush(123,total,true)==LogError::None && writer.flush(6000),"parallel stream closes");
-    const auto file=read(writer.path());
+    const auto file=read(path+"/"+writer.snapshot().name);
     check(file.size()==512+total*32,"parallel stream saves every accepted record");
     for(unsigned n=1;n<=total;++n) {
         uint8_t expected[32];

@@ -4,9 +4,12 @@
 namespace geoputer {
 bool validDatasetLanguage(const char* value, bool allow_empty) {
     if (!value) return false;
-    const size_t length = strnlen(value, config::DatasetLanguageBytes);
+    return validDatasetLanguage(std::string_view(value, strnlen(value, config::DatasetLanguageBytes)), allow_empty);
+}
+bool validDatasetLanguage(std::string_view value, bool allow_empty) {
+    const size_t length = value.size();
     if (!length) return allow_empty;
-    if (length >= config::DatasetLanguageBytes || value[0] < 'a' || value[0] > 'z' || !std::strcmp(value,"dataset")) return false;
+    if (length >= config::DatasetLanguageBytes || value[0] < 'a' || value[0] > 'z' || value=="dataset") return false;
     bool separator = false;
     for (size_t i=0;i<length;++i) {
         const char ch=value[i];

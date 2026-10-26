@@ -7,8 +7,9 @@
 #include <cstdio>
 using namespace geoputer;
 namespace {
-MapBuildJob backend;
+MapBuildJob backend;map::MapSession session;
 std::vector<MessageKind> commands;
+bool reject_cancel=false,reject_request=false,reject_discard=false;
 void check(bool value,const char* why){if(!value)throw std::runtime_error(why);}
 MapSourceResult source(const map::Request& request) {
     MapSourceResult out;out.info.request=request;
@@ -23,7 +24,9 @@ void acknowledgeScale(Application& app) {
     check(ui.updateContent({DisplayMode::View,app.generation_,app.data_,0,ActionResult::None})==OperationStatus::Ok,"publish selected scale");
 }
 void finish(Application& app) {
-    backend.loaded(source(backend.info().request));while(!backend.complete())backend.step();app.completeMap(backend.info());
+    if(backend.reading())backend.loaded(source(backend.info().request));
+    while(!backend.complete())backend.step();
+    app.completeMap(backend.info());
 }
 void deliver(Application& app) {
     for(unsigned i=0;i<20 && app.map_request_.token;++i)app.processMap();
@@ -37,9 +40,15 @@ void StorageTask::sdBegin(){} void StorageTask::sdEnd(){} void StorageTask::cach
 bool Application::callUi(UiRequest& request,SyncReturn& result) {
     result.status=OperationStatus::InvalidRequest;
     switch(request.kind) {
-        case MessageKind::BeginMapFrame:result.status=ui_.model_.beginMapFrame(request.payload.map);break;
-        case MessageKind::WriteMapRows:result.status=ui_.model_.writeMapRows(request.payload.map);break;
-        case MessageKind::CommitMapFrame:result.status=ui_.model_.commitMapFrame(request.payload.map);break;
+        case MessageKind::BeginMapFrame:
+            new (&result.map_buffer) map::BufferLease{};
+            result.status=ui_.model_.beginMapFrame(request.payload.map.request,result.map_buffer);break;
+        case MessageKind::DiscardMapFrame:
+            check(!backend.occupied(),"UI loan returned before Storage write barrier");
+            if(reject_discard){reject_discard=false;result.status=OperationStatus::Unavailable;}
+            else result.status=ui_.model_.discardMapFrame(request.payload.map.request);
+            break;
+        case MessageKind::CommitMapFrame:check(!backend.occupied(),"UI publication before Storage write barrier");result.status=ui_.model_.commitMapFrame(request.payload.map);break;
         default:break;
     }
     return true;
@@ -50,9 +59,17 @@ bool Application::awaitSyncResult(SyncSendResult sent,SyncReturn& result) {
     commands.push_back(request.kind);ReturnMessage reply{};
     prepareSyncReturn(reply,TaskId::Storage,request,1);auto& status=reply.payload.result.status;
     switch(request.kind) {
-        case MessageKind::RequestMap:status=backend.start(request.payload.map)?OperationStatus::Ok:OperationStatus::Unavailable;break;
-        case MessageKind::CancelMap:case MessageKind::ReleaseMap:status=backend.release(request.payload.map)?OperationStatus::Ok:OperationStatus::InvalidRequest;break;
-        case MessageKind::ReadMapRows:status=backend.read(request.payload.map,reply.payload.result.map)?OperationStatus::Ok:OperationStatus::InvalidRequest;break;
+        case MessageKind::RequestMap:
+            if(reject_request){reject_request=false;status=OperationStatus::Unavailable;}
+            else status=backend.start(request.payload.map,session)?OperationStatus::Ok:OperationStatus::Unavailable;
+            break;
+        case MessageKind::CancelMap:case MessageKind::ReleaseMap:
+            if(request.kind==MessageKind::CancelMap && reject_cancel){reject_cancel=false;status=OperationStatus::Unavailable;}
+            else status=backend.release(request.payload.map)?OperationStatus::Ok:OperationStatus::InvalidRequest;
+            break;
+        case MessageKind::CloseMapSession:
+            if(session.belongs(request.payload.map))session.clear();
+            status=OperationStatus::Ok;break;
         default:break;
     }
     check(results_.send(reply),"map peer result queue full");
@@ -75,10 +92,12 @@ int main() {
     const auto before=commands.size();app.processMap();
     check(commands.size()==before+2 && commands[before]==MessageKind::CancelMap && commands[before+1]==MessageKind::RequestMap &&
           app.map_request_.scale==4 && app.data_.map.scale==4,"cancel old job before starting the latest scale");
-    finish(app);app.processMap();app.processMap();
-    check(app.screen_resources_.map().begun && app.screen_resources_.map().row>0,"quarter-scale transfer did not start");
+    auto forged=backend.info();++forged.request.buffer.id;app.completeMap(forged);
+    check(!app.screen_resources_.map().ready,"completion with a mismatched loan was accepted");
+    finish(app);
+    check(app.screen_resources_.map().ready && app.ui_.model_.mapFrame().leased(),"quarter-scale direct output did not complete in its loan");
     check(app.ui_.model_.mapFrame().info().request.token==original,"incomplete zoom replaced the visible old frame");
-    check(app.changeMapScale(2),"change scale during row transfer");acknowledgeScale(app);app.processMap();finish(app);deliver(app);
+    check(app.changeMapScale(2),"change scale after output completion but before publication");acknowledgeScale(app);app.processMap();finish(app);deliver(app);
     check(app.ui_.model_.mapFrame().info().request.scale==2 && app.data_.map.scale==2 && !app.data_.map.busy,
           "latest scale must commit atomically and survive busy-state updates");
     app.processMap();check(!app.map_request_.token,"unchanged GPS immediately restarted a completed map");
@@ -114,5 +133,33 @@ int main() {
     const auto after_tracking=commands.size();app.processMap();check(commands.size()==after_tracking,"newly recentered map immediately regenerated");
     app.screen_=ScreenId::LivePlace;check(!app.changeMapScale(1),"other screens can change map scale");
     app.screen_=ScreenId::Map;app.mode_=DisplayMode::Background;check(!app.changeMapScale(1),"background changes map scale");
-    std::puts("PASS: real App zoom cancellation, stale completions, mid-transfer changes, unchanged GPS, no-fix recovery and atomic frame commit");
+    app.mode_=DisplayMode::View;
+    // Changing region inside the tracking window reuses the retained raster.
+    const auto* retained=session.pixels.get();const auto original_center=app.screen_resources_.map().anchor.request;
+    app.data_.place_state=PlaceState::Ready;app.data_.place_fix=app.data_.gps.fix;app.data_.place_region=22;
+    app.processMap();check(app.map_request_.reuse && !backend.reading(),"region change must start rendering without SD read");
+    check(app.map_request_.latitude==original_center.latitude && app.map_request_.longitude==original_center.longitude,"highlight must preserve map origin");
+    finish(app);deliver(app);
+    check(session.pixels.get()==retained && app.screen_resources_.map().info.region==22 && !backend.occupied(),"highlight retains pixels and releases worker");
+    // Cancellation and UI return may fail independently; neither may recycle
+    // memory while Storage still owns it, even after the screen is replaced.
+    check(app.changeMapScale(1),"start lease-cancellation scenario");acknowledgeScale(app);app.processMap();
+    const auto old_request=app.map_request_;check(old_request.token && backend.reading(),"pending writer before screen switch");
+    app.screen_=ScreenId::LivePlace;++app.generation_;
+    app.ui_.model_.setScreen({ScreenId::LivePlace,DisplayMode::View,app.generation_,app.data_,0,ActionResult::None});
+    app.screen_resources_.enter(ScreenGroup::Common);
+    reject_cancel=true;app.processMap();
+    check(app.map_request_.token==old_request.token && backend.occupied() && app.ui_.model_.mapFrame().leased(),"failed cancel keeps writer and UI loan alive across screen destruction");
+    reject_discard=true;app.processMap();
+    check(!backend.occupied() && !app.map_storage_owned_ && app.ui_.model_.mapFrame().leased(),"failed UI return retains loan after Storage barrier");
+    app.processMap();check(!app.map_request_.token && !app.ui_.model_.mapFrame().leased(),"retry returns old loan exactly once");
+    // Rejected Storage work also needs its previously acquired UI loan returned.
+    app.screen_=ScreenId::Map;++app.generation_;app.screen_resources_.enter(ScreenGroup::Map);
+    app.ui_.model_.setScreen({ScreenId::Map,DisplayMode::View,app.generation_,app.data_,0,ActionResult::None});
+    reject_request=true;app.processMap();
+    check(app.map_cancel_ && !app.map_storage_owned_ && app.ui_.model_.mapFrame().leased(),"Storage rejection cannot orphan a UI loan");
+    app.screen_=ScreenId::LivePlace;app.processMap();
+    check(!app.map_request_.token && !app.ui_.model_.mapFrame().leased(),"unaccepted operation returns loan without cancelling Storage");
+    check(!session.pixels && !app.map_session_.token,"leaving map must release the retained raster even with no pending job");
+    std::puts("PASS: real App zoom cancellation, stale completions, direct-buffer ownership, retry barriers, unchanged GPS, no-fix recovery and atomic frame commit");
 }

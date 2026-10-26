@@ -17,10 +17,6 @@ public:
     uint32_t chunkCount() const { return value(index_format::Header::ChunkCount); }
     int unitInvX() const { return static_cast<int>(value(index_format::Header::UnitInvX)); }
     int unitInvY() const { return static_cast<int>(value(index_format::Header::UnitInvY)); }
-    galuchat::DoubleRect coverage() const {
-        return {double(info_.west)/unitInvX(),double(info_.south)/unitInvY(),
-                double(info_.width)/unitInvX(),double(info_.height)/unitInvY()};
-    }
 private:
     uint32_t value(size_t offset) const;
     DatasetMapIndex info_;

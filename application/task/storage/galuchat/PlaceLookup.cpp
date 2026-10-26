@@ -17,7 +17,7 @@ void PlaceLookup::releaseReaders() {
     const bool had_reader = wordbook_ || map_;
     wordbook_cache_.clear();
     display_ = {};
-    wordbook_.reset(); map_.reset();
+    wordbook_.reset(); map_.reset();index_factory_.reset();
     if (had_reader && observer_) observer_->cacheState(RgCacheState::Unprepared, true);
 }
 
@@ -62,7 +62,7 @@ PlaceState PlaceLookup::open() {
     }
     // Preserve the SDK ReaderFactory/Reader API. Readers use the existing
     // mounted FatFs drive directly on ESP32; do not mount SD twice.
-    std::unique_ptr<CachedMapReader> map;
+    std::optional<CachedMapReader> map;
     DatasetWordBookIndex book_info;
     std::shared_ptr<ObservedFileReaderFactory> index_factory;
     try {
@@ -73,7 +73,7 @@ PlaceState PlaceLookup::open() {
         const auto info=DatasetIndex(drive_,observer_).loadMap(index_path,mapPath,&timing_.map_io,&timing_.index_io,&book_info,language_);
         index_factory=std::make_shared<ObservedFileReaderFactory>(index_path,observer_,&timing_.index_io,
             FileReadOptions{config::IndexReadBufferBytes,0}, drive_);
-        map=std::make_unique<CachedMapReader>(info,factory,index_factory,observer_);
+        map.emplace(info,factory,index_factory,observer_);
         factory->setReadOptions({config::MapRectReadBufferBytes, config::FileReadThroughSkipBytes});
     } catch (const MapChunkLimitExceeded& error) {
         dataset_.chunks = error.count;
@@ -83,10 +83,10 @@ PlaceState PlaceLookup::open() {
     dataset_.unit_inv_x = map->unitInvX(); dataset_.unit_inv_y = map->unitInvY();
     const auto book_metadata=DatasetIndex(drive_,observer_).checkWordBook(book_info,wordbookPath,&timing_.wordbook_io);
     if (!wordBookUsesUtf8(book_metadata)) return PlaceState::EncodingError;
-    auto book = std::make_unique<DiskIndexedWordBookReader>(book_info,
+    DiskIndexedWordBookReader book(book_info,
         std::make_shared<ObservedFileReaderFactory>(wordbookPath, observer_, &timing_.wordbook_io,
             FileReadOptions{config::WordBookReadBufferBytes, config::FileReadThroughSkipBytes}, drive_), index_factory);
-    map_ = std::move(map); wordbook_ = std::move(book);
+    map_.emplace(std::move(*map)); wordbook_.emplace(std::move(book));index_factory_=std::move(index_factory);
     dataset_.state = PlaceState::Ready;
     return PlaceState::Ready;
 }
@@ -108,16 +108,19 @@ PlaceResult PlaceLookup::prepare() {
 }
 
 PlaceResult PlaceLookup::search(const PlaceRequest& request) {
+    PlaceResult result;searchInto(request,result);return result;
+}
+void PlaceLookup::searchInto(const PlaceRequest& request,PlaceResult& result,BorrowedReadBuffer* work) {
     if constexpr (config::DetailedDiagnostics) timing_ = {};
     ElapsedTime total(timing_.total_us);
-    PlaceResult result{};
+    result={};
     result.request = request;
     result.dataset = dataset_;
-    if (datasetInactive(dataset_.state)) { result.state = dataset_.state; return result; }
+    if (datasetInactive(dataset_.state)) { result.state = dataset_.state; return; }
     if (!request.fix.valid || !std::isfinite(request.fix.latitude) || !std::isfinite(request.fix.longitude) ||
         std::abs(request.fix.latitude) > 90 || std::abs(request.fix.longitude) > 180) {
         result.state = PlaceState::NoFix;
-        return result;
+        return;
     }
     bool formatting = false;
     try {
@@ -126,7 +129,12 @@ PlaceResult PlaceLookup::search(const PlaceRequest& request) {
             result.state = open();
         }
         result.dataset = dataset_;
-        if (result.state != PlaceState::Ready) { reject(result.state); result.dataset = dataset_; return result; }
+        if (result.state != PlaceState::Ready) { reject(result.state); result.dataset = dataset_; return; }
+        struct IndexBorrow {
+            ObservedFileReaderFactory& factory;
+            IndexBorrow(ObservedFileReaderFactory& f,BorrowedReadBuffer* work):factory(f) {factory.setBorrowedBuffer(work);}
+            ~IndexBorrow() {factory.setBorrowedBuffer(nullptr);}
+        } borrow(*index_factory_,work);
         uint32_t code;
         const auto misses = map_->stats().misses;
         try {
@@ -139,14 +147,14 @@ PlaceResult PlaceLookup::search(const PlaceRequest& request) {
         if (map_->stats().misses != misses) timing_.rect_us = map_->stats().last_rect_us;
         if (code == 0) {
             result.state = PlaceState::NotFound;
-            return result;
+            return;
         }
         std::vector<std::string> components;
         {
             ElapsedTime elapsed(timing_.wordbook_us);
             if (wordbook_cache_.find(code, result.lines)) {
                 result.region_code = code;
-                return result;
+                return;
             }
             if (!wordbook_->readStringSetByCode(code, components)) throw std::runtime_error("invalid region code");
         }
@@ -169,7 +177,7 @@ PlaceResult PlaceLookup::search(const PlaceRequest& request) {
         std::memset(result.lines, 0, sizeof(result.lines));
     }
     result.dataset = dataset_;
-    return result;
+    return;
 }
 
 }  // namespace geoputer

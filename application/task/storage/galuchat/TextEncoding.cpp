@@ -7,25 +7,28 @@
 
 namespace geoputer {
 namespace {
-std::string metadataString(const std::string& metadata, const char* key) {
-    const auto keyPos = metadata.find(std::string("\"") + key + "\"");
-    if (keyPos == std::string::npos) return {};
+std::string_view metadataString(std::string_view metadata, std::string_view quoted_key) {
+    const auto keyPos = metadata.find(quoted_key);
+    if (keyPos == std::string_view::npos) return {};
     auto pos = metadata.find(':', keyPos);
-    if (pos == std::string::npos) return {};
+    if (pos == std::string_view::npos) return {};
     do { ++pos; } while (pos < metadata.size() && std::isspace(static_cast<unsigned char>(metadata[pos])));
     if (pos >= metadata.size() || metadata[pos++] != '"') return {};
     const auto end = metadata.find('"', pos);
-    return end == std::string::npos ? std::string{} : metadata.substr(pos, end - pos);
+    return end == std::string_view::npos ? std::string_view{} : metadata.substr(pos, end - pos);
 }
 }
 bool wordBookUsesUtf8(const std::string& metadata) {
-    auto encoding=metadataString(metadata,"token_encoding");
-    if (encoding.empty()) encoding=metadataString(metadata,"text_encoding");
-    for (auto& c:encoding) c=static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-    return encoding=="utf8" || encoding=="utf-8";
+    auto encoding=metadataString(metadata,"\"token_encoding\"");
+    if (encoding.empty()) encoding=metadataString(metadata,"\"text_encoding\"");
+    if (encoding.size()!=4 && encoding.size()!=5) return false;
+    const char* expected=encoding.size()==4?"utf8":"utf-8";
+    for (size_t i=0;i<encoding.size();++i)
+        if (std::tolower(static_cast<unsigned char>(encoding[i]))!=expected[i]) return false;
+    return true;
 }
 
-bool validPlaceFormat(const std::string& format) {
+bool validPlaceFormat(std::string_view format) {
     if (!validUtf8(format)) return false;
     for (size_t i = 0; i < format.size(); ++i) {
         if (format[i] != '%') continue;

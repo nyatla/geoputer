@@ -184,6 +184,7 @@ with tempfile.TemporaryDirectory(prefix='reversegeoputer-index-') as tmp:
     binary = directory/'index-tests'
     subprocess.run(['g++','-std=c++17','-O2','-g','-Wall','-Wextra','-Werror','-pedantic',
                     '-fsanitize=undefined','-fno-sanitize-recover=all','-D_GLIBCXX_ASSERTIONS',
+                    '-DREVERSEGEOPUTER_DIAGNOSTICS=1',
                     '-I',str(root/'application'),'-I',str(root/'third_party/galuchat/include'),
                     str(root/'tests/dataset_index_tests.cpp'),
                     str(root/'tests/wordbook_index_tests.cpp'),

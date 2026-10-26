@@ -1,5 +1,6 @@
 #include "DatasetIndex.h"
 #include "DatasetIndexFormat.h"
+#include "../galuchat/FixedHeader.h"
 #include "../StoragePath.h"
 #include "../log/LogFile.h"
 #include "../galuchat/ReadTiming.h"
@@ -9,7 +10,9 @@
 #include <cstring>
 #include <ctime>
 #include <memory>
+#include <optional>
 #include <stdexcept>
+#include <string_view>
 #include <vector>
 #ifdef ARDUINO_ARCH_ESP32
 #include <freertos/FreeRTOS.h>
@@ -30,7 +33,7 @@ uint32_t crcUpdate(uint32_t crc,const uint8_t* data,size_t size) {
     }
     return crc;
 }
-uint32_t nameCrc(const std::string& name) {
+uint32_t nameCrc(std::string_view name) {
     return crcUpdate(UINT32_MAX,reinterpret_cast<const uint8_t*>(name.data()),name.size())^UINT32_MAX;
 }
 struct File : LogFile {
@@ -170,10 +173,14 @@ private:
 class Output {
 public:
     Output(uint8_t drive,const std::string& path,StorageObserver* observer,bool compare=false)
-        : file_(std::make_unique<File>(drive,observer)),observer_(observer),buffer_(config::IndexReadBufferBytes) {
+        : observer_(observer) {
         SdAccessScope access(observer_);
-        if(compare) comparison_=std::make_unique<Source>(drive,path,observer);
-        else require(file_->open(path,true));
+        if(compare) comparison_.emplace(drive,path,observer);
+        else {
+            file_=std::make_unique<File>(drive,observer);
+            buffer_.resize(config::IndexReadBufferBytes);
+            require(file_->open(path,true));
+        }
     }
     uint32_t pos() const { return position_; }
     template<size_t N> void write(const std::array<uint8_t,N>& bytes) { write(bytes.data(),N); }
@@ -218,7 +225,7 @@ private:
     std::vector<uint8_t> buffer_;
     size_t used_=0;
     uint32_t position_=0;
-    std::unique_ptr<Source> comparison_;
+    std::optional<Source> comparison_;
 };
 std::string tag(Source& reader) { return galuchat::detail::readAscii(reader,4); }
 struct Chunk { uint32_t start=0,data=0,bytes=0,end=0; };
@@ -238,7 +245,7 @@ void setStamp(uint8_t* out,const std::string& name,const Stamp& stamp) {
 void mapIndex(Output& out,Source& source,std::array<uint8_t,64>& header,Progress* progress=nullptr) {
     const auto glch=chunkHeader(source,"GLCH");
     galuchat::detail::LimitedReader payload(source,glch.bytes);
-    require(galuchat::detail::readBStrAscii(payload,16)=="WGSMapSet/3");
+    require(matchesFixedAscii16(payload,"WGSMapSet/3"));
     const auto unit_x=u32(payload.readMbUInt()),unit_y=u32(payload.readMbUInt());
     require(unit_x && unit_y && unit_x<=INT32_MAX && unit_y<=INT32_MAX); put(header.data() + Header::UnitInvX,unit_x); put(header.data() + Header::UnitInvY,unit_y);
     const auto metadata=u32(payload.readMbUInt()); require(metadata<=payload.remaining()); payload.skipInByte(metadata);
@@ -311,7 +318,7 @@ void wordbookIndex(Output& out,Source& source,const DatasetMetadata& metadata,co
     const char* names[]={"GW00","TM00","TT00","TI00"};
     for (size_t i=0;i<chunks.size();++i) { chunks[i]=chunkHeader(source,names[i]); source.seek(chunks[i].end); }
     require(source.atEnd()); source.seek(chunks[0].data);
-    require(galuchat::detail::readBStrAscii(source,16)=="GisWordBook/0");
+    require(matchesFixedAscii16(source,"GisWordBook/0"));
     const auto gw_metadata=source.number(); require(uint64_t(source.pos())+gw_metadata==chunks[0].end);
     std::array<uint8_t,Wordbook::Bytes> record{};
     require(!metadata.language.empty() && metadata.language.size()<32);
@@ -408,9 +415,9 @@ void generatePlanned(uint8_t drive,const std::string& path,const std::string& di
               const Stamp& map_stamp,const std::vector<BookSource>& books,StorageObserver* observer,
               const ReusePlan& reuse,Progress* progress=nullptr,bool compare=false) {
     Output out(drive,path,observer,compare);
-    std::unique_ptr<Source> old;
+    std::optional<Source> old;
     if(reuse.use_map || std::any_of(reuse.books.begin(),reuse.books.end(),[](const auto& b){return b.section_offset!=0;}))
-        old=std::make_unique<Source>(drive,reuse.path,observer);
+        old.emplace(drive,reuse.path,observer);
     std::array<uint8_t,Header::Bytes> header{};std::memcpy(header.data(),"RGPMIDX",8);
     put16(header.data() + Header::Version,1);put16(header.data() + Header::HeaderBytes,64);put16(header.data() + Header::ChunkRecordBytes,40);put16(header.data() + Header::GroupRecordBytes,16);
     put(header.data() + Header::MapBytes,map_stamp.bytes);put(header.data() + Header::MapFatMtime,map_stamp.mtime);
@@ -483,15 +490,16 @@ public:
         require(source_.pos()==map_end && previous_chunk_end==get(h + Header::MapBytes));
         require(east-west<=INT32_MAX && north-south<=INT32_MAX);
         if (summary) { summary->west=west; summary->south=south; summary->width=east-west; summary->height=north-south; }
-        std::string previous_language;
+        char previous_language[32]{};
         for (uint32_t section=0;section<get(h + Header::WordbookCount);++section) {
             const auto begin=source_.pos(); const auto record=read<Wordbook::Bytes>(); const auto* w=record.data();
             size_t language_bytes=0;
             while (language_bytes<32 && w[language_bytes]) { require(w[language_bytes]>=0x21 && w[language_bytes]<0x7f); ++language_bytes; }
             require(language_bytes && language_bytes<32);
             for (size_t i=language_bytes;i<32;++i) require(w[i]==0);
-            const std::string language(reinterpret_cast<const char*>(w),language_bytes);
-            require(previous_language.empty() || previous_language<language); previous_language=language;
+            const std::string_view language(reinterpret_cast<const char*>(w),language_bytes);
+            require(!previous_language[0] || std::string_view(previous_language)<language);
+            std::memcpy(previous_language,w,language_bytes+1);
             if (book && ((selected_language.empty() && section==0) || language==selected_language)) {
                 book->header=record; book->section_offset=u32(begin);
             }
@@ -580,7 +588,7 @@ struct MapHeader {
 };
 MapHeader mapHeader(Source& source) {
     const auto chunk=chunkHeader(source,"GLCH");
-    require(galuchat::detail::readBStrAscii(source,16)=="WGSMapSet/3");
+    require(matchesFixedAscii16(source,"WGSMapSet/3"));
     const auto x=source.number(),y=source.number(),metadata=source.number();
     require(x && y && x<=INT32_MAX && y<=INT32_MAX && uint64_t(source.pos())+metadata<chunk.end);
     source.skipInByte(metadata); const auto count=source.number();
@@ -608,7 +616,7 @@ DatasetMapIndex DatasetIndex::loadMap(const std::string& path,const std::string&
     catch(const std::exception&) { throw std::runtime_error("Invalid _mapindex.dat; reapply dataset"); }
     if (book && !book->section_offset) throw std::runtime_error("Missing Wordbook index; reapply dataset");
     const auto* h=info.header.data(); const auto slash=map.find_last_of('/');
-    if (!(get(h + Header::MapBytes)==stamp.bytes && get(h + Header::MapFatMtime)==stamp.mtime && get(h + Header::MapNameCrc32)==nameCrc(map.substr(slash==std::string::npos?0:slash+1)) && get(h + Header::MapHeaderCrc32)==stamp.header_crc &&
+    if (!(get(h + Header::MapBytes)==stamp.bytes && get(h + Header::MapFatMtime)==stamp.mtime && get(h + Header::MapNameCrc32)==nameCrc(std::string_view(map).substr(slash==std::string::npos?0:slash+1)) && get(h + Header::MapHeaderCrc32)==stamp.header_crc &&
           get(h + Header::ChunkCount)==metadata.count && get(h + Header::UnitInvX)==metadata.unit_x && get(h + Header::UnitInvY)==metadata.unit_y))
         throw std::runtime_error("Stale _mapindex.dat; reapply dataset");
     return info;
@@ -624,14 +632,14 @@ std::string DatasetIndex::checkWordBook(const DatasetWordBookIndex& info,const s
     require(source.atEnd());
     stamp.header_crc=source.crc(0,chunks[0].end);
     const auto* w=info.header.data();const auto slash=path.find_last_of('/');
-    if(!(info.section_offset && get(w + Wordbook::NameCrc32)==nameCrc(path.substr(slash==std::string::npos?0:slash+1)) &&
+    if(!(info.section_offset && get(w + Wordbook::NameCrc32)==nameCrc(std::string_view(path).substr(slash==std::string::npos?0:slash+1)) &&
          get(w + Wordbook::SourceBytes)==stamp.bytes && get(w + Wordbook::FatMtime)==stamp.mtime && get(w + Wordbook::HeaderCrc32)==stamp.header_crc))
         throw std::runtime_error("Stale Wordbook index; reapply dataset");
     require(chunks[1].data==get(w + Wordbook::TmDataOffset) && chunks[1].bytes==get(w + Wordbook::TmDataBytes) &&
             chunks[2].data==get(w + Wordbook::TtDataOffset) && chunks[2].bytes==get(w + Wordbook::TtDataBytes) &&
             chunks[3].data==get(w + Wordbook::TiDataOffset) && chunks[3].bytes==get(w + Wordbook::TiDataBytes));
     source.seek(chunks[0].data);
-    require(galuchat::detail::readBStrAscii(source,16)=="GisWordBook/0");
+    require(matchesFixedAscii16(source,"GisWordBook/0"));
     const auto length=source.number();require(uint64_t(source.pos())+length==chunks[0].end);
     const auto metadata=galuchat::detail::readAscii(source,length);
     source.seek(chunks[1].data);

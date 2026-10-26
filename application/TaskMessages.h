@@ -43,9 +43,11 @@ enum class MessageKind : uint8_t {
     DatasetProgress,
     UsbStorageChanged,
     UsbExportOperation,
-    RequestMap, ReadMapRows, ReleaseMap, CancelMap, MapCompleted,
-    BeginMapFrame, WriteMapRows, CommitMapFrame,
+    RequestMap, ReleaseMap, CancelMap, MapCompleted,
+    BeginMapFrame, CommitMapFrame, DiscardMapFrame, CloseMapSession,
     SyncReturn,
+    ReleaseLogBrowse,
+    BeginPlaceSearch, CommitPlaceSearch, DiscardPlaceSearch,
 };
 enum class OperationStatus : uint8_t { Ok, InvalidRequest, StaleContent, Unavailable };
 
@@ -53,12 +55,12 @@ struct SyncReturn {
     MessageKind request_kind;
     OperationStatus status;
     // Active member is selected by source and request_kind in prepareSyncReturn.
-    // ReadMapRows returns map; other Storage commands return storage.
+    // BeginMapFrame/BeginPlaceSearch return a UI back lease; Storage returns its snapshot.
     union {
         UiSnapshot content;
         GpsSnapshot gps;
         StorageSnapshot storage;
-        map::Transfer map;
+        map::BufferLease map_buffer;
     };
 };
 
@@ -82,7 +84,8 @@ struct Message : MessageHeader { Payload payload; };
 union UiRequestPayload {
     SetUiScreen screen;
     UpdateUiContent update;
-    map::Transfer map;
+    map::FrameInfo map;
+    PlaceRequest place;
 };
 union StorageRequestPayload {
     StorageCommand storage_command;

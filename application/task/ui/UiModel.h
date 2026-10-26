@@ -16,9 +16,12 @@ class UiModel {
 public:
     OperationStatus setScreen(const SetUiScreen& command);
     OperationStatus updateContent(const UpdateUiContent& command);
-    OperationStatus beginMapFrame(const map::Transfer& transfer);
-    OperationStatus writeMapRows(const map::Transfer& transfer);
-    OperationStatus commitMapFrame(const map::Transfer& transfer);
+    OperationStatus beginPlaceSearch(const PlaceRequest& request,map::BufferLease& buffer);
+    OperationStatus commitPlaceSearch(const PlaceRequest& request);
+    OperationStatus discardPlaceSearch(const PlaceRequest& request);
+    OperationStatus beginMapFrame(const map::Request& request,map::BufferLease& buffer);
+    OperationStatus discardMapFrame(const map::Request& request);
+    OperationStatus commitMapFrame(const map::FrameInfo& info);
     const map::MapFrameReceiver& mapFrame() const { return screen_resources_.map.frame; }
     const map::CursorOffset& mapCursor() const { return screen_resources_.map.cursor; }
     void keyPressed(UiKey key, uint32_t now_ms);
@@ -83,7 +86,9 @@ private:
 
 
     UiScreenResources screen_resources_;
+    PlaceRequest place_borrow_{}; // Survives screen changes until Storage has stopped.
     void updateMapCursor();
+    bool acceptsMap(const map::Request& request) const;
     bool acceptsMap(const map::FrameInfo& info) const;
     ScreenId screen_ = ScreenId::LivePlace;
     DisplayMode mode_ = DisplayMode::View;

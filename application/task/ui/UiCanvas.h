@@ -2,6 +2,7 @@
 
 #include <M5GFX.h>
 #include <stdexcept>
+#include "UiFrameBuffer.h"
 
 namespace geoputer {
 
@@ -11,11 +12,18 @@ class UiCanvas : public M5Canvas {
 public:
     explicit UiCanvas(M5GFX* display) : M5Canvas(display) {}
 
-    bool begin(uint8_t depth) {
+    // Include M5GFX's trailing pixel guard. The UI task supplies its own storage;
+    // host RGB565 reference renders may still use an internally owned sprite.
+    static constexpr size_t bufferBytes(uint8_t depth) {
+        return uiFrameBufferBytes(depth);
+    }
+    bool begin(uint8_t depth, void* buffer = nullptr, size_t capacity = 0) {
         if (depth != 4 && depth != 16) return false;
+        if (buffer && capacity < bufferBytes(depth)) return false;
         depth_ = depth;
         setColorDepth(depth);
-        if (!createSprite(240, 135)) return false;
+        if (buffer) setBuffer(buffer, 240, 135, depth);
+        else if (!createSprite(240, 135)) return false;
         return depth != 4 || createPalette(Colors, sizeof(Colors) / sizeof(Colors[0]));
     }
 

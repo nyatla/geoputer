@@ -10,6 +10,8 @@ import re
 ROOT = Path(__file__).resolve().parents[1]
 OUTPUT = ROOT / "doc/画面・操作/live-place"
 M5GFX = ROOT / ".pio/libdeps/cardputer-adv/M5GFX/src/lgfx"
+if not M5GFX.is_dir():
+    M5GFX = ROOT / ".pio/libdeps/cardputer-adv/M5GFX@0.2.33/src/lgfx"
 
 ADAPTER = r'''
 #pragma once
@@ -44,6 +46,7 @@ class M5Canvas {
     M5GFX* display_;
     int width_ = 0, height_ = 0;
     std::vector<uint16_t> pixels_;
+    uint8_t* external_ = nullptr;
     const lgfx::IFont* font_ = nullptr;
     uint16_t foreground_ = 0xffff, background_ = 0;
     int depth_ = 16;
@@ -52,8 +55,8 @@ public:
     explicit M5Canvas(M5GFX* display) : display_(display) {}
     void setColorDepth(int depth) { depth_ = depth; }
     bool createPalette(const uint16_t* colors, uint32_t count) {
-        if (depth_ != 4 || count > 16) throw std::runtime_error("invalid palette");
-        palette_.assign(16, 0);
+        if ((depth_ != 4 && depth_ != 1) || count > (1u << depth_)) throw std::runtime_error("invalid palette");
+        palette_.assign(1u << depth_, 0);
         std::copy(colors, colors + count, palette_.begin());
         return true;
     }
@@ -61,7 +64,13 @@ public:
         if (depth_ == 4 && (color >= 16 || palette_.size() != 16))
             throw std::runtime_error("RGB color passed to indexed sprite");
     }
+    void setBuffer(void* buffer, int width, int height, uint8_t depth) {
+        external_ = static_cast<uint8_t*>(buffer);
+        width_ = width; height_ = height; depth_ = depth;
+        pixels_.clear();
+    }
     bool createSprite(int width, int height) {
+        external_ = nullptr;
         width_ = width; height_ = height;
         pixels_.assign(width * height, 0);
         return true;
@@ -77,16 +86,32 @@ public:
     void setFont(const lgfx::IFont* font) { font_ = font; }
     void fillSprite(uint16_t color) {
         validColor(color);
-        std::fill(pixels_.begin(), pixels_.end(), color);
+        for (int y=0; y<height_; ++y) for (int x=0; x<width_; ++x) drawPixel(x,y,color);
     }
     void drawPixel(int x, int y, uint16_t color) {
         validColor(color);
-        if (x >= 0 && y >= 0 && x < width_ && y < height_)
-            pixels_[y * width_ + x] = color;
+        if (x < 0 || y < 0 || x >= width_ || y >= height_) return;
+        if (depth_ == 1) color = color ? 1 : 0;
+        const size_t index = y * width_ + x;
+        if (!external_) { pixels_[index] = color; return; }
+        if (depth_ == 16) { external_[index*2] = color; external_[index*2+1] = color >> 8; }
+        else {
+            const unsigned shift = depth_ == 4 ? (1-(index&1))*4 : 7-(index&7);
+            const unsigned mask = (1u << depth_) - 1;
+            auto& byte = external_[index*depth_/8];
+            byte = (byte & ~(mask << shift)) | ((color & mask) << shift);
+        }
     }
     uint16_t readPixel(int x, int y) const {
-        const auto raw = pixels_.at(y * width_ + x);
-        return depth_ == 4 ? palette_.at(raw) : raw;
+        const size_t index = y * width_ + x;
+        uint16_t raw;
+        if (!external_) raw = pixels_.at(index);
+        else if (depth_ == 16) raw = external_[index*2] | (external_[index*2+1] << 8);
+        else {
+            const unsigned shift = depth_ == 4 ? (1-(index&1))*4 : 7-(index&7);
+            raw = (external_[index*depth_/8] >> shift) & ((1u << depth_) - 1);
+        }
+        return depth_ < 8 ? palette_.at(raw) : raw;
     }
     void fillRect(int x, int y, int width, int height, uint16_t color) {
         for (int row = y; row < y + height; ++row)
@@ -183,7 +208,10 @@ def reference_frame(executable, *arguments, timeout=20):
     import subprocess
     result = []
     for depth in (4, 16):
-        env = dict(os.environ, GEOPUTER_PREVIEW_DEPTH=str(depth))
-        result.append(subprocess.check_output([str(executable), *arguments], env=env, timeout=timeout))
-    assert result[0] == result[1], f"Palette/RGB565 pixels differ: {arguments}"
+        for external in (False, True):
+            env = dict(os.environ, GEOPUTER_PREVIEW_DEPTH=str(depth))
+            env.pop("GEOPUTER_PREVIEW_EXTERNAL", None)
+            if external: env["GEOPUTER_PREVIEW_EXTERNAL"] = "1"
+            result.append(subprocess.check_output([str(executable), *arguments], env=env, timeout=timeout))
+    assert all(frame == result[0] for frame in result), f"Owned/external palette/RGB565 pixels differ: {arguments}"
     return result[0]

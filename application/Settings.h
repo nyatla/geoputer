@@ -1,5 +1,7 @@
 #pragma once
 
+#include <string_view>
+
 #include <cstddef>
 #include <cstdint>
 #include "Config.h"
@@ -32,6 +34,7 @@ constexpr unsigned Brightnesses[] = {20, 40, 60, 80, 100};
 constexpr size_t LegacySettingsRecordSize = 16;
 constexpr size_t SettingsRecordSize = 48;
 static_assert(config::DatasetLanguageBytes == 32, "NVS version 3 reserves 32 bytes for the language ID");
+bool validDatasetLanguage(std::string_view value, bool allow_empty = false);
 bool validDatasetLanguage(const char* value, bool allow_empty = false);
 
 bool validSettings(const Settings& value);

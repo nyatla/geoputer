@@ -1,5 +1,5 @@
 #pragma once
-#include "MapTypes.h"
+#include "BoundaryImageView.h"
 #include <algorithm>
 #include <memory>
 #include <new>
@@ -27,16 +27,14 @@ public:
     size_t bytes() const { return size_; }
     uint8_t* data() { return data_.get(); }
     const uint8_t* data() const { return data_.get(); }
-    uint8_t get(unsigned x, unsigned y) const { return (data_[y * stride() + x / 4] >> (6 - 2 * (x % 4))) & 3; }
-    void set(unsigned x, unsigned y, uint8_t value) {
-        auto& b = data_[y * stride() + x / 4]; const unsigned shift = 6 - 2 * (x % 4);
-        b = uint8_t((b & ~(3u << shift)) | ((value & 3u) << shift));
-    }
+    uint8_t get(unsigned x, unsigned y) const { return view().get(x,y); }
+    void set(unsigned x, unsigned y, uint8_t value) { view().set(x,y,value); }
     void swap(BoundaryImage& other) {
         std::swap(data_, other.data_); std::swap(width_, other.width_);
         std::swap(height_, other.height_); std::swap(size_, other.size_);
     }
 private:
+    BoundaryImageView view() const {return {data_.get(),width_,height_};}
     std::unique_ptr<uint8_t[]> data_;
     unsigned width_ = 0, height_ = 0;
     size_t size_ = 0;

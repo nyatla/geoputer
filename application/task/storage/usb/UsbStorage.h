@@ -27,6 +27,7 @@ private:
     inline static UsbStorage* active_ = nullptr;
     USBMSC* msc_ = nullptr;
     SPIClass* spi_ = nullptr;
+    StaticSemaphore_t mutex_control_{};
     SemaphoreHandle_t mutex_ = nullptr;
     uint8_t drive_ = 0xff;
     uint32_t sectors_ = 0;

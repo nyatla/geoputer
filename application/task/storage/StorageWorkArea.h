@@ -1,0 +1,41 @@
+#pragma once
+#include "MapBuildJob.h"
+#include "log/LogReader.h"
+#include <variant>
+#include <cassert>
+
+namespace geoputer {
+// Storage-only ownership. Exactly one read job or map job occupies this area.
+// A finished map can stay here without occupying the Storage task.
+class StorageWorkArea {
+public:
+    explicit StorageWorkArea(StorageObserver* observer=nullptr)
+        : observer_(observer),data_(std::in_place_type<LogReader>,"/sd/logs",observer) {}
+    MapBuildJob* activeMap() {return std::get_if<MapBuildJob>(&data_);}
+    const MapBuildJob* activeMap() const {return std::get_if<MapBuildJob>(&data_);}
+    LogReader* activeLogs() {return std::get_if<LogReader>(&data_);}
+    bool mapBusy() const {const auto* map=activeMap();return map && map->occupied();}
+    bool releaseLogs(uint32_t generation) {
+        auto* logs=activeLogs();
+        // A delayed release must never clear a newer browsing session or a map.
+        if(!logs || logs->result().request.screen_generation>generation)return true;
+        return logs->releaseForReuse();
+    }
+    MapBuildJob* forMap() {
+        if(auto* map=activeMap())return map;
+        if(!activeLogs()->releaseForReuse())return nullptr;
+        return &data_.emplace<MapBuildJob>();
+    }
+    LogReader* forLogs() {
+        if(auto* logs=activeLogs())return logs;
+        if(mapBusy())return nullptr;
+        auto& logs=data_.emplace<LogReader>("/sd/logs",observer_);logs.setDrive(drive_);return &logs;
+    }
+    LogReader& logs() {auto* result=activeLogs();assert(result);return *result;}
+    void setDrive(uint8_t drive) {drive_=drive;if(auto* logs=activeLogs())logs->setDrive(drive);}
+private:
+    StorageObserver* observer_;
+    uint8_t drive_=0xff;
+    std::variant<LogReader,MapBuildJob> data_;
+};
+} // namespace geoputer

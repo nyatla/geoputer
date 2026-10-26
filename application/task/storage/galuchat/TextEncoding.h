@@ -12,7 +12,7 @@ struct PlaceDisplayFormat {
     std::string lines[2];
     bool specified = false;
 };
-bool validPlaceFormat(const std::string& format);
+bool validPlaceFormat(std::string_view format);
 void formatPlaceLines(const std::vector<std::string>& components, char (&lines)[2][64],
                       const PlaceDisplayFormat& format = {});
 

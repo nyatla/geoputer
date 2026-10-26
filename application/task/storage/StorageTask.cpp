@@ -8,6 +8,7 @@
 #include <ff.h>
 #include <esp_heap_caps.h>
 #include <cstring>
+#include <algorithm>
 #include "../../utils/SyncClient.h"
 #include "../../BootMode.h"
 #include "../../hardware/LoraSafety.h"
@@ -22,7 +23,8 @@ LogError StorageTask::tryAppendLog(const LogCommand& command, LogSnapshot& snaps
 
 void StorageTask::closeCard() {
     SdAccessScope access(this);
-    screen_resources_.map.release(screen_resources_.map.info().request);
+    if(auto* map=screen_resources_.work.activeMap())map->release(map->info().request);
+    screen_resources_.clearMaps();
     place_lookup_.close();
     if (drive_ == 0xFF) return;
     sdcard_unmount(drive_);
@@ -41,7 +43,7 @@ void StorageTask::mountCard() {
     if (drive_ == 0xFF) { state_.sd_error = state_.error = -10; return; }
     place_lookup_.setDrive(drive_);
     log_writer_.setDrive(drive_);
-    screen_resources_.logs.setDrive(drive_);
+    screen_resources_.work.setDrive(drive_);
     mounted_ = sdcard_mount(drive_, "/sd", config::SdMaxOpenFiles, false);  // Never format on mount failure.
     const auto type = sdcard_type(drive_);
     if (type == CARD_SD || type == CARD_SDHC || type == CARD_MMC) {
@@ -87,6 +89,7 @@ bool StorageTask::formatCard() {
 }
 
 void StorageTask::configureDataset() {
+    screen_resources_.clearMaps();
     place_lookup_.configure(state_.settings.dataset ? DatasetCatalog{}.directory(state_.settings.dataset) : std::string{},
                             state_.settings.wordbook_language);
 }
@@ -128,14 +131,18 @@ bool StorageTask::saveSettings(const Settings& value) {
 
 void StorageTask::handle(const StorageRequest& request) {
     if (request.source != TaskId::Application || request.request_id == 0) return;
+    if(request.kind==MessageKind::ReleaseLogBrowse) {
+        browse_release_generation_=std::max(browse_release_generation_,request.payload.log_read.screen_generation);
+        return;
+    }
     if(request.kind==MessageKind::CancelLogRead) {
-        if(has_read_ && screen_resources_.logs.result().request.kind!=LogReadKind::Delete &&
-           request.payload.log_read.token==screen_resources_.logs.result().request.token) screen_resources_.logs.cancel();
+        if(has_read_ && screen_resources_.work.logs().result().request.kind!=LogReadKind::Delete &&
+           request.payload.log_read.token==screen_resources_.work.logs().result().request.token) screen_resources_.work.logs().cancel();
         return;
     }
     if (request.kind == MessageKind::LoadSettings || request.kind == MessageKind::SearchPlace ||
         request.kind == MessageKind::CheckDataset) {
-        if (!hasJob() && !has_completion_ && !screen_resources_.map.occupied()) {
+        if (!hasJob() && !replies_.completionPending() && !screen_resources_.work.mapBusy()) {
             job_kind_ = request.kind == MessageKind::LoadSettings ? JobKind::LoadSettings :
                         request.kind == MessageKind::SearchPlace ? JobKind::SearchPlace : JobKind::CheckDataset;
             place_request_ = request.kind == MessageKind::SearchPlace ? request.payload.place_request : PlaceRequest{};
@@ -144,29 +151,38 @@ void StorageTask::handle(const StorageRequest& request) {
         }
         return;
     }
-    prepareSyncReturn(pending_return_, TaskId::Storage, request, ++sequence_);
-    auto& result = pending_return_.payload.result;
+    auto& pending_return = replies_.beginReturn();
+    prepareSyncReturn(pending_return, TaskId::Storage, request, ++sequence_);
+    auto& result = pending_return.payload.result;
     if(request.kind==MessageKind::RequestMap) {
-        if(!usb_mode_ && initialized_ && !hasJob() && !has_completion_ && !has_read_ && !screen_resources_.map.occupied()) {
+        if(!usb_mode_ && initialized_ && !hasJob() && !replies_.completionPending() && !has_read_ && !screen_resources_.work.mapBusy()) {
             const auto& command=request.payload.map;
-            if(screen_resources_.map.start(command)) {
-                if(state_.card_state!=CardState::Mounted)screen_resources_.map.fail(map::Error::NoCard);
-                else if(!state_.settings.dataset)screen_resources_.map.fail(map::Error::NoDataset);
-                else if(command.dataset_generation!=place_lookup_.datasetInfo().generation)screen_resources_.map.fail(map::Error::Stale);
+            screen_resources_.selectMap(command.session);
+            auto* map=screen_resources_.work.forMap();
+            if(map && map->start(command,screen_resources_.session(command.session))) {
+                if(state_.card_state!=CardState::Mounted)map->fail(map::Error::NoCard);
+                else if(!state_.settings.dataset)map->fail(map::Error::NoDataset);
+                else if(command.dataset_generation!=place_lookup_.datasetInfo().generation)map->fail(map::Error::Stale);
                 result.status=OperationStatus::Ok;
             }
         }
-    } else if(request.kind==MessageKind::ReadMapRows) {
-        if(screen_resources_.map.read(request.payload.map,result.map))result.status=OperationStatus::Ok;
     } else if(request.kind==MessageKind::ReleaseMap || request.kind==MessageKind::CancelMap) {
-        if(screen_resources_.map.release(request.payload.map)) {
+        auto* map=screen_resources_.work.activeMap();
+        if(!map || map->release(request.payload.map)) {
             result.status=OperationStatus::Ok;
-            reportMapHeap(request.kind==MessageKind::ReleaseMap?"released":"cancelled",request.payload.map.token);
+            reportMapHeap(request.kind==MessageKind::ReleaseMap?"released-retained":"cancelled",request.payload.map.token,
+                screen_resources_.retainedMapBytes());
+        }
+    } else if(request.kind==MessageKind::CloseMapSession) {
+        auto& session=screen_resources_.session(request.payload.map.session);
+        if(!screen_resources_.work.mapBusy()) {
+            if(session.belongs(request.payload.map))session.clear();
+            result.status=OperationStatus::Ok;reportMapHeap("session-closed",request.payload.map.token);
         }
     } else if(request.kind==MessageKind::UsbExportOperation) {
         handleUsbExport(request,result);
     } else if (request.kind == MessageKind::DatasetOperation) {
-        if (!usb_mode_ && initialized_ && !has_read_ && !hasJob() && !has_completion_ && !screen_resources_.map.occupied()) {
+        if (!usb_mode_ && initialized_ && !has_read_ && !hasJob() && !replies_.completionPending() && !screen_resources_.work.mapBusy()) {
             dataset_request_ = request.payload.dataset;
             dataset_request_.language[sizeof(dataset_request_.language)-1] = 0;
             job_kind_ = JobKind::BrowseDatasets;
@@ -202,12 +218,13 @@ void StorageTask::handle(const StorageRequest& request) {
     } else if (request.kind == MessageKind::GetStorageStatus) {
         result.status = initialized_ ? OperationStatus::Ok : OperationStatus::Unavailable;
     } else if(request.kind==MessageKind::ListLogs || request.kind==MessageKind::ReadLogSummary || request.kind==MessageKind::ReadLogRecords || request.kind==MessageKind::DeleteLog) {
-        if(initialized_ && !has_read_ && !hasJob() && !has_completion_ && !screen_resources_.map.occupied() &&
+        if(initialized_ && !has_read_ && !hasJob() && !replies_.completionPending() && !screen_resources_.work.mapBusy() &&
            (!usb_mode_ || (usb_.local() && state_.card_state==CardState::Mounted &&
                            state_.export_job.phase==ExportPhase::Selecting && request.kind==MessageKind::ListLogs))) {
             auto read=request.payload.log_read;
             read.kind=request.kind==MessageKind::ListLogs?LogReadKind::List:request.kind==MessageKind::ReadLogSummary?LogReadKind::Summary:request.kind==MessageKind::DeleteLog?LogReadKind::Delete:LogReadKind::Records;
-            if(screen_resources_.logs.begin(read)) {
+            auto* logs=screen_resources_.work.forLogs();
+            if(logs && logs->begin(read)) {
                 has_read_=true; read_prepared_=false; read_request_id_=request.request_id;
                 const auto log=log_writer_.snapshot(); read_barrier_session_=log.session_id; read_barrier_=log.accepted;
                 state_.busy=true; ++state_.revision; result.status=OperationStatus::Ok;
@@ -227,7 +244,7 @@ void StorageTask::handle(const StorageRequest& request) {
         state_.log_result = error;
         ++state_.revision;
         result.status = error == LogError::None ? OperationStatus::Ok : OperationStatus::Unavailable;
-    } else if (initialized_ && !hasJob() && !has_completion_ && !screen_resources_.map.occupied() &&
+    } else if (initialized_ && !hasJob() && !replies_.completionPending() && !screen_resources_.work.mapBusy() &&
                (request.kind == MessageKind::SaveSettings || request.kind == MessageKind::OperateStorage)) {
         const auto command = request.payload.storage_command;
         const bool saving = request.kind == MessageKind::SaveSettings &&
@@ -249,12 +266,11 @@ void StorageTask::handle(const StorageRequest& request) {
         } else if (saving) result.status = OperationStatus::Unavailable;
     }
     state_.log = log_writer_.snapshot();
-    if (request.kind != MessageKind::ReadMapRows) result.storage = state_;
-    has_return_ = true;
+    result.storage = state_;
 }
 
 void StorageTask::sendReturn() {
-    if (has_return_ && sendSpeculative(results_, pending_return_) == SpeculativeResult::Queued) has_return_ = false;
+    replies_.sendReturn(results_);
 }
 
 void StorageTask::completeDatasetJob() {
@@ -288,13 +304,13 @@ void StorageTask::completeDatasetJob() {
     }
     view.applying = applying; view.revision = dataset_request_.token;
     state_.busy = has_read_; ++state_.revision;
-    completion_ = {}; completion_.kind = view.error == DatasetError::None ? MessageKind::ReadCompleted : MessageKind::ReadFailed;
-    completion_.source = TaskId::Storage; completion_.request_id = job_request_id_;
-    completion_.sequence = ++sequence_; completion_.sent_at_ms = taskTimeMs();
-    auto& result = completion_.payload.storage_completion;
+    auto& completion = replies_.beginCompletion(); completion.kind = view.error == DatasetError::None ? MessageKind::ReadCompleted : MessageKind::ReadFailed;
+    completion.source = TaskId::Storage; completion.request_id = job_request_id_;
+    completion.sequence = ++sequence_; completion.sent_at_ms = taskTimeMs();
+    auto& result = completion.payload.storage_completion;
     result.request_id = job_request_id_; result.snapshot = state_;
     result.read_kind = StorageReadKind::DatasetBrowser; result.dataset_view = view;
-    has_completion_ = true; job_kind_ = JobKind::None;
+     job_kind_ = JobKind::None;
     return;
 }
 
@@ -356,19 +372,29 @@ void StorageTask::completeJob() {
     }
     bool ok = false;
     state_.error = 0;
-    PlaceResult place{};
+    PlaceResult local_place{};
+    const bool borrowed_place=search_job && validPlaceMemory(place_request_);
+    PlaceResult& place=borrowed_place?*placeResultMemory(place_request_):local_place;
     const uint32_t started_us = config::DetailedDiagnostics ? micros() : 0;
     const auto cache_before = config::DetailedDiagnostics ? place_lookup_.cacheStats() : MapCacheStats{};
     const auto wordbook_before = config::DetailedDiagnostics ? place_lookup_.wordBookCacheStats() : WordBookCacheStats{};
     if (search_job || dataset_job) {
+        if(search_job && screen_resources_.retainedMapBytes())reportMapHeap("place-begin-retained",job_request_id_,screen_resources_.retainedMapBytes());
         if (dataset_job) configureDataset();
-        if (!state_.settings.dataset || (mounted_ && state_.card_state == CardState::Mounted))
-            place = dataset_job ? place_lookup_.prepare() : place_lookup_.search(place_request_);
-        else { place.request = place_request_; place.state = PlaceState::NoCard; place.dataset = place_lookup_.datasetInfo(); place.dataset.state = PlaceState::NoCard; }
+        if(search_job && !borrowed_place) {
+            place.request=place_request_;place.state=PlaceState::DataError;place.dataset=place_lookup_.datasetInfo();
+        } else if (!state_.settings.dataset || (mounted_ && state_.card_state == CardState::Mounted)) {
+            if(dataset_job)place=place_lookup_.prepare();
+            else {
+                BorrowedReadBuffer work(place_request_.buffer.data,place_request_.work_bytes);
+                place_lookup_.searchInto(place_request_,place,&work);
+            }
+        } else { place.request = place_request_; place.state = PlaceState::NoCard; place.dataset = place_lookup_.datasetInfo(); place.dataset.state = PlaceState::NoCard; }
         if(datasetUnavailable(place.state)) {
             releaseDataset(place.state);
             place.dataset=place_lookup_.datasetInfo();
         }
+        if(search_job && screen_resources_.retainedMapBytes())reportMapHeap("place-done-retained",job_request_id_,screen_resources_.retainedMapBytes());
         ok = place.state == PlaceState::Unselected || place.state == PlaceState::Ready || place.state == PlaceState::NotFound;
         if (dataset_job && place.state == PlaceState::Ready && !state_.settings.wordbook_language[0])
             std::snprintf(state_.settings.wordbook_language, sizeof(state_.settings.wordbook_language), "%s",
@@ -400,16 +426,16 @@ void StorageTask::completeJob() {
     state_.operation = job_.operation;
     state_.operation_ok = ok;
     ++state_.revision;
-    completion_ = {};
-    completion_.kind = !ok ? (read_job ? MessageKind::ReadFailed : MessageKind::StorageError) :
+    auto& completion = replies_.beginCompletion();
+    completion.kind = !ok ? (read_job ? MessageKind::ReadFailed : MessageKind::StorageError) :
                        read_job ? MessageKind::ReadCompleted :
                        job_.operation == StorageOperation::SaveSettings ? MessageKind::SettingsWritten :
                        MessageKind::StorageOperationCompleted;
-    completion_.source = TaskId::Storage;
-    completion_.sequence = ++sequence_;
-    completion_.sent_at_ms = taskTimeMs();
-    completion_.request_id = job_request_id_;
-    auto& result = completion_.payload.storage_completion;
+    completion.source = TaskId::Storage;
+    completion.sequence = ++sequence_;
+    completion.sent_at_ms = taskTimeMs();
+    completion.request_id = job_request_id_;
+    auto& result = completion.payload.storage_completion;
     result = {};
     result.request_id = job_request_id_;
     result.operation_id = job_.operation_id;
@@ -417,8 +443,10 @@ void StorageTask::completeJob() {
     result.snapshot = state_;
     result.read_kind = dataset_job ? StorageReadKind::Dataset : search_job ? StorageReadKind::Place :
                        load_job ? StorageReadKind::Settings : StorageReadKind::None;
-    result.place = place;
-    has_completion_ = true;
+    // Readers/bindings have ended. Completion publishes ownership and metadata;
+    // the text remains exclusively in the UI loan until App commits or discards.
+    result.place=placeCompletion(place);
+
     job_kind_ = JobKind::None;
     if constexpr (config::DetailedDiagnostics) {
         if (search_job || dataset_job) {
@@ -481,7 +509,7 @@ void StorageTask::completeJob() {
 }
 
 void StorageTask::notify() {
-    if (has_completion_ && sendSpeculative(notifications_, completion_) == SpeculativeResult::Queued) has_completion_ = false;
+    replies_.notifyCompletion(notifications_);
 }
 
 void StorageTask::sdBegin() {
@@ -540,39 +568,39 @@ void StorageTask::flushLog(bool force) {
     state_.log_result = ok ? LogError::None : state_.log.error;
     next_log_retry_ = ok ? now : now + 5000;
     ++state_.revision;
-    completion_ = {};
-    completion_.kind = ok ? MessageKind::LogWritten : MessageKind::StorageError;
-    completion_.source = TaskId::Storage;
-    completion_.sent_at_ms = now;
-    completion_.payload.storage_completion.snapshot = state_;
-    completion_.payload.storage_completion.read_kind = StorageReadKind::Log;
-    has_completion_ = true;
+    auto& completion = replies_.beginCompletion();
+    completion.kind = ok ? MessageKind::LogWritten : MessageKind::StorageError;
+    completion.source = TaskId::Storage;
+    completion.sent_at_ms = now;
+    completion.payload.storage_completion.snapshot = state_;
+    completion.payload.storage_completion.read_kind = StorageReadKind::Log;
+
     Console.printf("[LOG] saved=%lu buffered=%u closing=%u error=%u\n",
                   static_cast<unsigned long>(state_.log.saved), state_.log.buffered,
                   state_.log.closing, static_cast<unsigned>(state_.log.error));
 }
 
 void StorageTask::stepLogRead() {
-    if(!read_prepared_ && !screen_resources_.logs.done()) {
+    if(!read_prepared_ && !screen_resources_.work.logs().done()) {
         const auto log=log_writer_.snapshot();
-        if(state_.card_state!=CardState::Mounted) screen_resources_.logs.fail(LogReadError::NoCard);
-        else if(screen_resources_.logs.result().request.kind!=LogReadKind::Delete && log.session_id==read_barrier_session_ && log.saved<read_barrier_) {
+        if(state_.card_state!=CardState::Mounted) screen_resources_.work.logs().fail(LogReadError::NoCard);
+        else if(screen_resources_.work.logs().result().request.kind!=LogReadKind::Delete && log.session_id==read_barrier_session_ && log.saved<read_barrier_) {
             if(log.error!=LogError::None && static_cast<int32_t>(taskTimeMs()-next_log_retry_)<0)
-                screen_resources_.logs.fail(LogReadError::SaveFailed);
+                screen_resources_.work.logs().fail(LogReadError::SaveFailed);
             else { flushLog(true); return; }
         } else read_prepared_=true;
     }
-    if(!screen_resources_.logs.done()) screen_resources_.logs.step(&log_writer_);
-    if(!screen_resources_.logs.done()) return;
+    if(!screen_resources_.work.logs().done()) screen_resources_.work.logs().step(&log_writer_);
+    if(!screen_resources_.work.logs().done()) return;
     has_read_=false; state_.busy=false; ++state_.revision;
     state_.log=log_writer_.snapshot();
-    completion_={}; completion_.source=TaskId::Storage; completion_.request_id=read_request_id_;
-    completion_.sequence=++sequence_; completion_.sent_at_ms=taskTimeMs();
-    const auto& read=screen_resources_.logs.result();
-    completion_.kind=read.error==LogReadError::None?MessageKind::ReadCompleted:MessageKind::ReadFailed;
-    auto& result=completion_.payload.storage_completion;
+    auto& completion = replies_.beginCompletion(); completion.source=TaskId::Storage; completion.request_id=read_request_id_;
+    completion.sequence=++sequence_; completion.sent_at_ms=taskTimeMs();
+    const auto& read=screen_resources_.work.logs().result();
+    completion.kind=read.error==LogReadError::None?MessageKind::ReadCompleted:MessageKind::ReadFailed;
+    auto& result=completion.payload.storage_completion;
     result.request_id=read_request_id_; result.snapshot=state_; result.read_kind=StorageReadKind::LogBrowse;
-    result.logs=read; has_completion_=true;
+    result.logs=read;
     if constexpr (config::DetailedDiagnostics) Console.printf("[BROWSE] kind=%u token=%lu error=%u count=%u records=%lu start=%lu stack_free=%u\n",
                   static_cast<unsigned>(read.request.kind),static_cast<unsigned long>(read.request.token),static_cast<unsigned>(read.error),
                   read.count,static_cast<unsigned long>(read.summary.records),static_cast<unsigned long>(read.request.start),
@@ -580,25 +608,29 @@ void StorageTask::stepLogRead() {
 }
 
 void StorageTask::stepMap() {
-    if(screen_resources_.map.reading()) {
-        const auto request=screen_resources_.map.info().request;
+    auto* map=screen_resources_.work.activeMap();
+    if(!map)return;
+    if(map->reading()) {
+        const auto request=map->info().request;
         const auto started=config::DetailedDiagnostics ? taskTimeMs() : 0;
         reportMapHeap("read-begin",request.token);
-        screen_resources_.map.loaded(readBoundaryMap(DatasetCatalog{}.directory(state_.settings.dataset),
-            state_.settings.wordbook_language,request,drive_,this));
+        map->loaded(readBoundaryMap(DatasetCatalog{}.directory(state_.settings.dataset),
+            state_.settings.wordbook_language,request,drive_,this,
+            std::move(screen_resources_.session(request.session)),map->indexReadBuffer()));
         if constexpr (config::DetailedDiagnostics) Console.printf("[MAP] read token=%lu error=%u elapsed_ms=%lu heap=%u\n",
-            static_cast<unsigned long>(request.token),static_cast<unsigned>(screen_resources_.map.info().error),
+            static_cast<unsigned long>(request.token),static_cast<unsigned>(map->info().error),
             static_cast<unsigned long>(taskTimeMs()-started),ESP.getFreeHeap());
         reportMapHeap("render-begin",request.token);
     } else {
-        const bool was_complete=screen_resources_.map.complete();
-        screen_resources_.map.step();
-        if(!was_complete && screen_resources_.map.complete())reportMapHeap("render-done",screen_resources_.map.info().request.token);
+        const bool was_complete=map->complete();
+        map->step();
+        if(!was_complete && map->complete())reportMapHeap("render-done-retained",map->info().request.token,
+            screen_resources_.session(map->info().request.session).bytes());
     }
-    if(screen_resources_.map.notificationPending()) {
+    if(map->notificationPending()) {
         AppNotification event{};event.kind=MessageKind::MapCompleted;event.source=TaskId::Storage;
-        event.request_id=screen_resources_.map.info().request.token;event.payload.map=screen_resources_.map.info();
-        if(sendSpeculative(notifications_,event)==SpeculativeResult::Queued)screen_resources_.map.notificationSent();
+        event.request_id=map->info().request.token;event.payload.map=map->info();
+        if(sendSpeculative(notifications_,event)==SpeculativeResult::Queued)map->notificationSent();
     }
 }
 
@@ -609,17 +641,20 @@ void StorageTask::run() {
         StorageRequest request{};
         // Keep the one accepted operation/result until delivered. An incoming
         // read notification must never be consumed and silently discarded.
-        if (!has_return_ && !hasJob() && !has_completion_ && inbox().receive(request)) { handle(request); sendReturn(); }
+        if (!replies_.returnPending() && !hasJob() && !replies_.completionPending() && inbox().receive(request)) { handle(request); sendReturn(); }
+        if(browse_release_generation_ && !has_read_ && !hasJob() &&
+           !replies_.returnPending() && !replies_.completionPending() &&
+           screen_resources_.work.releaseLogs(browse_release_generation_))browse_release_generation_=0;
         // Display notifications never gate physical work. Only accepted job/results are retained.
-        if (!has_return_ && hasJob()) completeJob();
-        if (!usb_mode_ && !has_return_ && !hasJob() && !has_completion_) flushLog();
-        if (!has_return_ && !hasJob() && !has_completion_ && has_read_ && (!usb_mode_ || usb_.local())) {
-            if(usb_mode_ && usb_work_==UsbWork::PublishMenu) screen_resources_.logs.cancel();
+        if (!replies_.returnPending() && hasJob()) completeJob();
+        if (!usb_mode_ && !replies_.returnPending() && !hasJob() && !replies_.completionPending()) flushLog();
+        if (!replies_.returnPending() && !hasJob() && !replies_.completionPending() && has_read_ && (!usb_mode_ || usb_.local())) {
+            if(usb_mode_ && usb_work_==UsbWork::PublishMenu) screen_resources_.work.logs().cancel();
             stepLogRead();
         }
-        if(!usb_mode_ && !has_return_ && !hasJob() && !has_completion_ && !has_read_) stepMap();
+        if(!usb_mode_ && !replies_.returnPending() && !hasJob() && !replies_.completionPending() && !has_read_) stepMap();
         if (usb_mode_) {
-            if(!has_return_ && !hasJob() && !has_read_ && !has_completion_) stepUsbExport();
+            if(!replies_.returnPending() && !hasJob() && !has_read_ && !replies_.completionPending()) stepUsbExport();
             const auto view = usb_.snapshot();
             if (!(view == state_.usb)) { state_.usb = view; ++state_.revision; usb_dirty_ = true; }
             if (usb_dirty_) {

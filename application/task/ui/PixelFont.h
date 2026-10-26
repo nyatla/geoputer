@@ -15,6 +15,8 @@ public:
     void draw(UiCanvas& target, int x, int y, const char* text, TextRole role, uint16_t color);
 
 private:
+    // One 8x16 monochrome glyph plus M5GFX's trailing guard byte, aligned.
+    alignas(4) uint8_t glyph_buffer_[20]{};
     M5Canvas glyph_;
 };
 

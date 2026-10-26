@@ -69,6 +69,7 @@ void fileTests(const std::string& directory) {
               logGet(record+24,2)==75 && record[26]==12 && record[27]==127,"signed altitude, units, course wrap and validity flags");
     }
     check(writer.requestFlush(0x1234,64,true)==LogError::None && writer.flush(16000),"stop flushes and closes");
+    check(writer.path().empty() && writer.snapshot().name[0],"completed close releases path storage and preserves the filename snapshot");
     check(writer.open(0x1234,utc)==LogError::SessionExists,"persisted session cannot be overwritten");
     check(writer.open(0x1235,utc)==LogError::None,"new session after close");
     point.session_id=0x1235; point.sample_seq=1;

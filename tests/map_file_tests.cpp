@@ -32,6 +32,7 @@ int main(int argc,char** argv) {
         const auto before=lookup.cacheStats();const auto generation=lookup.datasetInfo().generation;const auto rg=observer.rg;
         map::Request request{};request.token=19;request.screen_generation=4;request.dataset_generation=generation;
         request.latitude=point.fix.latitude;request.longitude=point.fix.longitude;
+        map::MapFrameReceiver receiver;check(receiver.begin(request,request.buffer),"fixed UI output lent before source read");
         const auto started=std::chrono::steady_clock::now();
         auto result=readBoundaryMap(dir.string(),"ja",request,0,&observer);
         const auto elapsed=std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()-started).count();
@@ -44,20 +45,29 @@ int main(int argc,char** argv) {
               lookup.datasetInfo().generation==generation && observer.rg==rg,"map never invalidates, reuses or changes the 128 cache or RG state");
         const auto raw_bytes=result.view().count*4;const auto name=std::string(place.lines[0])+" / "+place.lines[1];
         const auto plan=result.plan;
-        MapBuildJob job;job.start(request);job.loaded(std::move(result));
+        map::MapSession session;MapBuildJob job;job.start(request,session);job.loaded(std::move(result));
         unsigned steps=0;while(!job.complete() && ++steps<20)job.step();
         check(job.complete() && job.info().error==map::Error::None,"map renders in bounded steps");
-        map::MapFrameReceiver receiver;check(receiver.begin(job.info()),"frame receiver allocated");
-        map::Transfer transfer{};
-        for(unsigned row=0;row<101;row+=8){request.row=row;check(job.read(request,transfer) && receiver.write(transfer),"full map transfers in ordered row messages");}
-        check(receiver.commit(job.info()) && receiver.image().bytes()==6060,"map is complete and compact");
-        job.release(request);
+        const auto completed=job.info();
+        check(job.release(request) && receiver.commit(completed) && receiver.image().bytes()==6060,"direct map output commits after writer release");
+        const auto* retained=session.pixels.get();const auto retained_bytes=session.bytes();const auto before_highlight=observer.sd;
+        check(session.valid && retained && retained_bytes==raw_bytes && !job.occupied(),"raster survives worker release");
+        auto highlight=request;highlight.buffer={};++highlight.token;highlight.reuse=true;highlight.region_known=true;highlight.region=0;
+        check(receiver.begin(highlight,highlight.buffer) && job.start(highlight,session) && !job.reading(),"highlight skips SD loading");
+        while(!job.complete())job.step();
+        check(session.pixels.get()==retained && observer.sd==before_highlight && job.info().region==0,"highlight reuses pixels without SD IO");
+        check(job.release(highlight) && receiver.discard(highlight),"return recolor output");
+        auto shifted=request;++shifted.token;shifted.longitude+=.0001;
+        auto refilled=readBoundaryMap(dir.string(),"ja",shifted,0,&observer,std::move(session));
+        check(refilled.info.error==map::Error::None && refilled.pixels.get()==retained && refilled.bytes()==retained_bytes,"next viewport overwrites the same allocation");
+        refilled.clear();
         const auto accesses=observer.sd;
         const auto repeated=lookup.search(point);
         check(repeated.state==PlaceState::Ready && repeated.region_code==place.region_code && observer.sd==accesses && lookup.cacheStats().fills==before.fills,
               "original map and name caches still hit without SD IO after independent rendering");
         for(unsigned scale:{2u,4u}) {
-            auto scaled=request;scaled.scale=scale;++scaled.token;
+            auto scaled=request;scaled.buffer={};scaled.scale=scale;++scaled.token;
+            map::MapFrameReceiver sampled_frame;check(sampled_frame.begin(scaled,scaled.buffer),"sampled fixed output loan");
             auto small=readBoundaryMap(dir.string(),"ja",scaled,0,&observer);
             check(small.info.error==map::Error::None && small.pixels,"sampled map source succeeds");
             check(small.info.region==place.region_code,"sampled map retains its generation-center code");
@@ -78,12 +88,12 @@ int main(int argc,char** argv) {
             map::BoundaryImage edges;edges.resize(240,101);
             check(map::buildBoundaryRows({expected.data(),small.plan.source,expected.size()},small.plan,place.region_code,0,101,edges)==map::Error::None,
                   "reference decimated image uses the ordinary edge detector");
-            MapBuildJob sampled_job;sampled_job.start(scaled);sampled_job.loaded(std::move(small));
+            map::MapSession sampled_session;MapBuildJob sampled_job;sampled_job.start(scaled,sampled_session);sampled_job.loaded(std::move(small));
             while(!sampled_job.complete())sampled_job.step();
-            map::MapFrameReceiver sampled_frame;check(sampled_frame.begin(sampled_job.info()),"sampled UI receiver accepts frame");
-            for(unsigned row=0;row<101;row+=8){scaled.row=row;check(sampled_job.read(scaled,transfer)&&sampled_frame.write(transfer),"sampled map transfer succeeds");}
-            check(sampled_frame.commit(sampled_job.info()) && !std::memcmp(sampled_frame.image().data(),edges.data(),edges.bytes()),
-                  "actual boundary output differs from decimate-then-extract reference");
+            const auto sampled_info=sampled_job.info();
+            check(sampled_job.release(scaled) && sampled_frame.commit(sampled_info) &&
+                  !std::memcmp(sampled_frame.image().data(),edges.data(),edges.bytes()),
+                  "direct boundary output differs from decimate-then-extract reference");
             check(lookup.cacheStats().fills==before.fills && lookup.cacheStats().hits==before.hits+1 && observer.rg==rg,
                   "sampled maps alter the independent point cache");
             std::cout<<"PASS: decimate first scale="<<scale<<", raw_input="<<b.width<<'x'<<b.height<<", work_bytes="<<expected.size()*4<<", name="<<place.lines[0]<<" / "<<place.lines[1]<<'\n';

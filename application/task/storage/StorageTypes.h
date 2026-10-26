@@ -48,12 +48,23 @@ struct StorageCommand {
     bool confirmed;
 };
 
+// Text and diagnostic strings stay in the borrowed UI result, never the queue.
+struct PlaceCompletion {
+    PlaceRequest request;
+    PlaceState state;
+    int64_t region_code;
+    DatasetInfo dataset;
+};
+inline PlaceCompletion placeCompletion(const PlaceResult& result) {
+    return {result.request,result.state,result.region_code,result.dataset};
+}
+
 struct StorageCompletion {
     uint32_t request_id;
     uint32_t operation_id;
     StorageSnapshot snapshot;
     StorageReadKind read_kind;
-    union { PlaceResult place; LogReadReply logs; DatasetView dataset_view; };
+    union { PlaceCompletion place; LogReadReply logs; DatasetView dataset_view; };
 };
 
 inline const char* cardStateName(CardState state) {

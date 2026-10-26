@@ -7,6 +7,7 @@
 #include "DatasetPresentation.h"
 #include <cstring>
 #include <cmath>
+#include <algorithm>
 
 namespace geoputer {
 
@@ -54,23 +55,61 @@ OperationStatus UiModel::updateContent(const UpdateUiContent& command) {
     return OperationStatus::Ok;
 }
 
+OperationStatus UiModel::beginPlaceSearch(const PlaceRequest& request,map::BufferLease& buffer) {
+    if(!request.token || request.screen_generation!=generation_ || request.dataset_generation!=data_.dataset.generation ||
+       mode_!=DisplayMode::View || (screen_!=ScreenId::LivePlace && screen_!=ScreenId::Map && !viewingLogPoint(screen_)))
+        return OperationStatus::StaleContent;
+    if(request.buffer.data || request.buffer.id || request.buffer.capacity ||
+       request.work_bytes!=config::IndexReadBufferBytes)return OperationStatus::InvalidRequest;
+    if(place_borrow_.token || !screen_resources_.map.frame.beginWork(request.token,buffer))return OperationStatus::Unavailable;
+    place_borrow_=request;place_borrow_.buffer=buffer;
+    if(!validPlaceMemory(place_borrow_)) {
+        screen_resources_.map.frame.returnWork(request.token,buffer);place_borrow_={};return OperationStatus::Unavailable;
+    }
+    auto* output=new (placeResultMemory(place_borrow_)) PlaceResult{};
+    output->request=place_borrow_;
+    return OperationStatus::Ok;
+}
+OperationStatus UiModel::discardPlaceSearch(const PlaceRequest& request) {
+    if(!place_borrow_.token || !samePlaceRequest(place_borrow_,request))return OperationStatus::StaleContent;
+    // App has already observed Storage's completion (or never submitted it).
+    placeResultMemory(place_borrow_)->~PlaceResult();
+    if(!screen_resources_.map.frame.returnWork(request.token,request.buffer))return OperationStatus::InvalidRequest;
+    place_borrow_={};return OperationStatus::Ok;
+}
+OperationStatus UiModel::commitPlaceSearch(const PlaceRequest& request) {
+    if(!place_borrow_.token || !samePlaceRequest(place_borrow_,request))return OperationStatus::StaleContent;
+    if(request.screen_generation!=generation_ || request.dataset_generation!=data_.dataset.generation ||
+       mode_!=DisplayMode::View || (screen_!=ScreenId::LivePlace && screen_!=ScreenId::Map && !viewingLogPoint(screen_)) ||
+       (viewingLogPoint(screen_) && (data_.browse().loading || request.sample_seq!=data_.browse().index+1)))
+        return OperationStatus::StaleContent;
+    const auto& result=*placeResultMemory(place_borrow_);
+    if(!samePlaceRequest(result.request,request) || datasetInactive(result.state))return OperationStatus::InvalidRequest;
+    completePlacePresentation(data_,result);redraw_=true;
+    return discardPlaceSearch(request);
+}
+
+bool UiModel::acceptsMap(const map::Request& request) const {
+    return request.token && showingMap(screen_,data_) && mode_==DisplayMode::View && request.screen_generation==generation_ &&
+        request.session==(viewingLogPoint(screen_)?map::SessionId::Log:map::SessionId::Live) &&
+        request.dataset_generation==data_.dataset.generation && request.scale==data_.map.scale &&
+        map::supportedScale(request.scale);
+}
 bool UiModel::acceptsMap(const map::FrameInfo& info) const {
-    return screen_==ScreenId::Map && mode_==DisplayMode::View && info.request.screen_generation==generation_ &&
-        info.request.dataset_generation==data_.dataset.generation && info.request.scale==data_.map.scale &&
-        map::supportedScale(info.request.scale) && info.width==map::MaxWidth && info.height==map::MaxHeight &&
+    return acceptsMap(info.request) && info.width==map::MaxWidth && info.height==map::MaxHeight &&
         std::isfinite(info.meters_per_pixel) && info.meters_per_pixel>0;
 }
-OperationStatus UiModel::beginMapFrame(const map::Transfer& transfer) {
-    if(!acceptsMap(transfer.info))return OperationStatus::StaleContent;
-    return screen_resources_.map.frame.begin(transfer.info)?OperationStatus::Ok:OperationStatus::Unavailable;
+OperationStatus UiModel::beginMapFrame(const map::Request& request,map::BufferLease& buffer) {
+    if(!acceptsMap(request))return OperationStatus::StaleContent;
+    return screen_resources_.map.frame.begin(request,buffer)?OperationStatus::Ok:OperationStatus::Unavailable;
 }
-OperationStatus UiModel::writeMapRows(const map::Transfer& transfer) {
-    if(!acceptsMap(transfer.info))return OperationStatus::StaleContent;
-    return screen_resources_.map.frame.write(transfer)?OperationStatus::Ok:OperationStatus::InvalidRequest;
+OperationStatus UiModel::discardMapFrame(const map::Request& request) {
+    // Returning a lease is independent of the currently visible screen/mode.
+    return screen_resources_.map.frame.discard(request)?OperationStatus::Ok:OperationStatus::StaleContent;
 }
-OperationStatus UiModel::commitMapFrame(const map::Transfer& transfer) {
-    if(!acceptsMap(transfer.info))return OperationStatus::StaleContent;
-    if(!screen_resources_.map.frame.commit(transfer.info))return OperationStatus::InvalidRequest;
+OperationStatus UiModel::commitMapFrame(const map::FrameInfo& info) {
+    if(!acceptsMap(info))return OperationStatus::StaleContent;
+    if(!screen_resources_.map.frame.commit(info))return OperationStatus::InvalidRequest;
     screen_resources_.map.cursor={0,0,true};updateMapCursor();
     redraw_=true;return OperationStatus::Ok;
 }
@@ -78,9 +117,11 @@ OperationStatus UiModel::commitMapFrame(const map::Transfer& transfer) {
 void UiModel::updateMapCursor() {
     if(!screen_resources_.map.frame.image().bytes()) {screen_resources_.map.cursor={};return;}
     // Invalid GPS preserves the last known marker, drawn grey by the renderer.
-    if(data_.gps.reception!=GpsReception::Fix || !data_.gps.fix.valid)return;
+    const auto& fix=displayedFix(screen_,data_);
+    if(viewingLogPoint(screen_) && !fix.valid) {screen_resources_.map.cursor={};return;}
+    if(!fix.valid || (!viewingLogPoint(screen_) && data_.gps.reception!=GpsReception::Fix))return;
     const auto& info=screen_resources_.map.frame.info();
-    screen_resources_.map.cursor=map::cursorOffset({info.request,info.meters_per_pixel},data_.gps.fix.latitude,data_.gps.fix.longitude);
+    screen_resources_.map.cursor=map::cursorOffset({info.request,info.meters_per_pixel},fix.latitude,fix.longitude);
 }
 
 void UiModel::copyData(const UiData& data) {
@@ -96,7 +137,10 @@ void UiModel::copyData(const UiData& data) {
     const auto old_browse=data_.browse().revision;
     const auto old_dataset_revision=data_.datasets().revision;
     const auto old_export=data_.storage.export_job.phase;
-    if(data.dataset.generation!=data_.dataset.generation)screen_resources_.map.frame.clear();
+    // V switches modes inside LogPoint without SetUiScreen. The old images
+    // are no longer visible; reject late commits but retain any outstanding loan.
+    if(data.dataset.generation!=data_.dataset.generation ||
+       (showingMap(screen_,data_) && !showingMap(screen_,data)))screen_resources_.map.clear();
     data_ = data;updateMapCursor();
     // Activity is global; an older job snapshot cannot roll it back.
     if (newerRevision(previous_sd.revision, data_.storage.sd.revision)) data_.storage.sd = previous_sd;
@@ -224,20 +268,17 @@ UiKeyGuide UiModel::keyGuide() const {
     auto list=[&](unsigned count) {
         guide.vertical=true;guide.up=selection_>0;guide.down=selection_+1u<count;
     };
-    if (screen_==ScreenId::Map) {
-        guide.vertical=true;guide.up=map::supportedScale(data_.map.scale) && data_.map.scale>1;
-        guide.down=map::supportedScale(data_.map.scale) && data_.map.scale<4;
-    } else if (screen_==ScreenId::Logs) {
+    if (screen_==ScreenId::Logs) {
         const auto& view=data_.browse();
         guide.vertical=true;guide.up=!view.loading && (selection_>0 || view.has_newer);
         guide.down=!view.loading && (selection_+1u<view.count || view.has_older);
         guide.remove=!view.loading && canDeleteLog();
     } else if (screen_==ScreenId::LogPoint) {
-        guide.vertical=true;guide.up=data_.browse().target>0;
-        guide.down=uint64_t(data_.browse().target)+1<data_.browse().summary.records;
+        guide.vertical=guide.horizontal=true;guide.up=guide.left=data_.browse().target>0;
+        guide.down=guide.right=uint64_t(data_.browse().target)+1<data_.browse().summary.records;
     } else if (screen_==ScreenId::LogDetail) {
         guide.vertical=true;guide.up=!data_.browse().loading && selection_>0;
-        guide.down=!data_.browse().loading && selection_<1;
+        guide.down=!data_.browse().loading && selection_<2;
     } else if (screen_==ScreenId::Menu) list(MenuCount);
     else if (screen_==ScreenId::Settings && !screen_resources_.settings.card_info) {
         if (screen_resources_.settings.editing) {
@@ -260,7 +301,11 @@ UiKeyGuide UiModel::keyGuide() const {
             if (!ready) guide.up=guide.down=false;
         }
     }
-    if (!guide.accepting) guide.up=guide.down=guide.left=guide.right=guide.remove=false;
+    if(showingMap(screen_,data_)) {
+        guide.zoom_in=map::supportedScale(data_.map.scale) && data_.map.scale>1;
+        guide.zoom_out=map::supportedScale(data_.map.scale) && data_.map.scale<4;
+    }
+    if (!guide.accepting) guide.up=guide.down=guide.left=guide.right=guide.remove=guide.zoom_in=guide.zoom_out=false;
     return guide;
 }
 
@@ -304,9 +349,13 @@ void UiModel::keyPressed(UiKey key, uint32_t now_ms) {
     if (isLogBrowser(screen_) && data_.browse().deleting) return;
     if (!data_.boot.maintenance) {
         if (key == UiKey::ScreenOff) { action(ActionKind::Sleep); return; }
-        if (key == UiKey::GpsControl) { openGpsControls(); return; }
+        if (key == UiKey::GpsControl) {
+            if(viewingLogPoint(screen_) && data_.browse().playing) {
+                data_.editBrowse().playing=false;browseAction(BrowseAction::PausePlayback);
+            }
+            openGpsControls(); return; }
     }
-    if (!keyGuide().allowsDirection(key)) return;
+    if (!keyGuide().allowsKey(key)) return;
     if (!data_.boot.maintenance && isScreenRoot(screen_, screen_resources_.settings.page) && !screen_resources_.settings.editing && !screen_resources_.settings.card_info) {
         if (screen_ == ScreenId::Menu) {
             if (key == UiKey::Up) { --selection_; changed(); return; }
@@ -322,12 +371,13 @@ void UiModel::keyPressed(UiKey key, uint32_t now_ms) {
         }
     }
     if (screen_ == ScreenId::Menu) return;
+    if(showingMap(screen_,data_) && (key==UiKey::ZoomIn || key==UiKey::ZoomOut)) {
+        action(ActionKind::MapScale);
+        action_.map_scale=key==UiKey::ZoomIn?data_.map.scale/2:data_.map.scale*2;
+        return;
+    }
     if (screen_ == ScreenId::Map) {
-        const auto scale=data_.map.scale;
-        if(key==UiKey::Up || key==UiKey::Down) {
-            action(ActionKind::MapScale);
-            action_.map_scale=key==UiKey::Up ? scale/2 : scale*2;
-        } else if(key==UiKey::Escape)action(ActionKind::ChangeScreen);
+        if(key==UiKey::Escape)action(ActionKind::ChangeScreen);
         return;
     }
     if (screen_ == ScreenId::LivePlace) return;
@@ -361,8 +411,16 @@ void UiModel::logBrowserKey(UiKey key) {
         return;
     }
     if(screen_==ScreenId::LogPoint) {
-        if(key==UiKey::Up) browseAction(BrowseAction::Point,view.target-1);
-        if(key==UiKey::Down) browseAction(BrowseAction::Point,view.target+1);
+        if(!view.summary.records)return;
+        if(key==UiKey::Left) browseAction(BrowseAction::Point,view.target-1);
+        if(key==UiKey::Right) browseAction(BrowseAction::Point,view.target+1);
+        if(key==UiKey::Up) browseAction(BrowseAction::Point,view.target>10?view.target-10:0);
+        if(key==UiKey::Down) browseAction(BrowseAction::Point,
+            static_cast<uint32_t>(std::min(uint64_t(view.target)+10,uint64_t(view.summary.records-1))));
+        if(key==UiKey::FirstPoint) browseAction(BrowseAction::Point,0);
+        if(key==UiKey::LastPoint) browseAction(BrowseAction::Point,view.summary.records-1);
+        if(key==UiKey::ToggleView && (!view.map_mode?logMapAvailable(data_):true)) browseAction(BrowseAction::ToggleView);
+        if(key==UiKey::Playback && view.map_mode) browseAction(BrowseAction::Playback);
         return;
     }
     if(view.loading) return;
@@ -383,8 +441,8 @@ void UiModel::logBrowserKey(UiKey key) {
         if(key==UiKey::Up) { --selection_; changed(); }
         if(key==UiKey::Down) { ++selection_; changed(); }
         if(key==UiKey::Enter) {
-            if(selection_ || !view.summary.session_id) browseAction(BrowseAction::Reload);
-            else if(view.summary.records) browseAction(BrowseAction::Points);
+            if(view.summary.session_id && view.summary.records && (!selection_ || logMapAvailable(data_)))
+                browseAction(selection_==0?BrowseAction::Points:selection_==1?BrowseAction::Map:BrowseAction::Replay);
         }
     }
     return;

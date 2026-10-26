@@ -3,8 +3,9 @@
 #include "ViewportTransform.h"
 
 namespace geoputer::map {
+template<class Image>
 inline Error buildBoundaryRows(const RasterView& source, const ViewportPlan& plan, RegionCode current,
-                               unsigned first, unsigned rows, BoundaryImage& image) {
+                               unsigned first, unsigned rows, Image& image) {
     if (plan.width<=0 || plan.height<=0 || !std::isfinite(plan.grid_rows_per_pixel) || plan.grid_rows_per_pixel<=0 || !source.pixels || source.bounds.width <= 0 || source.bounds.height <= 0 ||
         uint64_t(source.bounds.width) * source.bounds.height > source.count ||
         image.width() != unsigned(plan.width) || image.height() != unsigned(plan.height) ||

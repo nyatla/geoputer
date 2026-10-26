@@ -2,6 +2,7 @@
 #include "../../gps/GpsTime.h"
 #include <cerrno>
 #include <cstring>
+#include <string_view>
 #include <dirent.h>
 #include <fcntl.h>
 #include <sys/stat.h>
@@ -14,9 +15,9 @@ bool LogWriter::sameSessionExists(uint64_t session, bool& io_error) {
     if (!dir) { io_error=errno!=ENOENT; return false; }
     bool found=false;
     while (auto* entry=readdir(dir)) {
-        const std::string name=entry->d_name;
+        const std::string_view name=entry->d_name;
         if (name.size()<8 || name.compare(name.size()-8,8,".gps.dat")) continue;
-        auto* file=std::fopen((directory_+"/"+name).c_str(),"rb");
+        auto* file=std::fopen((directory_+"/"+entry->d_name).c_str(),"rb");
         if (!file) { io_error=true; break; }
         uint8_t header[512];
         const auto count=std::fread(header,1,sizeof(header),file);
@@ -109,21 +110,25 @@ bool LogWriter::createFile(uint64_t session, uint64_t first_utc) {
     return file_.opened();
 }
 bool LogWriter::flush(uint32_t now) {
-    uint8_t head, count;
-    uint32_t saved;
-    uint64_t session, created, first_utc;
+    uint8_t head=0, count=0;
+    uint32_t saved=0;
+    uint64_t session=0, created=0, first_utc=0;
+    bool finished=false;
     {
         ShortLock::Guard guard(lock_);
-        if (!state_.open && !state_.closing && !state_.buffered) return true;
-        if (!state_.buffered && !file_.opened() && state_.closing) {
-            state_.closing=false; flush_requested_=false; changed(); return true;
+        if (!state_.open && !state_.closing && !state_.buffered && !file_.opened()) finished=true;
+        else if (!state_.buffered && !file_.opened() && state_.closing) {
+            state_.closing=false; flush_requested_=false; changed(); finished=true;
+        } else if (!state_.buffered && !state_.closing) { flush_requested_=false; return true; }
+        if(!finished) {
+            // Retain the exact batch across failures. Producer can only append after it.
+            if (!batch_count_) { batch_count_=state_.buffered; batch_flush_sequence_=flush_sequence_; }
+            head=head_; count=batch_count_; saved=state_.saved;
+            session=state_.session_id; created=created_; first_utc=first_utc_;
         }
-        if (!state_.buffered && !state_.closing) { flush_requested_=false; return true; }
-        // Retain the exact batch across failures. Producer can only append after it.
-        if (!batch_count_) { batch_count_=state_.buffered; batch_flush_sequence_=flush_sequence_; }
-        head=head_; count=batch_count_; saved=state_.saved;
-        session=state_.session_id; created=created_; first_utc=first_utc_;
     }
+    // Heap release belongs outside the producer critical section.
+    if(finished) {std::string{}.swap(path_);return true;}
     SdAccessScope scope(observer_);
     bool ok=createFile(session,first_utc);
     if (ok) {
@@ -162,9 +167,12 @@ bool LogWriter::flush(uint32_t now) {
     }
     if (close) {
         const bool closed=file_.close();
-        ShortLock::Guard guard(lock_);
-        if (!closed) { state_.error=LogError::Io; flush_requested_=true; changed(); return false; }
-        state_.closing=false; changed();
+        {
+            ShortLock::Guard guard(lock_);
+            if (!closed) { state_.error=LogError::Io; flush_requested_=true; changed(); return false; }
+            state_.closing=false; changed();
+        }
+        std::string{}.swap(path_);
     }
     return true;
 }

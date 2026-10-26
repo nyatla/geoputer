@@ -1,12 +1,15 @@
 #pragma once
-#include "MapBuildJob.h"
-#include "log/LogReader.h"
+#include "StorageWorkArea.h"
 namespace geoputer {
-// Worker resources follow accepted jobs, not the current display. StorageTask
-// admits only one read/map job and retains it through cancellation/completion.
+// Sessions follow the displayed map; the worker follows accepted jobs.
+// StorageTask admits one read/map job, independently of the retained raster.
 struct StorageScreenResources {
-    explicit StorageScreenResources(StorageObserver* observer=nullptr):logs("/sd/logs",observer){}
-    MapBuildJob map;
-    LogReader logs;
+    explicit StorageScreenResources(StorageObserver* observer=nullptr):work(observer){}
+    map::MapSession live_map,log_map;
+    map::MapSession& session(map::SessionId id) {return id==map::SessionId::Log?log_map:live_map;}
+    size_t retainedMapBytes() const {return live_map.bytes()+log_map.bytes();}
+    void clearMaps() {live_map.clear();log_map.clear();}
+    void selectMap(map::SessionId id) {session(id==map::SessionId::Live?map::SessionId::Log:map::SessionId::Live).clear();}
+    StorageWorkArea work;
 };
 } // namespace geoputer

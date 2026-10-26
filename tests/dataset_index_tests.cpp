@@ -1,3 +1,4 @@
+#include <cstring>
 #include "task/storage/dataset/DatasetIndex.h"
 #include <array>
 #include <algorithm>
@@ -135,6 +136,32 @@ void testIndexMaintenance(const fs::path& parent,const fs::path& source_map,cons
     check(saves==1,"maintenance never invokes settings save");
     std::cout<<"All-language / partial rebuild / read-only source comparison tests passed\n";
 }
+void testLongLanguageIndex(const fs::path& parent,const fs::path& source_map,const fs::path& source_book) {
+    const auto dir=parent/"long-language-index";fs::create_directories(dir);
+    fs::copy_file(source_map,dir/"map.glc");fs::copy_file(source_book,dir/"names.giswordbook");
+    const std::string a(31,'a'),b=std::string(30,'a')+"b";
+    {std::ofstream ini(dir/"dataset.ini");ini<<"[dataset]\nversion=1\nmap=map.glc\ndefault_language="<<a<<"\n["<<b<<"]\ntitle=Second\nwordbook=names.giswordbook\n["<<a<<"]\ntitle=First\nwordbook=names.giswordbook\n";}
+    const auto metadata=readDatasetMetadata(dir.string(),UiLanguage::English);
+    DatasetIndex index;check(metadata.error==DatasetError::None && index.rebuild(dir.string(),metadata)==DatasetError::None,"31-byte language sections generate a sorted index");
+    const auto path=dir/"_mapindex.dat";const auto original=read(path);
+    DatasetWordBookIndex first,second;
+    index.loadMap(path.string(),(dir/"map.glc").string(),nullptr,nullptr,&first,a);
+    index.loadMap(path.string(),(dir/"map.glc").string(),nullptr,nullptr,&second,b);
+    check(first.section_offset<second.section_offset && std::string(reinterpret_cast<const char*>(second.header.data()))==b,
+          "previous language survives the next record buffer, including a 30-byte shared prefix");
+    auto publish=[&](std::vector<uint8_t> data) {
+        uint32_t crc=UINT32_MAX;for(size_t i=0;i<data.size()-4;++i){crc^=data[i];for(unsigned bit=0;bit<8;++bit)crc=(crc>>1)^((crc&1)?0xedb88320u:0u);}crc^=UINT32_MAX;
+        for(unsigned i=0;i<4;++i)data[data.size()-4+i]=crc>>(i*8);
+        write(path,data);
+    };
+    auto bad=original;std::fill_n(bad.data()+first.section_offset,31,'z');publish(bad);
+    check(!index.validate(path.string()),"CRC-valid descending long language IDs rejected");
+    bad=original;std::memcpy(bad.data()+first.section_offset,b.data(),31);publish(bad);
+    check(!index.validate(path.string()),"CRC-valid duplicate long language IDs rejected");
+    bad=original;bad[first.section_offset+31]='x';publish(bad);
+    check(!index.validate(path.string()),"unterminated 32-byte index language rejected before copy");
+    write(path,original);check(index.validate(path.string()),"valid long language index recovers");
+}
 int main(int argc,char** argv) {
     if (argc==3 && std::string(argv[1])=="--validate") return DatasetIndex{}.validate(argv[2]) ? 0 : 1;
     check(argc==4,"usage: index-tests directory map wordbook");
@@ -207,5 +234,6 @@ int main(int argc,char** argv) {
     check(observer.accesses>0 && observer.depth==0,"all IO observer scopes balance");
     check(index.validate(final.string()),"final index valid after all recovery tests");
     testIndexMaintenance(directory,map,book);
+    testLongLanguageIndex(directory,map,book);
     std::cout<<"Dataset index transaction / IO failure tests passed ("<<fs::file_size(final)<<" bytes)\n";
 }

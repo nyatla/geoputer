@@ -121,10 +121,26 @@ void uiTests() {
     ui.keyPressed(UiKey::Escape,12);check(ui.snapshot().action.target==ScreenId::Menu,"Escape opens Menu directly during a pending read");
     data.editBrowse().loading=false;data.editBrowse().summary.records=25;data.editBrowse().target=9;
     ui.setScreen({ScreenId::LogPoint,DisplayMode::View,2,data,ui.snapshot().action.action_id,ActionResult::Applied});
-    ui.keyPressed(UiKey::Down,13);check(ui.snapshot().action.browse_index==10,"point navigation crosses ten-record cache boundary");
+    ui.keyPressed(UiKey::Right,13);check(ui.snapshot().action.browse_index==10,"point navigation crosses ten-record cache boundary");
     action=ui.snapshot().action;data.editBrowse().target=24;ui.updateContent({DisplayMode::View,2,data,action.action_id,ActionResult::Applied});
     ui.keyPressed(UiKey::Down,14);check(ui.snapshot().action.kind==ActionKind::None,"last record does not wrap to first");
     ui.keyPressed(UiKey::Escape,15);check(ui.snapshot().action.target==ScreenId::LogDetail,"point Escape returns to file detail");
+    action=ui.snapshot().action;
+    data.editBrowse().summary.session_id=12;data.editBrowse().summary.records=25;
+    ui.setScreen({ScreenId::LogDetail,DisplayMode::View,3,data,action.action_id,ActionResult::Applied});
+    ui.keyPressed(UiKey::Down,16);ui.keyPressed(UiKey::Enter,17);
+    check(ui.snapshot().action.kind==ActionKind::None,"map action is disabled without usable dataset");
+    ui.keyPressed(UiKey::Up,18);ui.keyPressed(UiKey::Enter,19);action=ui.snapshot().action;
+    check(action.browse_action==BrowseAction::Points,"text action remains available without dataset");
+    data.editBrowse().target=12;
+    ui.setScreen({ScreenId::LogPoint,DisplayMode::View,4,data,action.action_id,ActionResult::Applied});
+    ui.keyPressed(UiKey::Up,20);action=ui.snapshot().action;check(action.browse_index==2,"up skips ten points");
+    ui.updateContent({DisplayMode::View,4,data,action.action_id,ActionResult::Applied});
+    ui.keyPressed(UiKey::FirstPoint,21);action=ui.snapshot().action;check(action.browse_index==0,"B requests first point");
+    ui.updateContent({DisplayMode::View,4,data,action.action_id,ActionResult::Applied});
+    ui.keyPressed(UiKey::LastPoint,22);action=ui.snapshot().action;check(action.browse_index==24,"E requests last point");
+    ui.updateContent({DisplayMode::View,4,data,action.action_id,ActionResult::Applied});
+    ui.keyPressed(UiKey::ToggleView,23);check(ui.snapshot().action.kind==ActionKind::None,"V cannot open unusable map");
 }
 struct DeleteActivity : StorageObserver {
     unsigned depth=0,accesses=0;
@@ -178,7 +194,7 @@ void deleteTests(const std::string& dir) {
           "deleting another log leaves the active writer and RAM queue intact");
     check(writer.flush(1000),"close protected log after saving retained records");
     std::strcpy(req.name,active_name.c_str());
-    check(run(reader,req,&writer).error==LogReadError::None && !fs::exists(writer.path()),"fully closed and saved file can be deleted");
+    check(run(reader,req,&writer).error==LogReadError::None && !fs::exists(fs::path(dir)/active_name),"fully closed and saved file can be deleted");
 
     // Inclusive refresh keeps the old first row when it survives deletion.
     for(unsigned n=0;n<8;++n) {char row[64];std::snprintf(row,sizeof(row),"20261016_0100%02u_0.gps.dat",n);file(dir+"/"+row,1);}

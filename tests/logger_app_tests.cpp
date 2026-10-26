@@ -1,6 +1,8 @@
 // Exercise production App dispatch and logging against queued GPS/UI and a real LogWriter.
 #include "Application.h"
 #include "utils/Console.h"
+#include "task/storage/log/LogFormat.h"
+#include "task/ui/KeyBindings.h"
 #include <stdexcept>
 #include <cstring>
 #include <cstdio>
@@ -13,8 +15,8 @@ std::vector<MessageKind> calls;
 bool fail_open=false,hold_place_queries=false;
 AppNotification late_dataset{};bool deliver_dataset_on_ui_send=false;
 StorageRequest last_read{};
-MapBuildJob map_backend;
-bool reject_screen=false;
+MapBuildJob map_backend;map::MapSession live_session,log_session;
+bool reject_screen=false,reject_place_return=false;
 void check(bool ok,const char* why){if(!ok)throw std::runtime_error(why);}
 void route(QueueHandle_t queue) {
     ReturnMessage reply{};
@@ -35,6 +37,15 @@ void route(QueueHandle_t queue) {
             result.status=reject_screen?OperationStatus::Unavailable:app->ui_.model_.setScreen(command.payload.screen);
             reject_screen=false;
         }
+        else if(command.kind==MessageKind::BeginPlaceSearch)result.status=app->ui_.model_.beginPlaceSearch(command.payload.place,result.map_buffer);
+        else if(command.kind==MessageKind::CommitPlaceSearch)result.status=app->ui_.model_.commitPlaceSearch(command.payload.place);
+        else if(command.kind==MessageKind::DiscardPlaceSearch) {
+            if(reject_place_return){reject_place_return=false;result.status=OperationStatus::Unavailable;}
+            else result.status=app->ui_.model_.discardPlaceSearch(command.payload.place);
+        }
+        else if(command.kind==MessageKind::BeginMapFrame)result.status=app->ui_.model_.beginMapFrame(command.payload.map.request,result.map_buffer);
+        else if(command.kind==MessageKind::DiscardMapFrame)result.status=app->ui_.model_.discardMapFrame(command.payload.map.request);
+        else if(command.kind==MessageKind::CommitMapFrame)result.status=app->ui_.model_.commitMapFrame(command.payload.map);
         else throw std::runtime_error("unexpected UI request");
         check(app->results_.send(reply),"UI return queue full");return;
     }
@@ -43,8 +54,14 @@ void route(QueueHandle_t queue) {
         StorageRequest command{};app->storage_.inbox().receive(command);calls.push_back(command.kind);
         prepareSyncReturn(reply,TaskId::Storage,command,1);auto& result=reply.payload.result;
         if(command.kind==MessageKind::CancelLogRead)return;
+        if(command.kind==MessageKind::ReleaseLogBrowse)return; // One-way, like cancellation.
+        if(command.kind==MessageKind::CloseMapSession) {
+            auto& session=command.payload.map.session==map::SessionId::Log?log_session:live_session;
+            if(session.belongs(command.payload.map))session.clear();
+            result.status=OperationStatus::Ok;check(app->results_.send(reply),"close map session return");return;
+        }
         if(command.kind==MessageKind::RequestMap || command.kind==MessageKind::CancelMap || command.kind==MessageKind::ReleaseMap) {
-            const bool ok=command.kind==MessageKind::RequestMap?map_backend.start(command.payload.map):map_backend.release(command.payload.map);
+            const bool ok=command.kind==MessageKind::RequestMap?map_backend.start(command.payload.map,command.payload.map.session==map::SessionId::Log?log_session:live_session):map_backend.release(command.payload.map);
             result.status=ok?OperationStatus::Ok:OperationStatus::Unavailable;
             check(app->results_.send(reply),"map job return queue full");return;
         }
@@ -134,11 +151,11 @@ int main(){
     app->data_.gps.fix={35.68,140.02,1000,true};app->data_.gps.reception=GpsReception::Fix;
     app->data_.gps.sample_seq=500;app->data_.map.scale=1;app->place_flow_.refresh();
     check(app->setScreen(ScreenId::Map),"enter map through the production generation transition");
-    map::Transfer shown{};shown.info.width=240;shown.info.height=101;shown.info.region=17;shown.info.meters_per_pixel=9;
-    shown.info.request.token=77;shown.info.request.screen_generation=app->generation_;
-    shown.info.request.dataset_generation=app->data_.dataset.generation;shown.info.request.latitude=35.68;shown.info.request.longitude=140.02;
-    check(app->ui_.model_.beginMapFrame(shown)==OperationStatus::Ok,"map fixture begins");
-    for(unsigned row=0;row<101;row+=8){shown.row=row;shown.rows=std::min(8u,101-row);check(app->ui_.model_.writeMapRows(shown)==OperationStatus::Ok,"map fixture rows");}
+    map::FrameInfo shown{};shown.width=240;shown.height=101;shown.region=17;shown.meters_per_pixel=9;
+    shown.request.token=77;shown.request.screen_generation=app->generation_;
+    shown.request.dataset_generation=app->data_.dataset.generation;shown.request.latitude=35.68;shown.request.longitude=140.02;
+    check(app->ui_.model_.beginMapFrame(shown.request,shown.request.buffer)==OperationStatus::Ok,"map fixture begins");
+    std::memset(shown.request.buffer.data,0,map::BoundaryBytes);
     check(app->ui_.model_.commitMapFrame(shown)==OperationStatus::Ok,"map fixture commits");
     auto lookup=[&](const char* name,bool hidden=false) {
         app->requestPlace();StorageRequest query{};
@@ -146,14 +163,18 @@ int main(){
         AppNotification event{};event.source=TaskId::Storage;event.kind=MessageKind::ReadCompleted;
         auto& reply=event.payload.storage_completion;reply.request_id=query.request_id;reply.read_kind=StorageReadKind::Place;
         reply.snapshot=app->data_.storage;reply.snapshot.settings=app->data_.settings;++reply.snapshot.revision;
-        reply.place.request=query.payload.place_request;reply.place.state=PlaceState::Ready;reply.place.dataset=app->data_.dataset;
-        reply.place.region_code=42;std::strcpy(reply.place.lines[0],name);
+        auto& output=*placeResultMemory(query.payload.place_request);
+        output={};output.request=query.payload.place_request;output.state=PlaceState::Ready;
+        output.dataset=app->data_.dataset;output.region_code=42;std::strcpy(output.lines[0],name);
+        reply.place=placeCompletion(output);
         if(hidden)app->mode_=DisplayMode::Background;
-        app->handleNotification(event);app->publishUiContent();
+        app->handleNotification(event);
+        check(app->place_flow_.pending(),"notification handler must defer UI sync until the main loop");
+        app->processPlace();app->publishUiContent();
         if(hidden) {
             check(app->place_flow_.waitMs(app->data_.gps.sample_seq,app->data_.gps.fix,10000,10000)==0,
                   "hidden completion must not suppress the lookup after wake");
-            app->mode_=DisplayMode::View;
+            app->mode_=DisplayMode::View;app->publishUiContent();
         } else check(!std::strcmp(app->ui_.model_.data().place[0],name),"map accepts current-place result without rebuilding image");
         check(app->ui_.model_.mapFrame().info().request.token==77 && app->ui_.model_.mapFrame().image().bytes()==6060,
               "place result changed the displayed boundary image");
@@ -167,6 +188,29 @@ int main(){
     app->map_request_={};app->mode_=DisplayMode::Background;app->requestPlace();
     check(!app->storage_.inbox().receive(no_query),"background mode does not start place IO");
     app->mode_=DisplayMode::View;lookup("HIDDEN",true);lookup("THIRD AREA");
+    // UI lending may succeed while Storage's queue is full. Retain and return
+    // the unsubmitted loan even if the first UI return itself is rejected.
+    app->place_flow_.refresh();StorageRequest blocker{};blocker.kind=MessageKind::GetStorageStatus;
+    check(app->storage_.inbox().send(blocker),"fill Storage before place query");
+    app->requestPlace();check(app->place_borrow_.token && !app->place_queued_ && !app->place_flow_.pending(),"queue-full search must retain an unsubmitted loan");
+    reject_place_return=true;app->processPlace();check(app->place_borrow_.token && app->ui_.model_.mapFrame().leased(),"failed UI return keeps memory unavailable");
+    app->processPlace();check(!app->place_borrow_.token && !app->ui_.model_.mapFrame().leased(),"unsubmitted loan returns on retry");
+    check(app->storage_.inbox().receive(blocker) && blocker.kind==MessageKind::GetStorageStatus,"failed search did not replace queued Storage work");
+    // The writer may finish after both App and UI replaced their screen data.
+    app->requestPlace();StorageRequest departing{};check(app->storage_.inbox().receive(departing),"place pending before screen switch");
+    check(app->setScreen(ScreenId::Settings) && app->ui_.model_.mapFrame().leased(),"screen switch preserves place workspace");
+    auto* old_result=placeResultMemory(departing.payload.place_request);
+    old_result->request=departing.payload.place_request;old_result->state=PlaceState::Ready;old_result->dataset=app->data_.dataset;
+    std::strcpy(old_result->lines[0],"LATE SCREEN NAME");
+    AppNotification finished{};finished.source=TaskId::Storage;finished.kind=MessageKind::ReadCompleted;
+    auto& completion=finished.payload.storage_completion;completion.request_id=departing.request_id;
+    completion.read_kind=StorageReadKind::Place;completion.snapshot=app->data_.storage;completion.snapshot.settings=app->data_.settings;
+    completion.place.request=departing.payload.place_request;
+    app->handleNotification(finished);check(app->place_flow_.pending(),"late notification only stages completion");
+    reject_place_return=true;app->processPlace();check(app->place_borrow_.token,"stale result return can be retried");
+    app->processPlace();check(!app->place_borrow_.token && !app->place_flow_.pending() &&
+        std::strcmp(app->data_.place[0],"LATE SCREEN NAME"),"old screen result is returned without publication");
+    check(app->setScreen(ScreenId::Map),"restore map after place-lifetime scenarios");
     std::puts("PASS: shared current-place lookup on map, changed-cell dispatch, same-cell suppression and map-job exclusion");
     // A delayed catalog response must not overwrite the Logs page even when it
     // arrives inside the synchronous SetUiScreen call, before generation changes.
@@ -232,24 +276,128 @@ int main(){
     app->processBrowser();check(last_read.kind==MessageKind::ReadLogRecords,"record request accepted");
     const auto stale_records=last_read.payload.log_read;
     check(app->setScreen(ScreenId::Map) && app->screen_resources_.hasMap(),"Logs -> Map replaces log work");
-    auto& map_work=app->screen_resources_.map();map_work.transfer.pixels[0]=0xa5;map_work.row=17;
+    auto& map_work=app->screen_resources_.map();map_work.info.region=0xa5;map_work.retry_at=17;
     app->processMap();check(!app->map_request_.token,"new map request must wait for the old read's terminal result");
     app->processBrowser(); // Send pending cancellation even without log work.
     LogReadReply stale{};stale.request=stale_records;stale.count=1;
     std::memset(stale.data.records,0xee,sizeof(stale.data.records));app->completeBrowser(stale);
-    check(!app->browse_waiting_ && app->screen_resources_.hasMap() && map_work.transfer.pixels[0]==0xa5 && map_work.row==17,
+    check(!app->browse_waiting_ && app->screen_resources_.hasMap() && map_work.info.region==0xa5 && map_work.retry_at==17,
           "late records must consume their token without touching the active map work");
+    check(app->browse_release_generation_ && !app->browse_waiting_,"screen exit retains its release generation after late completion");
+    hold_place_queries=true;StorageRequest blocking{};blocking.kind=MessageKind::GetStorageStatus;
+    check(app->storage_.inbox().send(blocking),"fill queue before scope release");
+    app->processBrowser();check(app->browse_release_generation_,"full queue retains release for retry without blocking");
+    check(app->storage_.inbox().receive(blocking),"drain blocked queue");hold_place_queries=false;
+    const auto calls_before_release=calls.size();app->processBrowser();
+    check(!app->browse_release_generation_ && calls.size()==calls_before_release+1 && calls.back()==MessageKind::ReleaseLogBrowse,
+          "finished browse is released without waiting for a synchronous return or log screen resources");
     // Failed screen acceptance leaves the original resources and display intact.
     reject_screen=true;const auto before_generation=app->generation_;
     check(!app->setScreen(ScreenId::Logs) && app->generation_==before_generation && app->screen_==ScreenId::Map &&
-          app->screen_resources_.hasMap() && map_work.transfer.pixels[0]==0xa5,"rejected screen transition released current resources");
+          app->screen_resources_.hasMap() && map_work.info.region==0xa5,"rejected screen transition released current resources");
     for(unsigned n=0;n<30;++n) {
         check(app->setScreen(ScreenId::Logs) && app->screen_resources_.hasLogs() && !app->screen_resources_.logs().cache_count,
               "fresh Logs work contains an old map or record cache");
-        check(app->setScreen(ScreenId::Map) && app->screen_resources_.hasMap() && !app->screen_resources_.map().transfer.pixels[0],
+        check(app->setScreen(ScreenId::Map) && app->screen_resources_.hasMap() && !app->screen_resources_.map().info.region,
               "fresh Map work contains the previous log cache");
     }
     std::puts("PASS: screen resource handoff, worker cancellation after leave, stale map/record results, rejected transition and repeated union reuse");
+
+    // Exercise the complete log viewer using historical points far from live GPS.
+    app->data_.dataset.state=PlaceState::Ready;app->data_.dataset.unit_inv_x=app->data_.dataset.unit_inv_y=10000;
+    app->data_.settings.dataset=1;app->data_.storage.busy=false;
+    app->data_.gps.fix={40.,145.,0,true};app->data_.gps.reception=GpsReception::Fix;
+    check(app->setScreen(ScreenId::Logs),"viewer list");
+    auto& browser=app->data_.editBrowse();browser.loading=false;browser.count=1;browser.point.valid=true;browser.point.latitude=80.;++browser.revision;
+    std::strcpy(browser.names[0],"20261025_120000_0.gps.dat");
+    open.browse_index=0;open.browse_revision=browser.revision;
+    check(app->operateBrowser(open) && !app->data_.browse().point.valid,"new file must not expose the previous file's point");
+    auto& v=app->data_.editBrowse();v.loading=false;v.summary.session_id=91;v.summary.records=25;
+    UiAction choose{};choose.browse_action=BrowseAction::Replay;
+    check(app->operateBrowser(choose) && v.map_mode && v.playing,"map replay entry");
+    app->processReplay();check(v.playing,"initial point loading must not abort replay");
+    app->processBrowser();const auto historical_request=last_read.payload.log_read;
+    LogReadReply points{};points.request=historical_request;points.count=10;
+    for(unsigned n=0;n<10;++n) {
+        GpsFix historical{35.68+n*.00001,140.02,0,true};historical.fields=GpsTime;historical.utc_epoch_ms=1789309921000ull+n*1000;
+        check(encodeLogRecord(historical,points.data.records[n]),"historical record encoding");
+    }
+    app->completeBrowser(points);check(v.point_loaded && v.point.latitude==35.68 && v.index==0,"historical point loaded");
+    hold_place_queries=true;app->requestPlace();StorageRequest historical_place{};
+    check(app->storage_.inbox().receive(historical_place) && historical_place.kind==MessageKind::SearchPlace &&
+          historical_place.payload.place_request.fix.latitude==v.point.latitude,"reverse geocode must use log coordinates");
+    hold_place_queries=false;app->publishUiContent(); // Publish the loaded point as runOnce() does.
+    AppNotification name{};name.kind=MessageKind::ReadCompleted;name.source=TaskId::Storage;
+    auto& c=name.payload.storage_completion;c.read_kind=StorageReadKind::Place;c.request_id=historical_place.request_id;
+    c.snapshot=app->data_.storage;
+    auto& historical_result=*placeResultMemory(historical_place.payload.place_request);
+    historical_result={};historical_result.request=historical_place.payload.place_request;
+    historical_result.state=PlaceState::Ready;historical_result.dataset=app->data_.dataset;
+    std::strcpy(historical_result.lines[0],"HISTORICAL REGION");c.place=placeCompletion(historical_result);
+    app->handleNotification(name);app->processPlace();
+    check(!std::strcmp(app->data_.place[0],"HISTORICAL REGION") && app->data_.gps.fix.latitude==40.,"historical lookup leaves live GPS intact");
+    app->data_.gps.fix.valid=false;app->data_.gps.reception=GpsReception::NoFix;
+    app->publishUiContent();app->processMap();
+    check(app->map_request_.token && app->map_request_.latitude==v.point.latitude,"historical map uses saved coordinates without live GPS fix");
+    MapSourceResult source;source.info.request=map_backend.info().request;
+    check(map::planViewport(v.point.latitude,v.point.longitude,10000,10000,96*1024,source.plan)==map::Error::None,"historical viewport");
+    source.info.width=240;source.info.height=101;source.info.meters_per_pixel=source.plan.meters_per_pixel;
+    source.pixels.reset(new uint32_t[source.view().count]);std::fill_n(source.pixels.get(),source.view().count,11u);
+    map_backend.loaded(std::move(source));while(!map_backend.complete())map_backend.step();app->completeMap(map_backend.info());
+    for(unsigned n=0;n<20 && app->map_request_.token;++n)app->processMap();
+    check(!app->map_request_.token && app->ui_.model_.mapFrame().image().bytes(),"historical map reaches UI atomically");
+    const auto anchor=app->screen_resources_.map().anchor;
+    host_tick+=999;app->processReplay();check(v.index==0,"replay waits a full second");
+    host_tick+=1;app->processReplay();check(v.index==1 && v.playing,"replay advances one point from cache");
+    app->requestPlace();check(!app->place_flow_.pending() && app->data_.place_fix.latitude==v.point.latitude,"same cell reuses shared place lookup");
+    app->processMap();check(!app->map_request_.token && app->screen_resources_.map().anchor.request.token==anchor.request.token,
+          "nearby historical point moves cursor without rebuilding map");
+    app->publishUiContent();check(app->ui_.model_.mapCursor().valid && std::abs(app->ui_.model_.mapCursor().y)>.01,"log cursor follows historical point");
+    auto& ui=app->ui_.model_;ui.keyPressed(UiKey::ToggleView,host_tick);app->readUiContent();
+    check(!v.map_mode && !v.playing && v.index==1,"V switches to text and pauses without losing position");
+    ui.keyPressed(UiKey::Down,host_tick);app->readUiContent();check(v.target==11 && v.loading,"down skips ten points");
+    app->processBrowser();points.request=last_read.payload.log_read;points.count=10;
+    for(unsigned n=0;n<10;++n) {
+        GpsFix f{35.69+n*.00001,140.03,0,true};check(encodeLogRecord(f,points.data.records[n]),"second page encoding");
+    }
+    app->completeBrowser(points);check(v.index==11 && !v.loading,"page read fulfills current skip target");
+    hold_place_queries=true;app->requestPlace();StorageRequest stale_name{};
+    check(app->storage_.inbox().receive(stale_name),"historical name pending");hold_place_queries=false;
+    UiAction move{};move.browse_action=BrowseAction::Point;move.browse_index=12;check(app->operateBrowser(move),"move during lookup");
+    c.request_id=stale_name.request_id;c.place.request=stale_name.payload.place_request;
+    auto& stale_result=*placeResultMemory(stale_name.payload.place_request);
+    stale_result={};stale_result.request=stale_name.payload.place_request;
+    stale_result.state=PlaceState::Ready;stale_result.dataset=app->data_.dataset;
+    std::strcpy(stale_result.lines[0],"STALE POINT NAME");c.place=placeCompletion(stale_result);
+    app->handleNotification(name);app->processPlace();
+    check(!app->place_flow_.pending() && !app->data_.place[0][0],"old point name must not appear after navigation");
+    move.browse_index=11;check(app->operateBrowser(move),"restore point for return test");
+    ui.keyPressed(UiKey::Escape,host_tick);app->readUiContent();check(app->screen_==ScreenId::LogDetail && v.index==11,"back retains point");
+    choose.browse_action=BrowseAction::Map;check(app->operateBrowser(choose) && v.index==11 && !v.loading && !v.playing,"map entry retains selected point");
+    app->publishUiContent();ui.keyPressed(mapPhysicalKey('-',false),host_tick);app->readUiContent();
+    check(app->data_.map.scale==2 && v.index==11,"minus changes historical map scale without navigating");
+    ui.keyPressed(mapPhysicalKey('+',false),host_tick);app->readUiContent();
+    check(app->data_.map.scale==1 && v.index==11,"plus restores historical map scale without navigating");
+    ui.keyPressed(mapPhysicalKey('p',false),host_tick);app->readUiContent();check(v.playing,"P resumes");
+    ui.keyPressed(UiKey::GpsControl,host_tick);app->readUiContent();check(!v.playing && ui.confirming(),"GPS modal pauses historical playback");
+    ui.keyPressed(UiKey::Escape,host_tick);ui.keyPressed(mapPhysicalKey('p',false),host_tick);app->readUiContent();
+    ui.keyPressed(UiKey::ScreenOff,host_tick);app->readUiContent();check(app->mode_==DisplayMode::Background && !v.playing,"screen off pauses replay");
+    ui.keyPressed(UiKey::Other,host_tick);app->readUiContent();
+    v.point_loaded=true;v.loading=false;v.point.valid=true;v.index=v.target=24;v.playing=true;
+    app->data_.map.error=map::Error::None;app->data_.map.busy=false;app->data_.place_state=PlaceState::Ready;
+    app->screen_resources_.logs().next_at=host_tick;app->processReplay();check(!v.playing && v.index==24,"EOF pauses without wrapping");
+    v.playing=true;v.error=LogReadError::Corrupt;app->processReplay();check(!v.playing,"bad record pauses replay");
+    app->data_.settings.dataset=0;app->publishUiContent();ui.keyPressed(UiKey::ToggleView,host_tick);app->readUiContent();
+    check(!v.map_mode,"text remains available without dataset");
+    ui.keyPressed(UiKey::ToggleView,host_tick);app->readUiContent();check(!v.map_mode,"map toggle rejected without dataset");
+    // Live reception/recording remains independent of the currently displayed historical point.
+    fail_open=false;const auto displayed_latitude=v.point.latitude;const auto displayed_index=v.index;
+    operation(LogAction::Start);sample(5);
+    check(app->data_.recording.state==RecordingState::Recording && app->data_.storage.log.accepted==1 &&
+          v.index==displayed_index && v.point.latitude==displayed_latitude,"live recording replaced a historical point or stopped during viewing");
+    operation(LogAction::Stop);check(app->storage_.log_writer_.flush(host_tick),"finish log recorded while viewing");
+    app->data_.storage.log=app->storage_.log_writer_.snapshot();
+    std::puts("PASS: log viewer modes, historical map and names, cursor tracking, skips, cache boundaries, replay timing, end/error/modal/screen-off pause and dataset constraints");
     hostQueueHook=nullptr;std::filesystem::remove_all(directory);
     std::puts("PASS: production App logging, GPS pause/stop/restart, fresh epochs, async close, filename, failures and wake");
 }

@@ -16,6 +16,7 @@
 #include "ReadTiming.h"
 #include "../StoragePath.h"
 #include "../../../Config.h"
+#include "../../../utils/FileReadBuffer.h"
 
 namespace geoputer {
 struct FileReadOptions {
@@ -31,12 +32,12 @@ struct FileReadOptions {
 class ObservedFileReader final : public galuchat::ByteReader {
 public:
     ObservedFileReader(const std::string& path, size_t source_size, size_t offset, StorageObserver* observer,
-                       FileIoTiming* timing = nullptr, FileReadOptions options = {}, uint8_t drive = 0)
+                       FileIoTiming* timing = nullptr, FileReadOptions options = {}, uint8_t drive = 0, BorrowedReadBuffer* borrowed = nullptr)
         : observer_(observer), timing_(diagnosticTiming(timing)), origin_(offset),
           read_through_skip_bytes_(options.read_through_skip_bytes) {
         options.validate();
         if (offset > source_size) throw std::runtime_error("invalid reader offset");
-        buffer_.resize(options.buffer_bytes);
+        buffer_.resize(options.buffer_bytes,borrowed);
         SdAccessScope access(observer_);
         {
             FileIoTime elapsed(timing_, &FileIoTiming::open_us);
@@ -159,21 +160,22 @@ private:
     }
     StorageObserver* observer_;
     FileIoTiming* timing_;
+    // Construct/unwind in buffer -> file / file -> buffer order.
+    FileReadBuffer buffer_;
 #ifdef ARDUINO_ARCH_ESP32
     std::unique_ptr<FIL> file_;
 #else
     std::FILE* file_ = nullptr;
 #endif
     bool opened_ = false;
-    std::vector<uint8_t> buffer_;
     size_t origin_ = 0, length_ = 0, pos_ = 0, buffer_pos_ = 0, buffer_end_ = 0;
     const size_t read_through_skip_bytes_;
 };
 class ObservedFileReaderFactory final : public galuchat::ReaderFactory {
 public:
     ObservedFileReaderFactory(std::string path, StorageObserver* observer, FileIoTiming* timing = nullptr,
-                              FileReadOptions options = {}, uint8_t drive = 0)
-        : path_(std::move(path)), observer_(observer), timing_(diagnosticTiming(timing)), options_(options), drive_(drive) {
+                              FileReadOptions options = {}, uint8_t drive = 0, BorrowedReadBuffer* borrowed = nullptr)
+        : path_(std::move(path)), observer_(observer), timing_(diagnosticTiming(timing)), options_(options), drive_(drive), borrowed_(borrowed) {
         options_.validate();
         SdAccessScope access(observer_);
 #ifdef ARDUINO_ARCH_ESP32
@@ -198,20 +200,25 @@ public:
         size_ = static_cast<size_t>(status.st_size);
 #endif
     }
+    // Bind only while no Reader from this factory is alive. Callers restore
+    // nullptr before the borrowed workspace leaves scope.
+    void setBorrowedBuffer(BorrowedReadBuffer* buffer) {
+        assert(!borrowed_ || !borrowed_->inUse());borrowed_=buffer;
+    }
     // Storage task only. Existing Readers retain their creation-time options.
     void setReadOptions(FileReadOptions options) {
         options.validate();
         options_ = options;
     }
     std::unique_ptr<galuchat::ByteReader> create(size_t offset = 0) const override {
-        return std::make_unique<ObservedFileReader>(path_, size_, offset, observer_, timing_, options_, drive_);
+        return std::make_unique<ObservedFileReader>(path_, size_, offset, observer_, timing_, options_, drive_, borrowed_);
     }
     std::unique_ptr<galuchat::ByteReader> createRange(size_t offset, size_t length) const override {
         if (offset > size_ || length > size_ - offset) throw std::runtime_error("invalid reader range");
         if (!length) return std::make_unique<galuchat::BufferReader>(nullptr, 0);
         auto options = options_;
         options.buffer_bytes = std::min(options.buffer_bytes, length);
-        return std::make_unique<ObservedFileReader>(path_, offset + length, offset, observer_, timing_, options, drive_);
+        return std::make_unique<ObservedFileReader>(path_, offset + length, offset, observer_, timing_, options, drive_, borrowed_);
     }
 private:
     std::string path_;
@@ -220,5 +227,6 @@ private:
     size_t size_ = 0;
     FileReadOptions options_;
     uint8_t drive_;
+    BorrowedReadBuffer* borrowed_;
 };
 }  // namespace geoputer

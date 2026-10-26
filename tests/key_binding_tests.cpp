@@ -13,8 +13,10 @@ void testKeyBindings() {
         for(unsigned i=0;i<MenuCount;++i) {
             ScreenId target;check(screenShortcut(mapPhysicalKey(keys[i],fn),target) && target==MenuScreens[i].screen,"numeric root destination");
         }
-        check(mapPhysicalKey('s',fn)==UiKey::ScreenOff && mapPhysicalKey('g',fn)==UiKey::GpsControl && mapPhysicalKey('p',fn)==UiKey::Other,"S/G replace P");
+        check(mapPhysicalKey('s',fn)==UiKey::ScreenOff && mapPhysicalKey('g',fn)==UiKey::GpsControl && mapPhysicalKey('p',fn)==UiKey::Playback,"S/G system controls and P playback");
         check(mapPhysicalKey('`',fn)==UiKey::Escape,"Fn-free physical Esc");
+        check(mapPhysicalKey('+',fn)==UiKey::ZoomIn && mapPhysicalKey('=',fn)==UiKey::ZoomIn && mapPhysicalKey('-',fn)==UiKey::ZoomOut,"physical plus/equal and minus zoom bindings");
+        check(mapPhysicalKey(' ',fn)==UiKey::Other && mapPhysicalKey('z',fn)==UiKey::Other,"former Space/Z bindings removed");
         check(mapPhysicalKey(';',fn)==UiKey::Up && mapPhysicalKey('.',fn)==UiKey::Down && mapPhysicalKey(',',fn)==UiKey::Left && mapPhysicalKey('/',fn)==UiKey::Right,"direction aliases");
         check(mapLicenseKey('.',fn,true)==UiKey::Right && mapLicenseKey(',',fn,true)==UiKey::Left && mapLicenseKey('.',fn,false)==UiKey::Down,"license angle bracket overrides");
     }

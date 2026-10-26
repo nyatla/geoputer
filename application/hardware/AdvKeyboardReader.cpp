@@ -1,13 +1,10 @@
 #include "AdvKeyboardReader.h"
 #include <Arduino.h>
-#include <algorithm>
 
 namespace geoputer {
-void AdvKeyboardReader::setKey(unsigned row, unsigned column, bool pressed) {
+void AdvKeyboardReader::setMatrixKey(unsigned row, unsigned column, bool pressed) {
     const Point2D_t point{static_cast<int>(row * 2 + (column > 3)), static_cast<int>((column + 4) % 4)};
-    const auto found = std::find(_key_list.begin(), _key_list.end(), point);
-    if (pressed && found == _key_list.end()) _key_list.push_back(point);
-    else if (!pressed && found != _key_list.end()) _key_list.erase(found);
+    setKey(point, pressed);
 }
 
 bool AdvKeyboardReader::snapshot() {
@@ -46,7 +43,7 @@ bool AdvKeyboardReader::snapshot() {
     _key_list.clear();
     for (unsigned column = 0; column < 8; ++column)
         for (unsigned row = 0; row < 7; ++row)
-            if (held & (uint64_t{1} << (column * 7 + row))) setKey(row, column, true);
+            if (held & (uint64_t{1} << (column * 7 + row))) setMatrixKey(row, column, true);
     return true;
 }
 
@@ -71,7 +68,7 @@ void AdvKeyboardReader::update() {
         const unsigned key = event & 0x7f;
         if (!key || key > 68) continue;
         const unsigned row = (key - 1) / 10, column = (key - 1) % 10;
-        if (row < 7 && column < 8) setKey(row, column, (event & 0x80) != 0);
+        if (row < 7 && column < 8) setMatrixKey(row, column, (event & 0x80) != 0);
     }
     chip_.writeRegister8(TCA8418_REG_INT_STAT, 0x1f);
 }

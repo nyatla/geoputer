@@ -42,6 +42,8 @@ void testExport() {
     check(fatFsPath(0,"/sd/logs/a.gps.dat")=="0:/logs/a.gps.dat" &&
           fatFsPath(12,"/sd/dataset/01/日本.glc")=="12:/dataset/01/日本.glc",
           "shared native path conversion retains drive, directories and UTF-8 bytes");
+    check(fatFsPath(255,"/sd/"+std::string(2048,'x'))=="255:/"+std::string(2048,'x') &&
+          fatFsPath(0,"/sd/")=="0:/", "native path assembly preserves long paths, full drive range and the root");
     for(const auto* path:{"/sd", "/sd-other/a", "relative.dat", ""}) {
         bool rejected=false;
         try { (void)fatFsPath(0,path); } catch(const std::runtime_error&) { rejected=true; }

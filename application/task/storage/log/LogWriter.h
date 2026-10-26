@@ -30,6 +30,7 @@ public:
         return session==state.session_id && header_saved_ && file_.opened() && offset<=end && count<=end-offset &&
                file_.seek(offset) && file_.read(bytes,count);
     }
+    // Active/retrying session only. snapshot().name remains after a successful close.
     const std::string& path() const { return path_; }
     uint32_t retries = 0;
 private:

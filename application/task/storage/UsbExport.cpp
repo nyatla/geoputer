@@ -14,7 +14,7 @@ void StorageTask::handleUsbExport(const StorageRequest& request, SyncReturn& res
         usb_work_=UsbWork::Prepare;
     } else if(command.operation==ExportOperation::Start) {
         if(usb_work_!=UsbWork::None || job.phase!=ExportPhase::Selecting || !usb_.local() || has_read_ ||
-           has_completion_ || !validLogName(command.name) || !validExportFormat(command.format))return;
+           replies_.completionPending() || !validLogName(command.name) || !validExportFormat(command.format))return;
         job={};job.phase=ExportPhase::Running;job.format=command.format;
         std::memcpy(job.name,command.name,sizeof(job.name));
         usb_work_=UsbWork::Convert;export_started_=false;export_progress_at_=0;
@@ -37,7 +37,7 @@ void StorageTask::stepUsbExport() {
         if(usbHostNeedsEject(usb_.snapshot()))return;
         job.phase=ExportPhase::Preparing;
         if(usb_.takeLocal()) {
-            screen_resources_.logs.setDrive(usb_.drive());
+            screen_resources_.work.setDrive(usb_.drive());
             state_.card_state=CardState::Mounted;state_.fat_type=32;
             job.phase=ExportPhase::Selecting;usb_work_=UsbWork::None;
         } else if(usbHostNeedsEject(usb_.snapshot()))job.phase=ExportPhase::WaitEject;
@@ -46,6 +46,7 @@ void StorageTask::stepUsbExport() {
         ++state_.revision;usb_dirty_=true;return;
     }
     if(usb_work_==UsbWork::Convert) {
+        if(auto* logs=screen_resources_.work.activeLogs())logs->releaseForReuse();
         if(!exporter_) {
             try {
                 exporter_=std::make_unique<LogExporter>();
@@ -71,7 +72,7 @@ void StorageTask::stepUsbExport() {
         return;
     }
     const bool menu=usb_work_==UsbWork::PublishMenu;
-    screen_resources_.logs.cancel();
+    screen_resources_.work.logs().cancel();
     if(exporter_ && !exporter_->closeFiles()) {
         // Retain the FILs after close failure so Publish can retry safely.
         job.phase=ExportPhase::Failed;job.error=ExportError::Close;

@@ -14,14 +14,16 @@ public:
     bool begin(const LogReadRequest& request);
     bool step(LogWriter* writer=nullptr); // At most 10 directory entries, or one <=10-record read.
     void cancel();
+    bool releaseForReuse(); // Release path capacity only after terminal read and successful close.
     void fail(LogReadError error);
     const LogReadReply& result() const { return result_; }
     bool done() const { return done_; }
 private:
     void finishList(LogWriter* writer);
+    const std::string& pathFor(const char* name);
     void readTarget(LogWriter* writer);
     void deleteTarget(LogWriter* writer);
-    std::string directory_;
+    std::string directory_, path_; // Reuse path capacity while this Reader remains active.
     StorageObserver* observer_;
     DIR* directory_handle_=nullptr;
     LogReadReply result_{};

@@ -59,5 +59,6 @@ struct LogBrowserView {
     LogReadError error;
     uint8_t count, selected, active_mask;
     bool loading, has_newer, has_older, deleting;
+    bool point_loaded=false, map_mode=false, playing=false;
 };
 } // namespace geoputer

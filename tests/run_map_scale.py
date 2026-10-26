@@ -9,7 +9,7 @@ with tempfile.TemporaryDirectory(prefix='reversegeoputer-map-scale-') as d:
              'application/task/storage/log/LogWriter.cpp','application/task/storage/log/LogReader.cpp',
              'application/task/storage/export/LogExporter.cpp']
     subprocess.run(['g++','-O1','-std=c++17','-Wall','-Wextra','-Werror','-pedantic','-fno-access-control',
-        '-ffunction-sections','-fdata-sections','-Wl,--gc-sections','-fsanitize=undefined','-fno-sanitize-recover=all',
+        '-ffunction-sections','-fdata-sections','-Wl,--gc-sections','-no-pie','-fsanitize=address,undefined','-fno-sanitize-recover=all',
         '-D_GLIBCXX_ASSERTIONS','-pthread','-I'+str(r/'tests/support/map-app'),'-I'+str(r/'tests/support/storage-task'),
         '-I'+str(r/'tests/support/usb'),'-I'+str(r/'tests/support'),'-I'+str(r/'application'),
         '-I'+str(r/'third_party/galuchat/include'),*[str(r/p) for p in sources],'-o',str(binary)],check=True,timeout=120)

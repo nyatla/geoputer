@@ -7,16 +7,17 @@
 namespace geoputer {
 struct AppMapResources {
     map::FrameInfo info{};
-    map::Transfer transfer{};
     map::TrackingAnchor anchor{};
     uint32_t retry_at=0;
-    uint16_t row=0;
-    bool ready=false,begun=false;
+    bool ready=false;
 };
 struct AppLogResources {
+    // A log map needs navigation/cache and map completion state concurrently. Keep
+    // them in the Logs group; the whole group remains exclusive with Live Map.
+    AppMapResources map;
     LogReadRequest request{};
     uint8_t records[LogReadCount][32]{};
-    uint32_t retry_at=0,cache_start=0;
+    uint32_t retry_at=0,cache_start=0,next_at=0;
     uint8_t cache_count=0;
     bool need=false,single=false;
 };
@@ -32,10 +33,10 @@ public:
         if(next==Kind::Logs)new (&data_.logs) AppLogResources{};
         kind_=next;
     }
-    bool hasMap() const {return kind_==Kind::Map;}
+    bool hasMap() const {return kind_==Kind::Map || kind_==Kind::Logs;}
     bool hasLogs() const {return kind_==Kind::Logs;}
-    AppMapResources& map() {assert(hasMap());return data_.map;}
-    const AppMapResources& map() const {assert(hasMap());return data_.map;}
+    AppMapResources& map() {assert(hasMap());return kind_==Kind::Logs?data_.logs.map:data_.map;}
+    const AppMapResources& map() const {assert(hasMap());return kind_==Kind::Logs?data_.logs.map:data_.map;}
     AppLogResources& logs() {assert(hasLogs());return data_.logs;}
     const AppLogResources& logs() const {assert(hasLogs());return data_.logs;}
 private:

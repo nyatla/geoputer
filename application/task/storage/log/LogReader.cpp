@@ -42,6 +42,18 @@ void LogReader::cancel() {
     if(!done_) fail(LogReadError::Cancelled);
     if(file_.opened()) { SdAccessScope access(observer_); file_.close(); }
 }
+bool LogReader::releaseForReuse() {
+    if(!done_ || directory_handle_)return false;
+    if(file_.opened()) {SdAccessScope access(observer_);if(!file_.close())return false;}
+    std::string{}.swap(path_);
+    return true;
+}
+const std::string& LogReader::pathFor(const char* name) {
+    // All names have passed validLogName(). Reserve once for any accepted name.
+    path_.reserve(directory_.size()+LogNameBytes);
+    path_.assign(directory_);path_.push_back('/');path_.append(name);
+    return path_;
+}
 void LogReader::finishList(LogWriter* writer) {
     closedir(directory_handle_); directory_handle_=nullptr;
     const auto direction=result_.request.direction;
@@ -51,7 +63,7 @@ void LogReader::finishList(LogWriter* writer) {
     result_.has_older=direction==LogListDirection::Newer || eligible_>rows;
     if(writer && writer->hasRetainedSession()) {
         for(unsigned n=0;n<result_.count;++n)
-            if(directory_+"/"+result_.data.names[n]==writer->path()) result_.active_mask|=1u<<n;
+            if(pathFor(result_.data.names[n])==writer->path()) result_.active_mask|=1u<<n;
     }
     done_=true;
 }
@@ -70,7 +82,7 @@ bool LogReader::step(LogWriter* writer) {
         if(!entry) { if(errno) fail(LogReadError::Io); else finishList(writer); return true; }
         if(!validLogName(entry->d_name)) continue;
         struct stat info{};
-        if(stat((directory_+"/"+entry->d_name).c_str(),&info)) { fail(LogReadError::Io); return true; }
+        if(stat(pathFor(entry->d_name).c_str(),&info)) { fail(LogReadError::Io); return true; }
         if(!S_ISREG(info.st_mode)) continue;
         const auto direction=result_.request.direction;
         if(direction!=LogListDirection::Newest) {
@@ -96,7 +108,7 @@ bool LogReader::step(LogWriter* writer) {
     return false;
 }
 void LogReader::deleteTarget(LogWriter* writer) {
-    const auto path=directory_+"/"+result_.request.name;
+    const auto& path=pathFor(result_.request.name);
     // FAT32 filenames are case-insensitive. Protect even an alias of the
     // retained writer path, including paused/closing/failed-save sessions.
     auto samePath=[](const std::string& a,const std::string& b) {
@@ -118,7 +130,7 @@ void LogReader::deleteTarget(LogWriter* writer) {
 }
 void LogReader::readTarget(LogWriter* writer) {
     const auto& request=result_.request;
-    const auto path=directory_+"/"+request.name;
+    const auto& path=pathFor(request.name);
     const bool active=writer && writer->hasRetainedSession() && writer->path()==path;
     auto& file=file_;
     if(file.opened() && !file.close()) { fail(LogReadError::Io); return; }

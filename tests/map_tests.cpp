@@ -93,21 +93,21 @@ void testMapScaleKeys() {
     UiData data{};data.settings=defaultSettings();data.dataset.generation=1;
     data.recording.state=RecordingState::Recording;
     UiModel model;model.setScreen({ScreenId::Map,DisplayMode::View,7,data,0,ActionResult::None});
-    model.keyPressed(UiKey::Up,1);
+    model.keyPressed(UiKey::ZoomIn,1);
     check(model.snapshot().action.kind==ActionKind::None,"map scale must stop at native resolution");
-    model.keyPressed(mapPhysicalKey('.',false),2);
+    model.keyPressed(mapPhysicalKey('-',false),2);
     const auto first=model.snapshot().action;
     check(first.kind==ActionKind::MapScale && first.map_scale==2 && first.screen_generation==7,
-          "plain Down requests half-resolution through App");
+          "minus requests half-resolution through App");
     check(model.data().map.scale==1,"UI must not commit a scale before App acknowledgement");
-    model.keyPressed(UiKey::Down,3);
+    model.keyPressed(UiKey::ZoomOut,3);
     check(model.snapshot().action.action_id==first.action_id && model.snapshot().action.map_scale==2,
           "pending scale action is retained without duplicate or overwrite");
     data.revision=1;model.updateContent({DisplayMode::View,7,data,first.action_id,ActionResult::Rejected});
     check(model.data().map.scale==1 && model.snapshot().action.kind==ActionKind::None,"rejected zoom preserves the selected scale");
     for(unsigned target:{2u,4u,2u,1u}) {
         const bool up=target<model.data().map.scale;
-        model.keyPressed(mapPhysicalKey(up?';':'.',true),4+target);
+        model.keyPressed(mapPhysicalKey(up?'=':'-',true),4+target);
         const auto action=model.snapshot().action;
         check(action.kind==ActionKind::MapScale && action.map_scale==target,"map zoom order differs for Fn/alias keys");
         data.map.scale=target;data.map.busy=true;++data.revision;
@@ -116,9 +116,9 @@ void testMapScaleKeys() {
               "zoom acknowledgement changes scale without changing GPS recording");
     }
     data.map.scale=4;++data.revision;model.updateContent({DisplayMode::View,7,data,0,ActionResult::None});
-    model.keyPressed(UiKey::Down,20);model.keyPressed(UiKey::Left,21);model.keyPressed(UiKey::Right,22);
-    check(model.snapshot().action.kind==ActionKind::None,"map scale must stop at quarter resolution and ignore Left/Right");
-    model.setScreen({ScreenId::Map,DisplayMode::Background,8,data,0,ActionResult::None});model.keyPressed(UiKey::Up,23);
+    model.keyPressed(UiKey::ZoomOut,20);model.keyPressed(UiKey::Up,20);model.keyPressed(UiKey::Down,20);model.keyPressed(UiKey::Left,21);model.keyPressed(UiKey::Right,22);
+    check(model.snapshot().action.kind==ActionKind::None,"map scale must stop at quarter resolution and ignore all direction keys");
+    model.setScreen({ScreenId::Map,DisplayMode::Background,8,data,0,ActionResult::None});model.keyPressed(UiKey::ZoomIn,23);
     check(model.snapshot().action.kind==ActionKind::Wake && model.data().map.scale==4,"first key while dark only wakes the display");
 }
 MapSourceResult source(const map::Request& request) {
@@ -171,26 +171,53 @@ void testMaps() {
     check(other.get(119,10)==1,"zero current region never highlights boundaries");
     auto short_view=input.view();--short_view.count;
     check(map::buildBoundaryRows(short_view,plan,11,0,8,split)==map::Error::InvalidInput,"short source capacity is rejected");
-    MapBuildJob job;check(job.start(request) && !job.start(request),"only one accepted map result is retained");
+    map::MapFrameReceiver receiver;
+    check(receiver.begin(request,request.buffer),"UI lends one fixed back image");
+    const auto first_buffer=request.buffer;
+    map::BufferLease denied{};auto another=request;another.buffer={};++another.token;
+    check(!receiver.begin(another,denied),"an outstanding lease excludes another writer");
+    input=source(request);
+    map::MapSession session;MapBuildJob job;check(job.start(request,session) && !job.start(request,session),"only one accepted map operation is retained");
     job.loaded(std::move(input));for(int n=0;n<13;++n)job.step();
-    check(job.complete() && job.notificationPending(),"asynchronous map result ready after bounded render steps");
+    check(job.complete() && job.notificationPending(),"direct output ready after bounded render steps");
+    const auto completed=job.info();
+    check(!std::memcmp(request.buffer.data,all.data(),all.bytes()),"Storage wrote exactly the expected bytes into the UI loan");
     job.notificationSent();check(!job.notificationPending(),"completion notification does not repeat after delivery");
-    map::MapFrameReceiver receiver;check(receiver.begin(job.info()),"UI back buffer accepted");
-    map::Transfer transfer;auto wrong=request;++wrong.token;
-    check(!job.read(wrong,transfer) && !job.release(wrong),"another token cannot read or release the result");
-    check(!receiver.commit(job.info()) && !receiver.image().bytes(),"incomplete image is never displayed");
-    for(unsigned row=0;row<101;row+=8) {
-        request.row=row;check(job.read(request,transfer),"completed rows copied through transfer payload");
-        auto bad=transfer;++bad.row;check(!receiver.write(bad),"out-of-order rows rejected");
-        check(receiver.write(transfer),"ordered rows accepted");
-    }
-    check(receiver.commit(job.info()) && receiver.image().bytes()==6060,"complete image swapped atomically");
-    check(receiver.begin(job.info()) && !receiver.commit(job.info()) && receiver.image().get(119,10)==2,"updating retains the previous complete frame");
-    request.row=0;job.read(request,transfer);transfer.pixels[0]=0xc0;check(!receiver.write(transfer),"reserved pixel value rejected");
-    check(job.release(request) && !job.occupied() && !job.read(request,transfer),"release invalidates the completed source frame");
-    check(job.start(request),"a new map can start after release");job.fail(map::Error::NoMemory);
-    check(job.complete() && job.info().error==map::Error::NoMemory && job.notificationPending(),"allocation failure becomes a retained async result");job.release(request);
-    check(job.start(request) && job.release(request) && !job.notificationPending(),"cancel frees an accepted unfinished job");
+    auto wrong=request;++wrong.token;
+    check(!job.release(wrong),"another token cannot return Storage write ownership");
+    wrong=request;++wrong.buffer.id;check(!job.release(wrong) && !receiver.discard(wrong),"stale lease cannot return the current buffer");
+    check(job.release(request) && !job.occupied(),"Storage drops all buffer references before UI commit");
+    check(receiver.commit(completed) && receiver.image().bytes()==6060,"complete fixed image becomes front atomically");
+    check(session.valid && session.pixels && session.bytes()==session.view().count*4,"job release preserves its screen session");
+    const auto* retained=session.pixels.get();auto recolor=request;++recolor.token;recolor.buffer={};
+    recolor.reuse=true;recolor.region_known=true;recolor.region=0;
+    check(receiver.begin(recolor,recolor.buffer) && recolor.buffer.data!=first_buffer.data,"next writer gets the other fixed array");
+    check(receiver.image().get(119,10)==2,"a new writer never changes the visible old frame");
+    check(job.start(recolor,session) && !job.reading(),"recolor requires no reader");
+    while(!job.complete())job.step();
+    check(session.pixels.get()==retained && (recolor.buffer.data[29]&3)==1,"recolor reuses source and directly replaces the highlighted edge");
+    auto recolored=job.info();check(job.release(recolor) && receiver.commit(recolored),"recolored map commits after write ownership return");
+    auto failed=request;++failed.token;failed.buffer={};
+    check(receiver.begin(failed,failed.buffer) && failed.buffer.data==first_buffer.data,"fixed arrays alternate without reallocation");
+    check(job.start(failed,session),"new map starts after release");job.fail(map::Error::ReadError);
+    check(job.complete() && job.notificationPending(),"load failure is a retained completion");
+    check(job.release(failed) && receiver.discard(failed) && receiver.image().get(119,10)==1,"failure preserves the previous completed front");
+    auto stale_recolor=recolor;stale_recolor.buffer={};++stale_recolor.screen_generation;
+    check(receiver.begin(stale_recolor,stale_recolor.buffer) && job.start(stale_recolor,session) &&
+          job.complete() && job.info().error==map::Error::Stale,"another screen generation cannot reuse source pixels");
+    check(job.release(stale_recolor) && receiver.discard(stale_recolor),"return stale-generation output");
+    stale_recolor=recolor;stale_recolor.buffer={};stale_recolor.session=map::SessionId::Log;
+    check(receiver.begin(stale_recolor,stale_recolor.buffer) && job.start(stale_recolor,session) &&
+          job.info().error==map::Error::Stale,"log session cannot borrow live source pixels");
+    check(job.release(stale_recolor) && receiver.discard(stale_recolor),"return stale-session output");
+    failed.buffer={};++failed.token;
+    check(receiver.begin(failed,failed.buffer) && job.start(failed,session) && job.release(failed) &&
+          receiver.discard(failed) && !job.notificationPending(),"cancel returns unfinished write ownership before recycling UI memory");
+    auto invalid_request=failed;invalid_request.buffer={};check(!job.start(invalid_request,session),"worker requires a valid UI loan");
+    failed.buffer={};++failed.token;check(receiver.begin(failed,failed.buffer),"lease for corrupt output check");
+    auto corrupt=completed;corrupt.request=failed;failed.buffer.data[0]=0xc0;
+    check(!receiver.commit(corrupt) && receiver.image().get(119,10)==1,"reserved pixel value cannot replace a completed front");
+    check(receiver.discard(failed),"invalid output loan can be returned");
 
     UiData data{};data.settings=defaultSettings();data.settings.dataset=1;data.storage.card_state=CardState::Mounted;
     data.gps.fix.valid=true;data.gps.reception=GpsReception::Fix;data.recording.state=RecordingState::Recording;
@@ -207,18 +234,53 @@ void testMaps() {
     UiModel modal;modal.setScreen({ScreenId::LivePlace,DisplayMode::View,7,data,0,ActionResult::None});modal.keyPressed(UiKey::GpsControl,1);modal.keyPressed(UiKey::OpenMap,2);
     check(modal.confirming() && modal.snapshot().action.kind==ActionKind::None,"map cannot bypass a confirmation");
     UiModel model;model.setScreen({ScreenId::Map,DisplayMode::View,7,data,0,ActionResult::None});
-    job.start(request);job.loaded(source(request));for(int n=0;n<13;++n)job.step();
-    transfer={};transfer.info=job.info();check(model.beginMapFrame(transfer)==OperationStatus::Ok,"model accepts matching map frame");
-    for(unsigned row=0;row<101;row+=8){request.row=row;job.read(request,transfer);check(model.writeMapRows(transfer)==OperationStatus::Ok,"model copies map rows");}
-    check(model.commitMapFrame(transfer)==OperationStatus::Ok && model.mapFrame().image().bytes()==6060,"model commits complete independent frame");
+    request.buffer={};++request.token;
+    auto render=[&](UiModel& target,map::Request& next) {
+        next.buffer={};
+        check(target.beginMapFrame(next,next.buffer)==OperationStatus::Ok,"UI lends the back image for this screen");
+        check(job.start(next,session),"worker accepts UI loan");job.loaded(source(next));
+        while(!job.complete())job.step();
+        const auto done=job.info();check(job.release(next),"worker returns pointer before publication");
+        check(target.commitMapFrame(done)==OperationStatus::Ok,"UI publishes completed directly written image");
+        return done;
+    };
+    auto shown=render(model,request);
+    auto pending=request;pending.buffer={};++pending.token;
+    check(model.beginMapFrame(pending,pending.buffer)==OperationStatus::Ok,"prepare old-scale output");
+    auto late=shown;late.request=pending;
     data.map.scale=2;++data.revision;model.updateContent({DisplayMode::View,7,data,0,ActionResult::None});
-    check(model.beginMapFrame(transfer)==OperationStatus::StaleContent &&
-          model.writeMapRows(transfer)==OperationStatus::StaleContent && model.commitMapFrame(transfer)==OperationStatus::StaleContent &&
+    auto new_scale=pending;new_scale.buffer={};new_scale.scale=2;map::BufferLease blocked{};
+    check(model.commitMapFrame(late)==OperationStatus::StaleContent &&
+          model.beginMapFrame(new_scale,blocked)==OperationStatus::Unavailable &&
           model.mapFrame().image().bytes()==6060 && model.mapFrame().info().request.scale==1,
-          "scale switch must reject late old-scale images without erasing the shown frame");
+          "scale change rejects old completion while preserving both the old front and outstanding loan");
+    check(model.discardMapFrame(pending)==OperationStatus::Ok,"return old-scale loan after writer barrier");
     data.map.scale=1;++data.revision;model.updateContent({DisplayMode::View,7,data,0,ActionResult::None});
-    auto stale=transfer;++stale.info.request.dataset_generation;
-    check(model.beginMapFrame(stale)==OperationStatus::StaleContent,"old dataset result cannot overwrite Map");
+    auto stale=request;stale.buffer={};++stale.dataset_generation;
+    check(model.beginMapFrame(stale,blocked)==OperationStatus::StaleContent,"old dataset cannot acquire output memory");
+    pending=request;pending.buffer={};++pending.token;
+    check(model.beginMapFrame(pending,pending.buffer)==OperationStatus::Ok,"loan before screen leave");
+    const auto address=pending.buffer.data;
     model.setScreen({ScreenId::Logs,DisplayMode::View,8,data,0,ActionResult::None});
-    check(!model.mapFrame().image().bytes() && model.writeMapRows(transfer)==OperationStatus::StaleContent,"screen exit frees UI buffers and rejects delayed rows");
+    address[0]=0x40; // Writer can finish after screen resources are reset.
+    check(!model.mapFrame().image().bytes() && model.mapFrame().leased() &&
+          model.commitMapFrame(late)==OperationStatus::StaleContent,"screen leave hides image but keeps writer memory valid");
+    check(model.discardMapFrame(pending)==OperationStatus::Ok && !model.mapFrame().leased(),"screen-independent return ends the old loan");
+    auto& browse=data.editBrowse();browse.map_mode=true;browse.point_loaded=true;
+    browse.point=data.gps.fix;browse.index=browse.target=17;browse.summary.records=30;
+    model.setScreen({ScreenId::LogPoint,DisplayMode::View,9,data,0,ActionResult::None});
+    auto historical=request;historical.screen_generation=9;historical.session=map::SessionId::Log;++historical.token;
+    render(model,historical);++historical.token;render(model,historical);
+    historical.buffer={};++historical.token;
+    check(model.beginMapFrame(historical,historical.buffer)==OperationStatus::Ok,"loan before V toggle");
+    auto historical_done=shown;historical_done.request=historical;
+    browse.map_mode=false;++data.revision;
+    check(model.updateContent({DisplayMode::View,9,data,0,ActionResult::None})==OperationStatus::Ok &&
+          !model.mapFrame().image().bytes() && model.mapFrame().leased(),"map-to-text retains the writer loan without displaying its pixels");
+    browse.map_mode=true;++data.revision;model.updateContent({DisplayMode::View,9,data,0,ActionResult::None});
+    check(model.data().browse().index==17 && model.data().browse().point_loaded &&
+          model.commitMapFrame(historical_done)!=OperationStatus::Ok,"same-generation map/text/map cannot resurrect invalidated output");
+    check(model.discardMapFrame(historical)==OperationStatus::Ok,"return historical loan after cancellation barrier");
+    ++historical.token;render(model,historical);
+    check(model.mapFrame().image().bytes()==6060,"returning to map publishes a fresh complete image");
 }

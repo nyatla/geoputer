@@ -22,3 +22,18 @@ Galuchatヘッダーへの比較用の変更は`.pio/<計測名>/include`のコ�
 ## 通常版と診断版の回帰確認
 
 `python3 tests/run_observed_reader.py`は両モード・両バックエンドで実行する。通常版では計時・I/O統計が更新されないことと、読出し結果・ビット単位スキップ・異常検出・SDアクセス通知が維持されることを確認する。診断版は既存のバッファサイズ・シーク・範囲制限・I/O回数の試験を実行する。実ファイルを用いる`run_place_files.py`とホストの索引比較も、計測結果を検証するため明示的に診断を有効にする。
+
+
+## Storageの作業領域共用比較
+
+`prepare_storage_work_benchmark.py before|after --source <保存したプロジェクト>`は通常ソースの隔離コピーへ同じ計測を加える。設定ファイルは`.pio/storage-work-before.ini`と`.pio/storage-work-after.ini`となる。固定の習志野付近の仮想座標、区域変更、キャッシュミス、1/1・1/2・1/4、ログ地図、文字表示への切替を実行し、その後に既存ログを読み取り専用で一覧・概要・測位点0/10/20まで閲覧する。ファイルの削除・記録・索引再生成・NVS設定保存は行わない。ログがない／短い場合はその範囲で終了する。
+
+StorageWorkMemoryProbe.hは比較版だけで2048 Bスタックの採取タスクを起動し、1ms間隔とReader構築直後・段階切替時に空きヒープと最大連続空き領域を採取する。段階ごとの値はサンプル最小値であり、短い確保を完全には捕捉しない。allocatorの起動後最低値min_bootも記録する。これは通常ファームの絶対値ではなく、同じ採取負荷を加えた変更前後の比較である。通常版へ自動操作と採取タスクを含めない。
+
+Reader借用バッファの比較は、`prepare_storage_work_benchmark.py before|after --source <比較元> --name reader-borrow-before|reader-borrow-after`で既存の比較資産と分けて保存する。計測内容・採取条件は上記と同じである。
+
+## 小規模な確保の比較
+
+`run_memory_three_host.py --before <変更前のプロジェクト> --output <新しい保存先> <map> <Wordbook> [<map> <Wordbook> ...]`は、同一の計測プログラムを前後のアプリへリンクし、Wordbook検索・メタデータ解析・索引検証・ログ一覧のC++確保回数と生存量を比較する。戻り値のfingerprintとWordbookのI/O回数の一致も確認する。元データは読取り専用のリンクとして使い、索引とログの試験データは保存先に生成する。保存済み結果を上書きしないため、再実行には新しい出力先を指定する。
+
+現在の直接書込み経路のメモリ区間は、map-prepare・map-read・boundary・publish・place・log-readとする。UIの貸出し開始は読込み前のmap-prepare、生成完了から返却・確定まではpublishであり、画像の行転送区間は存在しない。`ui-hidden`は表示参照を外した診断で、固定配列の解放を意味しない。過去のtransfer区間の記録は当時の比較資料として保持する。

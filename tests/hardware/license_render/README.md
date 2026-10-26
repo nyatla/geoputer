@@ -1,6 +1,7 @@
 # Cardputer license rendering check
 
-This standalone image compiles the production UiModel, UiRenderer, PixelFont,
+This standalone image uses the production local M5Cardputer dependency and
+compiles the production UiModel, UiRenderer (including UsbRenderer), PixelFont,
 Shinonome and license document unchanged. The shared scenario in
 `tests/license_scenarios.h` also runs in `python3 tests/run_native.py`.
 

@@ -3,6 +3,7 @@
 #include "../../TaskMessages.h"
 #include "../../utils/Task.h"
 #include "UiModel.h"
+#include "UiFrameBuffer.h"
 
 namespace geoputer {
 
@@ -21,6 +22,8 @@ private:
 
     Queue<AppNotification, 8>& notifications_;
     Queue<ReturnMessage, 1>& results_;
+    // UiTask has application lifetime; this framebuffer never occupies task stack.
+    UiFrameBuffer frame_buffer_;
     UiModel model_;
     ReturnMessage pending_return_{};
     bool has_return_ = false;

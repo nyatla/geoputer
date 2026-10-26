@@ -10,7 +10,7 @@ namespace geoputer {
 class UiRenderer {
 public:
     explicit UiRenderer(M5GFX& display) : display_(display), frame_(&display), font_(display) {}
-    bool begin(uint8_t color_depth = config::UiColorDepth);
+    bool begin(uint8_t color_depth = config::UiColorDepth, void* buffer = nullptr, size_t capacity = 0);
     void draw(const UiModel& model);
 
 private:

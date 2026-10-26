@@ -34,6 +34,16 @@ void metadata() {
     result=read(common+ja);
     check(result.error==DatasetError::None && result.language=="ja", "empty language resolves dataset default");
     check(readDatasetMetadata(directory,UiLanguage::English).title=="日本","missing UI translation falls back to dataset default");
+    const std::string long_language(31,'a');
+    write("[dataset]\nversion=1\nmap=area.glc\ndefault_language="+long_language+
+          "\n["+long_language+"]\ntitle=Long language\nwordbook=names.giswordbook\n");
+    const auto long_metadata=readDatasetMetadata(directory,UiLanguage::English);
+    check(long_metadata.error==DatasetError::None && long_metadata.title=="Long language" &&
+          long_metadata.language==long_language, "display-language view retains a long fallback across all parsed lines");
+    check(read("[dataset]\nversion=1\nmap=area.glc\ndefault_language=ja\n["+std::string(32,'a')+"]\ntitle=Invalid\nwordbook=bad.giswordbook\n"+ja).error==DatasetError::Metadata,
+          "32-byte section ID is rejected before copying to stack storage");
+    check(read(common+"[ja]suffix\ntitle=Invalid\nwordbook=bad.giswordbook\n").error==DatasetError::Metadata,
+          "section closing delimiter remains required");
     check(!result.display.specified, "omitted display formats retain the compatibility layout");
     write(common+ja+"display_line1=%0 %1%2%3\ndisplay_line2=%4%5\n"+en+
           "display_line1=%2, %0 %%\ndisplay_line2=\n");
@@ -61,6 +71,16 @@ void metadata() {
     check(read("[dataset]\nversion=1\nmap=../area.glc\ndefault_language=ja\n"+ja).error==DatasetError::Metadata,"directory traversal rejected");
     check(read(common+"[ja]\ntitle=Name\nwordbook=/names.giswordbook\n").error==DatasetError::Metadata,"absolute Wordbook path rejected");
     check(read(common+ja+"unknown=value\n# comment\n").error==DatasetError::None,"unknown keys and full-line comments accepted");
+    result=read(" \t[dataset] \t\n version \t= 1 \t\n map = area.glc \t\n default_language = ja \t\n"
+                " \t[ja] \t\n title = 日本 \t\n description = " + std::string(200,'x') +
+                " \t\n wordbook = ja.giswordbook \t\n display_line1 = %0 %1 \t\n display_line2 = %2 \t\n" + en);
+    check(result.error==DatasetError::None && result.title=="日本" && result.map=="area.glc" &&
+          result.description==std::string(200,'x') && result.wordbook=="ja.giswordbook" &&
+          result.display.lines[0]=="%0 %1" && result.display.lines[1]=="%2",
+          "trimmed line views are copied before the shared buffer is reused or the parser returns");
+    check(validDatasetLanguage(std::string_view("ja=ignored",2)) &&
+          !validDatasetLanguage(std::string_view("ja\0en",5)),
+          "bounded language views need no terminator and reject embedded NUL");
     check(read(common+"[ja]\ntitle=A=B # literal\nwordbook=a.giswordbook").title=="A=B # literal","first equal splits value; no inline comments; final newline optional");
     const auto longline=common+"[ja]\ntitle=T\nwordbook=ja.giswordbook\ndescription=";
     check(read(longline+std::string(243,'x')).error==DatasetError::None,"255 payload bytes accepted");

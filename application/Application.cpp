@@ -95,6 +95,7 @@ bool Application::setScreen(ScreenId target, uint32_t action_id, ActionResult ac
     // Commit working-resource ownership only after UI accepts the screen.
     // Old completions during the sync wait still see the original resources.
     if(map_request_.token)map_cancel_=true;
+    if(map_session_.token)map_session_close_=true;
     screen_resources_.enter(screenGroup(target));
     if(screen_resources_.hasMap())screen_resources_.map()={};
     prepareScreenView(data_,target,previous);
@@ -102,7 +103,7 @@ bool Application::setScreen(ScreenId target, uint32_t action_id, ActionResult ac
     screen_ = target;
     mode_ = DisplayMode::View;
     ++generation_;
-    if (target == ScreenId::LivePlace || target == ScreenId::Map) refreshPlace();
+    if (target == ScreenId::LivePlace || target == ScreenId::Map || viewingLogPoint(target)) refreshPlace();
     ui_data_dirty_ = data_.revision != sent_revision;
     if (action_id) last_processed_action_ = action_id;
     Console.printf("[APP] screen=%s generation=%lu action=%lu stack_free=%u\n",
@@ -158,23 +159,10 @@ void Application::handleNotification(const AppNotification& event) {
             return;
         }
         if (completed.read_kind == StorageReadKind::Place) {
-            const auto& place = completed.place;
-            if (!place_flow_.owns(completed.request_id)) return;
-            const bool accepted = applyDatasetInfo(data_.dataset, place.dataset);
-            if (accepted && datasetInactive(data_.dataset.state)) refreshPlace();
-            ++data_.revision;
-            ui_data_dirty_ = true;
-            const bool current = place_flow_.completed(completed.request_id, place.request.screen_generation, generation_);
-            if (current && accepted && !datasetInactive(data_.dataset.state) && (screen_ == ScreenId::LivePlace || screen_ == ScreenId::Map) && mode_ == DisplayMode::View && data_.gps.fix.valid) {
-                completePlacePresentation(data_, place);
-                ++data_.revision;
-                ui_data_dirty_ = true;
-                Console.printf("[APP] place=%s / %s (%s)\n", data_.place[0], data_.place[1], placeStateName(place.state));
-            } else if (current) {
-                // A completion consumed while hidden must not mark an unseen
-                // cell as displayed; retry the latest position after wake.
-                place_flow_.refresh();
-            }
+            // Only stage completion here: this handler also runs while another
+            // synchronous call is waiting. UI commands run later in processPlace.
+            if(place_queued_ && place_flow_.owns(completed.request_id) &&
+               samePlaceRequest(place_borrow_,completed.place.request))place_completion_ready_=true;
             return;
         }
         if (completed.operation_id == storage_operation_id_) storage_operation_id_ = 0;
@@ -195,7 +183,7 @@ void Application::handleNotification(const AppNotification& event) {
         const auto old_state = data_.gps.reception;
         const bool had_fix = data_.gps.fix.valid;
         if (!applyGpsSnapshot(data_.gps, event.payload.gps)) return;
-        if (!data_.gps.fix.valid || !had_fix) refreshPlace();
+        if ((!data_.gps.fix.valid || !had_fix) && !viewingLogPoint(screen_)) refreshPlace();
         adoptLogSample();
         ++data_.revision;
         ui_data_dirty_ = true;
@@ -304,6 +292,7 @@ void Application::readUiContent() {
     }
     if (action.kind == ActionKind::Sleep && !data_.boot.maintenance && mode_ == DisplayMode::View) {
         mode_ = DisplayMode::Background;
+        if(viewingLogPoint(screen_)) {data_.editBrowse().playing=false;++data_.revision;}
         last_processed_action_ = action.action_id;
         if (!publishUiContent(action.action_id, ActionResult::Applied)) ui_changed_ = true;
         return;
@@ -446,42 +435,96 @@ void Application::refreshPlace() {
     place_flow_.refresh();
     clearPlacePresentation(data_, !data_.settings.dataset ? PlaceState::Unselected :
                            datasetInactive(data_.dataset.state) ? data_.dataset.state :
-                           !data_.gps.fix.valid ? PlaceState::NoFix :
+                           !displayedFix(screen_,data_).valid ? PlaceState::NoFix :
                            data_.storage.card_state != CardState::Mounted ? PlaceState::NoCard : PlaceState::Waiting);
     ++data_.revision;
     ui_data_dirty_ = true;
 }
 
 bool Application::canSearchPlace() const {
-    return data_.settings.dataset && !data_.boot.maintenance && (screen_ == ScreenId::LivePlace || screen_ == ScreenId::Map) && mode_ == DisplayMode::View && data_.gps.fix.valid &&
-           !map_request_.token &&
+    return data_.settings.dataset && !data_.boot.maintenance && (screen_ == ScreenId::LivePlace || screen_ == ScreenId::Map ||
+            (viewingLogPoint(screen_) && data_.browse().point_loaded && !data_.browse().loading && data_.browse().error==LogReadError::None)) &&
+           mode_ == DisplayMode::View && displayedFix(screen_,data_).valid && !browse_waiting_ &&
+           !map_request_.token && !place_borrow_.token &&
            data_.storage.card_state == CardState::Mounted && !data_.storage.busy &&
            data_.dataset.state == PlaceState::Ready && !dataset_check_needed_ && !dataset_check_waiting_;
 }
 
 void Application::requestPlace() {
     if (!canSearchPlace()) return;
-    if (place_flow_.sameCell(data_.gps.fix,data_.dataset.unit_inv_x,data_.dataset.unit_inv_y)) {
+    const auto& fix=displayedFix(screen_,data_);
+    const uint32_t sample=viewingLogPoint(screen_)?data_.browse().index+1:data_.gps.sample_seq;
+    if (place_flow_.sameCell(fix,data_.dataset.unit_inv_x,data_.dataset.unit_inv_y)) {
         // The area is already known: keep the main-screen coordinates current
         // without reading code pixels, touching the name LRU or issuing SD work.
-        if(data_.place_fix.latitude!=data_.gps.fix.latitude || data_.place_fix.longitude!=data_.gps.fix.longitude) {
-            data_.place_fix=data_.gps.fix;++data_.revision;ui_data_dirty_=true;
+        if(data_.place_fix.latitude!=fix.latitude || data_.place_fix.longitude!=fix.longitude) {
+            data_.place_fix=fix;++data_.revision;ui_data_dirty_=true;
         }
         return;
     }
-    if (place_flow_.waitMs(data_.gps.sample_seq) != 0) return;
+    if (place_flow_.waitMs(sample) != 0) return;
     StorageRequest request{};
     request.kind = MessageKind::SearchPlace;
     request.source = TaskId::Application;
     if (++place_request_id_ == 0) ++place_request_id_;
     request.request_id = place_request_id_;
     request.sent_at_ms = taskTimeMs();
-    request.payload.place_request = {generation_, data_.gps.sample_seq, data_.gps.fix};
-    if (sendSpeculative(storage_.inbox(), request) != SpeculativeResult::Queued) return;
-    place_flow_.sent(request.request_id, request.payload.place_request);
-    beginPlacePresentation(data_, request.payload.place_request);
-    ++data_.revision;
-    ui_data_dirty_ = true;
+    auto& search=request.payload.place_request;
+    search={generation_,sample,fix};search.token=request.request_id;
+    search.dataset_generation=data_.dataset.generation;search.work_bytes=config::IndexReadBufferBytes;
+    if(!placeUiCommand(MessageKind::BeginPlaceSearch,search,&search.buffer))return;
+    place_borrow_=search;place_queued_=place_discard_=false;
+    // A queue-full or changed dataset still leaves a loan to return to UI.
+    if(search.dataset_generation!=data_.dataset.generation ||
+       sendSpeculative(storage_.inbox(),request)!=SpeculativeResult::Queued) {
+        place_completion_ready_=true;place_discard_=true;return;
+    }
+    place_completion_ready_=false;place_queued_=true;
+    place_flow_.sent(request.request_id,search);
+    beginPlacePresentation(data_,search);
+    ++data_.revision;ui_data_dirty_=true;
+}
+
+bool Application::placeUiCommand(MessageKind kind,const PlaceRequest& request,map::BufferLease* buffer) {
+    UiRequest command{};command.kind=kind;command.payload.place=request;
+    SyncReturn result{};
+    if(!callUi(command,result) || result.status!=OperationStatus::Ok)return false;
+    if(buffer)*buffer=result.map_buffer;
+    return true;
+}
+
+void Application::processPlace() {
+    if(!place_borrow_.token || !place_completion_ready_)return;
+    if(!place_queued_) {
+        if(!placeUiCommand(MessageKind::DiscardPlaceSearch,place_borrow_))return;
+    } else {
+        // Reader use ended before Storage sent completion. Copy the fixed-size
+        // result before UI commit destroys it and returns the workspace.
+        const PlaceResult place=*placeResultMemory(place_borrow_);
+        const bool valid=samePlaceRequest(place.request,place_borrow_);
+        const bool accepted=valid && applyDatasetInfo(data_.dataset,place.dataset);
+        const bool current=valid && place_flow_.accepts(place_borrow_.token,place.request.screen_generation,generation_);
+        const bool publish=!place_discard_ && current && accepted && !datasetInactive(data_.dataset.state) &&
+            !datasetInactive(place.state) && mode_==DisplayMode::View &&
+            (screen_==ScreenId::LivePlace || screen_==ScreenId::Map || viewingLogPoint(screen_)) && displayedFix(screen_,data_).valid &&
+            (!viewingLogPoint(screen_) || (!data_.browse().loading && place.request.sample_seq==data_.browse().index+1));
+        bool committed=false;
+        if(publish)committed=placeUiCommand(MessageKind::CommitPlaceSearch,place_borrow_);
+        if(!committed) {
+            place_discard_=true;
+            if(!placeUiCommand(MessageKind::DiscardPlaceSearch,place_borrow_))return;
+        }
+        place_flow_.completed(place_borrow_.token,place_borrow_.screen_generation,generation_);
+        if(committed) {
+            // Keep App's normal UI snapshot coherent with the UI's commit;
+            // subsequent clock/GPS updates cannot restore an older name.
+            completePlacePresentation(data_,place);
+            Console.printf("[APP] place=%s / %s (%s)\n",data_.place[0],data_.place[1],placeStateName(place.state));
+        } else place_flow_.refresh();
+        if(accepted && datasetInactive(data_.dataset.state))refreshPlace();
+        ++data_.revision;ui_data_dirty_=true;
+    }
+    place_borrow_={};place_completion_ready_=place_queued_=place_discard_=false;
 }
 
 void Application::bootChanged() {
@@ -720,6 +763,7 @@ void Application::processLog() {
 
 void Application::runOnce() {
     drainNotifications();
+    processPlace();
     if (restart_pending_) {
         message("RESTARTING...");
         publishUiContent();
@@ -748,6 +792,7 @@ void Application::runOnce() {
     processBrowser();
     requestPlace();
     processMap();
+    processReplay();
     if (ui_data_dirty_) {
         if (!publishUiContent()) vTaskDelay(pdMS_TO_TICKS(10));
         return;
@@ -767,16 +812,17 @@ void Application::runOnce() {
             wait = pdMS_TO_TICKS(50);  // Only retry requests that were not queued.
         }
     } else if (canSearchPlace()) {
-        const auto remaining = place_flow_.waitMs(data_.gps.sample_seq,data_.gps.fix,data_.dataset.unit_inv_x,data_.dataset.unit_inv_y);
+        const auto remaining = place_flow_.waitMs(viewingLogPoint(screen_)?data_.browse().index+1:data_.gps.sample_seq,
+            displayedFix(screen_,data_),data_.dataset.unit_inv_x,data_.dataset.unit_inv_y);
         if (remaining != UINT32_MAX) wait = pdMS_TO_TICKS(remaining ? remaining : 50);
     }
-    if(screen_==ScreenId::Map || map_request_.token) {if(wait==portMAX_DELAY || wait>pdMS_TO_TICKS(20))wait=pdMS_TO_TICKS(20);}
+    if(showingMap(screen_,data_) || map_request_.token || map_session_close_ || (viewingLogPoint(screen_) && data_.browse().playing)) {if(wait==portMAX_DELAY || wait>pdMS_TO_TICKS(20))wait=pdMS_TO_TICKS(20);}
     if (data_.recording.state != RecordingState::Stopped || log_pending_ || log_control_.action_id) {
         const TickType_t log_wait = pdMS_TO_TICKS(100);
         if (wait == portMAX_DELAY || wait > log_wait) wait = log_wait;
     }
     if(dataset_check_needed_ && !dataset_check_waiting_ && data_.storage.card_state == CardState::Mounted) { if(wait==portMAX_DELAY || wait>pdMS_TO_TICKS(50)) wait=pdMS_TO_TICKS(50); }
-    if(browse_cancel_ || (screen_resources_.hasLogs() && screen_resources_.logs().need && !browse_waiting_)) { if(wait==portMAX_DELAY || wait>pdMS_TO_TICKS(50)) wait=pdMS_TO_TICKS(50); }
+    if(browse_cancel_ || browse_release_generation_ || (screen_resources_.hasLogs() && screen_resources_.logs().need && !browse_waiting_)) { if(wait==portMAX_DELAY || wait>pdMS_TO_TICKS(50)) wait=pdMS_TO_TICKS(50); }
     if (notifications_.receive(event, wait)) handleNotification(event);
 }
 

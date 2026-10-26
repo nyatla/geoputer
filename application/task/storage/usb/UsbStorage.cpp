@@ -15,7 +15,7 @@ USBMSC& UsbStorage::registerInterface() {
 }
 bool UsbStorage::begin(SPIClass& spi) {
     spi_=&spi;
-    mutex_ = xSemaphoreCreateMutex();
+    mutex_ = xSemaphoreCreateMutexStatic(&mutex_control_);
     if (!mutex_) { error_ = true; return false; }
     active_ = this;
     // The interface is already registered by setup; keep the medium absent

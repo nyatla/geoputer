@@ -8,11 +8,11 @@
 
 namespace geoputer {
 namespace {
-void trim(std::string& s) {
+void trim(std::string_view& s) {
     const auto first=s.find_first_not_of(" \t"),last=s.find_last_not_of(" \t");
-    s=first==std::string::npos?std::string{}:s.substr(first,last-first+1);
+    s=first==std::string_view::npos?std::string_view{}:s.substr(first,last-first+1);
 }
-bool filename(const std::string& name,const char* extension) {
+bool filename(std::string_view name,const char* extension) {
     const size_t n=std::strlen(extension);
     return name.size()>n && name.find_first_of("/\\:")==std::string::npos && name.compare(name.size()-n,n,extension)==0;
 }
@@ -46,7 +46,8 @@ DatasetMetadata readDatasetMetadata(const std::string& directory,UiLanguage ui,c
     std::unique_ptr<FILE,Close> file(open(),Close{observer});
     if(!file) {result.error=(errno==ENOENT || errno==ENOTDIR)?DatasetError::Missing:DatasetError::Data;return result;}
     char buffer[config::DatasetLineBytes];
-    std::string section; unsigned common=0,fields=0; bool common_seen=false;
+    char section_storage[config::DatasetLanguageBytes];
+    std::string_view section; unsigned common=0,fields=0; bool common_seen=false;
     auto fail=[&](DatasetError e=DatasetError::Metadata) {result.error=e;return result;};
     auto finish=[&]() {return section.empty() || section=="dataset" || (fields&5)==5;};
     // Pass one validates every section but retains only common values and language IDs.
@@ -58,36 +59,39 @@ DatasetMetadata readDatasetMetadata(const std::string& directory,UiLanguage ui,c
         if(first==0xef) { if(std::fgetc(file.get())!=0xbb || std::fgetc(file.get())!=0xbf) return fail(); }
         else if(first!=EOF) std::ungetc(first,file.get());
         }
-        section.clear(); fields=0;
-        std::string display_language;
+        section={}; fields=0;
+        std::string_view display_language;
         if(pass) {
             display_language=ui==UiLanguage::Japanese?"ja":"en";
             if(std::find(result.languages.begin(),result.languages.end(),display_language)==result.languages.end()) display_language=result.default_language;
         }
         int status;
         while((status=line(file.get(),buffer,observer))>0) {
-            std::string value(buffer);
+            std::string_view value(buffer);
             if(!validUtf8(value)) return fail();
             trim(value);if(value.empty() || value[0]=='#') continue;
             if(value[0]=='[') {
                 if(value.back()!=']' || (!pass && !finish())) return fail();
-                section=value.substr(1,value.size()-2);fields=0;
+                const auto next=value.substr(1,value.size()-2);
+                if(next.size()>=sizeof(section_storage) || (next!="dataset" && !validDatasetLanguage(next))) return fail();
+                std::memcpy(section_storage,next.data(),next.size());section_storage[next.size()]='\0';
+                section={section_storage,next.size()};fields=0;
                 if(section=="dataset") {if(!pass && common_seen) return fail();common_seen=true;}
-                else {
-                    if(!validDatasetLanguage(section.c_str())) return fail();
-                    if(!pass) {if(std::find(result.languages.begin(),result.languages.end(),section)!=result.languages.end()) return fail();result.languages.push_back(section);}
+                else if(!pass) {
+                    if(std::find(result.languages.begin(),result.languages.end(),section)!=result.languages.end()) return fail();
+                    result.languages.emplace_back(section);
                 }
                 continue;
             }
             const auto equal=value.find('=');if(section.empty() || equal==std::string::npos) return fail();
-            auto key=value.substr(0,equal);value.erase(0,equal+1);trim(key);trim(value);
+            auto key=value.substr(0,equal);value.remove_prefix(equal+1);trim(key);trim(value);
             if(key.empty()) return fail();
             if(section=="dataset") {
                 if(pass) continue;
                 unsigned bit=0;
                 if(key=="version") {bit=1;if(value!="1") return fail(DatasetError::Version);}
                 else if(key=="map") {bit=2;if(!filename(value,".glc")) return fail();result.map=value;}
-                else if(key=="default_language") {bit=4;if(!validDatasetLanguage(value.c_str())) return fail();result.default_language=value;}
+                else if(key=="default_language") {bit=4;if(!validDatasetLanguage(value)) return fail();result.default_language=value;}
                 if(bit && (common&bit)) return fail();
                 common|=bit;
             } else {

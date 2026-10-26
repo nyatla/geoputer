@@ -11,9 +11,61 @@ namespace {
 void check(bool value, const char* detail) { if (!value) throw std::runtime_error(detail); }
 }
 
+static void testPlaceLoans() {
+    UiData data{};data.settings=defaultSettings();data.settings.dataset=1;
+    data.dataset={PlaceState::Ready,1,1500,4};
+    UiModel ui;check(ui.setScreen({ScreenId::LivePlace,DisplayMode::View,1,data,0,ActionResult::None})==OperationStatus::Ok,"place loan root screen");
+    PlaceRequest request{1,17,{35.68,140.02,0,true}};
+    request.token=100;request.dataset_generation=4;request.work_bytes=config::IndexReadBufferBytes;
+    check(ui.beginPlaceSearch(request,request.buffer)==OperationStatus::Ok && validPlaceMemory(request),"main screen lends aligned scratch and result space");
+    auto* result=placeResultMemory(request);
+    check(samePlaceRequest(result->request,request) && reinterpret_cast<uint8_t*>(result)>=request.buffer.data+request.work_bytes &&
+          reinterpret_cast<uint8_t*>(result+1)<=request.buffer.data+request.buffer.capacity,"scratch/result are disjoint and bounded");
+    std::memset(request.buffer.data,0xa5,request.work_bytes);
+    check(samePlaceRequest(result->request,request),"index scratch cannot overwrite result identity");
+    auto next=request;next.buffer={};++next.token;map::BufferLease denied{};
+    check(ui.beginPlaceSearch(next,denied)==OperationStatus::Unavailable,"one outstanding work loan at a time");
+    result->state=PlaceState::Ready;result->dataset=data.dataset;result->region_code=42;std::strcpy(result->lines[0],"AREA ONE");
+    check(ui.commitPlaceSearch(request)==OperationStatus::Ok && !std::strcmp(ui.data().place[0],"AREA ONE") &&
+          !ui.mapFrame().leased(),"UI commits name and returns workspace");
+    next.screen_generation=1;check(ui.beginPlaceSearch(next,next.buffer)==OperationStatus::Ok,"next main lookup");
+    const auto stale=next;
+    ui.setScreen({ScreenId::Settings,DisplayMode::View,2,data,0,ActionResult::None});
+    auto* late=placeResultMemory(next);late->state=PlaceState::Ready;std::strcpy(late->lines[0],"LATE NAME");
+    check(ui.commitPlaceSearch(next)==OperationStatus::StaleContent && ui.mapFrame().leased(),"screen switch preserves storage memory and rejects publication");
+    ui.setScreen({ScreenId::Map,DisplayMode::View,3,data,0,ActionResult::None});
+    map::Request map_request{};map_request.token=200;map_request.screen_generation=3;map_request.dataset_generation=4;
+    check(ui.beginMapFrame(map_request,denied)==OperationStatus::Unavailable,"map cannot overwrite an unfinished name lookup");
+    check(ui.discardPlaceSearch(next)==OperationStatus::Ok,"return after writer completion regardless of current screen");
+    check(ui.beginMapFrame(map_request,map_request.buffer)==OperationStatus::Ok,"map can use returned scratch slot");
+    map::FrameInfo frame{};frame.request=map_request;frame.width=240;frame.height=101;frame.meters_per_pixel=1;
+    check(map_request.buffer.data[0]==0xa5,"lending must not clear the writer scratch");
+    std::memset(map_request.buffer.data,0,map::BoundaryBytes); // Completed writer initializes every pixel.
+    map_request.buffer.data[0]=0x60;
+    check(ui.commitMapFrame(frame)==OperationStatus::Ok,"publish map before name lookup");
+    next={3,18,{35.68,140.02,0,true}};next.token=101;next.dataset_generation=4;next.work_bytes=config::IndexReadBufferBytes;
+    check(ui.beginPlaceSearch(next,next.buffer)==OperationStatus::Ok,"map screen lends only unused back");
+    std::memset(next.buffer.data,0xff,next.work_bytes);
+    check(ui.mapFrame().image().data()[0]==0x60 && ui.mapFrame().info().request.token==200,"name scratch cannot change visible map");
+    check(ui.discardPlaceSearch(stale)==OperationStatus::StaleContent && ui.mapFrame().leased(),"old return cannot revoke new loan");
+    auto* found=placeResultMemory(next);found->state=PlaceState::Ready;found->dataset=data.dataset;
+    std::strcpy(found->lines[0],"AREA TWO");
+    check(ui.commitPlaceSearch(next)==OperationStatus::Ok && ui.mapFrame().info().request.token==200 &&
+          !std::strcmp(ui.data().place[0],"AREA TWO"),"name commit leaves map front unchanged");
+}
+
 void testPlace() {
+    testPlaceLoans();
     check(validUtf8("千葉県習志野市鷺沼二丁目") && validUtf8("髙﨑ｱA") && validUtf8("\xF0\x9F\x9A\x80"),
           "UTF-8 Japanese, compatibility characters, half-width kana, ASCII and supplementary characters");
+    for (const char* metadata : {"{\"token_encoding\":\"UTF-8\"}",
+                                 "{\"text_encoding\": \"uTf8\"}",
+                                 "{\"token_encoding\":\"\",\"text_encoding\":\"utf-8\"}"})
+        check(wordBookUsesUtf8(metadata), "encoding view preserves case folding and empty-value fallback");
+    for (const char* metadata : {"{}", "{\"token_encoding\":\"utf-8}",
+                                 "{\"token_encoding\":\"UTF-8-extra\"}",
+                                 "{\"token_encoding\":\"sjis\",\"text_encoding\":\"utf8\"}"})
+        check(!wordBookUsesUtf8(metadata), "encoding view preserves rejection and primary-key priority");
     char lines[2][64];
     for (const auto& bad : {std::string("\x81"), std::string("\x90\xE7\x97\x74"),
                            std::string("\xC0\xAF"), std::string("\xED\xA0\x80"), std::string("\xE3\x81"),

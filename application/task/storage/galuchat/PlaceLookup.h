@@ -1,6 +1,7 @@
 #pragma once
 
 #include <memory>
+#include <optional>
 #include <string>
 #include "DiskIndexedWordBookReader.h"
 #include "CachedMapReader.h"
@@ -11,6 +12,8 @@
 #include "../dataset/DatasetTypes.h"
 
 namespace geoputer {
+class BorrowedReadBuffer;
+class ObservedFileReaderFactory;
 
 // Owned and called exclusively by StorageTask. No file handles cross task queues.
 class PlaceLookup {
@@ -22,6 +25,7 @@ public:
     PlaceLookup& operator=(const PlaceLookup&) = delete;
     void setObserver(StorageObserver* observer) { observer_ = observer; }
     PlaceResult search(const PlaceRequest& request);
+    void searchInto(const PlaceRequest& request,PlaceResult& result,BorrowedReadBuffer* work=nullptr);
     void configure(std::string directory, std::string language = ""); // Empty directory disables lookup without file I/O.
     void setDrive(uint8_t drive) { drive_=drive; }
     const std::string& selectedLanguage() const { return language_; }
@@ -40,8 +44,9 @@ private:
     PlaceDisplayFormat display_;
     uint8_t drive_=0;
     PlaceReadTiming timing_{}; // Must outlive the Readers that refer to its I/O counters.
-    std::unique_ptr<CachedMapReader> map_;
-    std::unique_ptr<DiskIndexedWordBookReader> wordbook_;
+    std::shared_ptr<ObservedFileReaderFactory> index_factory_;
+    std::optional<CachedMapReader> map_;
+    std::optional<DiskIndexedWordBookReader> wordbook_;
     WordBookCache wordbook_cache_;
     StorageObserver* observer_ = nullptr;
     DatasetInfo dataset_{};

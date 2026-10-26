@@ -18,11 +18,11 @@ constexpr int ViewHeaderTextY = SettingsLayout::HeaderTextY;
 constexpr int ViewHeaderBottom = SettingsLayout::HeaderBottom;
 }
 
-bool UiRenderer::begin(uint8_t color_depth) {
+bool UiRenderer::begin(uint8_t color_depth, void* buffer, size_t capacity) {
     display_.setRotation(1);
     display_.setBrightness(102);
     return display_.width() == 240 && display_.height() == 135 &&
-           frame_.begin(color_depth) && font_.begin();
+           frame_.begin(color_depth, buffer, capacity) && font_.begin();
 }
 
 void UiRenderer::text(int x, int y, const char* value, uint16_t color) {
@@ -179,7 +179,7 @@ void UiRenderer::draw(const UiModel& model) {
     const auto language = settings.language;
     frame_.setDimmed(model.confirming());
     frame_.fillSprite(TFT_BLACK);
-    const bool live = content.screen == ScreenId::LivePlace || content.screen == ScreenId::Map;
+    const bool live = content.screen == ScreenId::LivePlace || showingMap(content.screen,data);
     const bool view_header = live || content.screen == ScreenId::GpsLogger || isLogBrowser(content.screen) || content.screen == ScreenId::Settings;
     frame_.drawFastHLine(0, view_header ? ViewHeaderBottom : 22, 240, live ? TFT_WHITE : TFT_DARKGREY);
     frame_.drawFastHLine(0, live ? LivePlaceLayout::FooterTop : 118, 240, live ? TFT_WHITE : TFT_DARKGREY);
@@ -196,6 +196,15 @@ void UiRenderer::draw(const UiModel& model) {
         drawMap(model);
     } else if (content.screen == ScreenId::LivePlace) {
         drawLivePlace(model, content, settings);
+    } else if(viewingLogPoint(content.screen) && data.browse().map_mode) {
+        drawMap(model);
+        text(4,ViewHeaderTextY,data.browse().playing?"PLAY":"PAUSE",data.browse().playing?TFT_GREEN:TFT_YELLOW);
+        char date[24];formatLogDateTime(data.browse().point.fields&GpsTime?data.browse().point.utc_epoch_ms:UINT64_MAX,date,sizeof(date));
+        text(60,ViewHeaderTextY,std::strlen(date)>=19?date+11:"--:--:--");
+        char point[24];std::snprintf(point,sizeof(point),"#%lu",static_cast<unsigned long>(data.browse().index+1));
+        valueText(132,236,ViewHeaderTextY,point);
+        if(data.browse().loading)text(4,48,"READING...",TFT_YELLOW);
+        else if(data.browse().error!=LogReadError::None)text(4,48,logReadErrorName(data.browse().error),TFT_RED);
     } else if(isLogBrowser(content.screen)) {
         drawLogBrowser(model, content, settings);
     } else if (content.screen == ScreenId::Menu) {
@@ -349,7 +358,7 @@ void UiRenderer::drawLogBrowser(const UiModel& model, const UiSnapshot& content,
     const auto& view=data.browse();
     const bool detail=content.screen==ScreenId::LogDetail;
     const bool points=content.screen==ScreenId::LogPoint;
-    text(4,ViewHeaderTextY,points?"LOG POINT":detail?"LOG DETAIL":"LOGS",TFT_LIGHTGREY);
+    text(4,ViewHeaderTextY,points?"LOG POINT":detail?"LOG ACTIONS":"LOGS",TFT_LIGHTGREY);
     if(!points) {
         text(220,ViewHeaderTextY,"SD",model.sdAccessLit()?TFT_BLUE:TFT_DARKGREY);
         if(detail && !view.loading && view.summary.session_id && view.summary.session_id==data.storage.log.session_id && data.storage.log.open)
@@ -371,17 +380,14 @@ void UiRenderer::drawLogBrowser(const UiModel& model, const UiSnapshot& content,
     } else if(detail) {
         char name[30]; std::snprintf(name,sizeof(name),"%.29s",view.name); text(4,27,name);
         if(std::strlen(view.name)>29) text(4,37,view.name+29);
-        char date[24];
-        formatLogDateTime(view.summary.first_utc,date,sizeof(date)); std::snprintf(line,sizeof(line),"FIRST %s",date); text(4,49,line);
-        formatLogDateTime(view.summary.last_utc,date,sizeof(date)); std::snprintf(line,sizeof(line),"LAST  %s",date); text(4,59,line);
-        text(4,69,"PTS");std::snprintf(line,sizeof(line),"%lu",static_cast<unsigned long>(view.summary.records));valueText(28,116,69,line);
-        std::snprintf(line,sizeof(line),"%llu",static_cast<unsigned long long>(view.summary.bytes));valueText(124,228,69,line);text(228,69,"B");
-        if(view.summary.tail && !view.loading) text(128,ViewHeaderTextY,"TAIL",TFT_YELLOW);
-        for(unsigned n=0;n<2;++n) {
-            const auto color=view.loading || (!n && (!view.summary.session_id || !view.summary.records)) ? TFT_DARKGREY : content.selected_setting==n?TFT_CYAN:TFT_WHITE;
-            const int y=n?101:83;
-            item(4,y,content.selected_setting==n?">":" ",color);
-            item(20,y,n?(japanese?"再読込":"RELOAD"):(japanese?"測位点を見る":"VIEW POINTS"),color);
+        std::snprintf(line,sizeof(line),"%lu POINTS",static_cast<unsigned long>(view.summary.records));text(4,47,line,TFT_LIGHTGREY);
+        if(view.summary.tail && !view.loading)text(128,ViewHeaderTextY,"TAIL",TFT_YELLOW);
+        for(unsigned n=0;n<3;++n) {
+            const bool enabled=!view.loading && view.summary.session_id && view.summary.records && (!n || logMapAvailable(data));
+            const auto color=!enabled?TFT_DARKGREY:content.selected_setting==n?TFT_CYAN:TFT_WHITE;
+            const char* labels[]={japanese?"文字で見る":"TEXT VIEW",japanese?"地図で見る":"MAP VIEW",japanese?"地図で再生":"MAP REPLAY"};
+            const int y=61+n*18;
+            item(4,y,content.selected_setting==n?">":" ",color);item(20,y,labels[n],color);
         }
     } else {
         std::snprintf(line,sizeof(line),"%lu/%lu",static_cast<unsigned long>(view.index+1),static_cast<unsigned long>(view.summary.records));
@@ -392,18 +398,26 @@ void UiRenderer::drawLogBrowser(const UiModel& model, const UiSnapshot& content,
             text(4,43,"LAT");std::snprintf(line,sizeof(line),"%+.6f",view.point.latitude);valueText(28,116,43,line);
             text(124,43,"LON");std::snprintf(line,sizeof(line),"%+.6f",view.point.longitude);valueText(148,236,43,line);
             if(view.point.fields&GpsSpeed) std::snprintf(line,sizeof(line),"%.1f",view.point.speed_kmh); else std::snprintf(line,sizeof(line),"--");
-            text(4,65,"SPD");valueText(36,140,65,line);text(148,65,"km/h");
-            if(view.point.fields&GpsCourse) std::snprintf(line,sizeof(line),"%.2f",view.point.course_deg); else std::snprintf(line,sizeof(line),"--");
-            text(4,75,"HDG");valueText(36,140,75,line);text(148,75,"deg");
-            if(view.point.fields&GpsAltitude) std::snprintf(line,sizeof(line),"%.3f",view.point.altitude_m); else std::snprintf(line,sizeof(line),"--");
-            text(4,85,"ALT");valueText(36,140,85,line);text(148,85,"m");
+            text(4,55,"SPD");valueText(28,84,55,line);text(84,55,"km/h");
+            if(view.point.fields&GpsCourse) std::snprintf(line,sizeof(line),"%.1f",view.point.course_deg); else std::snprintf(line,sizeof(line),"--");
+            text(124,55,"HDG");valueText(148,212,55,line);text(212,55,"deg");
+            if(view.point.fields&GpsAltitude) std::snprintf(line,sizeof(line),"%.1f",view.point.altitude_m); else std::snprintf(line,sizeof(line),"--");
+            text(4,65,"ALT");valueText(28,108,65,line);text(108,65,"m");
             if(view.point.fields&GpsSatellites) std::snprintf(line,sizeof(line),"%u",view.point.satellites); else std::snprintf(line,sizeof(line),"--");
-            text(4,97,"SAT");valueText(28,84,97,line);
+            text(124,65,"SAT");valueText(148,236,65,line);
             if(view.point.fields&GpsHdop) std::snprintf(line,sizeof(line),"%.2f",view.point.hdop); else std::snprintf(line,sizeof(line),"--");
-            text(100,97,"HDOP");valueText(132,236,97,line);
+            text(4,75,"HDOP");valueText(36,116,75,line);
+            if(datasetInactive(data.place_state)) {
+                const auto issue=datasetIssueText(data.place_state,japanese);
+                text(4,88,issue.first,TFT_LIGHTGREY);
+                font_.draw(frame_,4,100,issue.second,TextRole::Place,TFT_LIGHTGREY);
+            } else {
+                text(4,88,data.place[0]);font_.draw(frame_,4,100,data.place[1],TextRole::Place,TFT_WHITE);
+                if(data.place_state==PlaceState::NotFound)text(4,88,"NO REGION",TFT_LIGHTGREY);
+            }
         }
     }
-    if(view.loading) text(detail?132:4,points?109:detail?ViewHeaderTextY:106,view.deleting?"DELETING...":"READING...",TFT_YELLOW);
+    if(view.loading) text(points?124:detail?132:4,points?75:detail?ViewHeaderTextY:106,view.deleting?"DELETING...":"READING...",TFT_YELLOW);
     else if(view.error!=LogReadError::None && !model.confirming()) {
         if(detail) { if(view.summary.session_id && view.error==LogReadError::Corrupt) text(128,ViewHeaderTextY,"CRC!",TFT_RED); else { frame_.fillRect(0,49,240,8,TFT_BLACK); text(4,49,logReadErrorName(view.error),TFT_RED); } }
         else text(4,points?109:106,logReadErrorName(view.error),TFT_RED);
@@ -682,6 +696,22 @@ void UiRenderer::drawDialogGuide(const ChoiceDialog& dialog) {
 void UiRenderer::drawScreenGuide(const UiModel& model) {
     const auto screen=model.snapshot().screen;
     const auto guide=model.keyGuide();
+    if(viewingLogPoint(screen)) {
+        const auto& data=model.data();const auto& view=data.browse();
+        const auto active=guide.accepting?TFT_WHITE:TFT_DARKGREY;
+        text(4,124,"ESC",guide.back?TFT_CYAN:TFT_DARKGREY);
+        text(36,124,"V",guide.accepting && (view.map_mode || logMapAvailable(data))?TFT_WHITE:TFT_DARKGREY);
+        text(52,124,"B",guide.accepting && view.target?TFT_WHITE:TFT_DARKGREY);
+        text(60,124,"E",guide.accepting && uint64_t(view.target)+1<view.summary.records?TFT_WHITE:TFT_DARKGREY);
+        text(76,124,"SG",guide.system?active:TFT_DARKGREY);
+        if(view.map_mode) {
+            text(100,124,"+",guide.zoom_in?TFT_WHITE:TFT_DARKGREY);
+            text(108,124,"-",guide.zoom_out?TFT_WHITE:TFT_DARKGREY);
+            text(124,124,"P",active);
+        }
+        drawKeyArrow(160,124,UiKey::Left,guide.left);drawKeyArrow(172,124,UiKey::Right,guide.right);
+        drawKeyArrow(196,124,UiKey::Up,guide.up);drawKeyArrow(208,124,UiKey::Down,guide.down);return;
+    }
     text(4,124,guide.root && screen!=ScreenId::Menu?"ESC:MENU":"ESC DEL",guide.back?TFT_CYAN:TFT_DARKGREY);
     if (guide.root) {
         for (unsigned i=0;i<MenuCount;++i) {
@@ -694,6 +724,10 @@ void UiRenderer::drawScreenGuide(const UiModel& model) {
         text(guide.root?148:84,124,"S",color);text(guide.root?164:100,124,"G",color);
     }
     if (screen==ScreenId::Logs) text(180,124,"D",guide.remove?TFT_WHITE:TFT_DARKGREY);
+    if(screen==ScreenId::Map) {
+        text(188,124,"+",guide.zoom_in?TFT_WHITE:TFT_DARKGREY);
+        text(204,124,"-",guide.zoom_out?TFT_WHITE:TFT_DARKGREY);
+    }
     if (guide.vertical) {
         const int x=screen==ScreenId::Logs?200:guide.root?188:124;
         drawKeyArrow(x,124,UiKey::Up,guide.up);drawKeyArrow(x+12,124,UiKey::Down,guide.down);
@@ -738,8 +772,9 @@ void UiRenderer::drawMap(const UiModel& model) {
     }
     // Current-position names arrive through the same point/code/name caches as
     // Live Place. Neither an old frame nor an in-flight frame owns these rows.
-    if(datasetInactive(placeIssue(data))) {
-        const auto issue=datasetIssueText(placeIssue(data),data.settings.language==UiLanguage::Japanese);
+    const auto issue_state=viewingLogPoint(model.snapshot().screen)?data.place_state:placeIssue(data);
+    if(datasetInactive(issue_state)) {
+        const auto issue=datasetIssueText(issue_state,data.settings.language==UiLanguage::Japanese);
         overlay(4,88,issue.first,TextRole::UI,TFT_WHITE);
         overlay(4,100,issue.second,TextRole::Place,TFT_WHITE);
     } else if(hasPlace(data) || data.place_state==PlaceState::Ready) {
@@ -758,7 +793,7 @@ void UiRenderer::drawMap(const UiModel& model) {
         auto pixel=[&](int x,int y,uint16_t color) {
             if(x>=0 && x<240 && y>=18 && y<119)frame_.drawPixel(x,y,color);
         };
-        const auto color=data.map.error==map::Error::None && data.gps.fix.valid && data.gps.reception==GpsReception::Fix?TFT_CYAN:TFT_DARKGREY;
+        const auto color=data.map.error==map::Error::None && displayedFix(model.snapshot().screen,data).valid && (viewingLogPoint(model.snapshot().screen) || data.gps.reception==GpsReception::Fix)?TFT_CYAN:TFT_DARKGREY;
         for(int y=-8;y<=8;++y)for(int x=-8;x<=8;++x)pixel(cx+x,cy+y,TFT_BLACK);
         for(int y=-5;y<=5;++y)for(int x=-5;x<=5;++x)if(std::abs(x)+std::abs(y)==5)pixel(cx+x,cy+y,color);
         for(int i=8;i<=10;++i) {pixel(cx-i,cy,color);pixel(cx+i,cy,color);pixel(cx,cy-i,color);pixel(cx,cy+i,color);}
