@@ -11,9 +11,9 @@ void Application::prepareLogScreen(ScreenId target,ScreenId previous) {
     if(!isLogBrowser(target))return;
     auto& logs=screen_resources_.logs();
     logs.need=false;logs.request={};logs.single=false;
-    if(target==ScreenId::Logs && previous!=ScreenId::LogDetail) {
+    if(target==ScreenId::Logs && !isLogBrowser(previous)) {
         logs.request.kind=LogReadKind::List;logs.request.direction=LogListDirection::Newest;logs.need=true;
-    } else if(target==ScreenId::LogDetail && previous==ScreenId::Logs) {
+    } else if(target==ScreenId::LogProperties && previous==ScreenId::Logs) {
         logs.request.kind=LogReadKind::Summary;logs.need=true;logs.cache_count=0;
     } else if(target==ScreenId::LogPoint) {
         logs.request.kind=LogReadKind::Records;logs.need=!data_.browse().point_loaded;
@@ -58,16 +58,24 @@ bool Application::operateBrowser(const UiAction& action) {
             if(screen_!=ScreenId::Logs || view.loading || action.browse_revision!=view.revision || action.browse_index>=view.count) return false;
             view.selected=action.browse_index;
             std::snprintf(view.name,sizeof(view.name),"%s",view.names[view.selected]);
-            return setScreen(ScreenId::LogDetail,action.action_id,ActionResult::Applied);
-        case BrowseAction::Points: case BrowseAction::Map: case BrowseAction::Replay: {
-            if(screen_!=ScreenId::LogDetail || !view.summary.session_id || !view.summary.records || view.loading ||
-               (action.browse_action!=BrowseAction::Points && !logMapAvailable(data_))) return false;
-            const bool old_map=view.map_mode,old_play=view.playing;
-            view.map_mode=action.browse_action!=BrowseAction::Points;
-            view.playing=action.browse_action==BrowseAction::Replay;
-            logs.next_at=taskTimeMs()+1000;
-            if(setScreen(ScreenId::LogPoint,action.action_id,ActionResult::Applied))return true;
-            view.map_mode=old_map;view.playing=old_play;return false;
+            return setScreen(ScreenId::LogProperties,action.action_id,ActionResult::Applied);
+        case BrowseAction::OpenPoint: case BrowseAction::Text: case BrowseAction::Map:
+            if(view.loading || view.error!=LogReadError::None || !view.summary.records ||
+               (action.browse_action==BrowseAction::Map && !logMapAvailable(data_)))return false;
+            view.map_mode=action.browse_action==BrowseAction::Map;
+            return setScreen(ScreenId::LogPoint,action.action_id,ActionResult::Applied);
+        case BrowseAction::Statistics: case BrowseAction::Recalculate: {
+            if((screen_!=ScreenId::LogProperties && screen_!=ScreenId::LogPoint && screen_!=ScreenId::LogStatistics) || view.loading)return false;
+            if(screen_!=ScreenId::LogStatistics) {
+                view.statistics_from_point=screen_==ScreenId::LogPoint;
+                if(!setScreen(ScreenId::LogStatistics,action.action_id,ActionResult::Applied))return false;
+            }
+            if(view.statistics_ready && view.statistics_source.session_id==view.summary.session_id &&
+               action.browse_action!=BrowseAction::Recalculate)return true;
+            view.statistics_ready=false;view.statistics={};view.statistics_total=view.summary.records;
+            logs.request={};logs.request.kind=LogReadKind::Statistics;
+            logs.request.session_id=view.summary.session_id;
+            break;
         }
         case BrowseAction::ToggleView:
             if(!viewingLogPoint(screen_) || (!view.map_mode && !logMapAvailable(data_)))return false;
@@ -91,8 +99,8 @@ bool Application::operateBrowser(const UiAction& action) {
             break;
         }
         case BrowseAction::Reload:
-            if(screen_!=ScreenId::Logs && screen_!=ScreenId::LogDetail) return false;
-            logs.request={}; logs.request.kind=screen_==ScreenId::Logs?LogReadKind::List:LogReadKind::Summary;
+            if(screen_!=ScreenId::Logs) return false;
+            logs.request={}; logs.request.kind=LogReadKind::List;
             logs.request.direction=LogListDirection::Newest;
             break;
         case BrowseAction::Point:
@@ -135,7 +143,7 @@ void Application::processBrowser() {
         read.count=logs.single?1:LogReadCount;
     }
     StorageRequest request{};
-    request.kind=read.kind==LogReadKind::List?MessageKind::ListLogs:read.kind==LogReadKind::Summary?MessageKind::ReadLogSummary:read.kind==LogReadKind::Delete?MessageKind::DeleteLog:MessageKind::ReadLogRecords;
+    request.kind=read.kind==LogReadKind::Statistics?MessageKind::ReadLogStatistics:read.kind==LogReadKind::List?MessageKind::ListLogs:read.kind==LogReadKind::Summary?MessageKind::ReadLogSummary:read.kind==LogReadKind::Delete?MessageKind::DeleteLog:MessageKind::ReadLogRecords;
     request.payload.log_read=read;
     logs.need=false; browse_waiting_=read.token;
     SyncReturn result{};
@@ -169,19 +177,25 @@ void Application::completeBrowser(const LogReadReply& reply) {
             if(usbSelecting())logs.request.count=4;
             logs.need=true; return;
         }
-        if(reply.request.direction==LogListDirection::Newest) view.page=0;
-        else if(reply.request.direction==LogListDirection::Older) ++view.page;
-        else if(reply.request.direction==LogListDirection::Newer && view.page) --view.page;
+        const auto rows=reply.request.count?reply.request.count:LogListRows;
+        view.total_files=reply.data.list.total_files;
+        view.page=reply.data.list.first_index/rows;
+        std::memcpy(view.list_records,reply.data.list.records,sizeof(view.list_records));
         view.count=reply.error==LogReadError::None?reply.count:0;
-        std::memcpy(view.names,reply.data.names,sizeof(view.names));
+        std::memcpy(view.names,reply.data.list.names,sizeof(view.names));
         view.has_older=reply.has_older; view.has_newer=reply.has_newer; view.active_mask=reply.active_mask;
         if(reply.request.direction==LogListDirection::FromAnchor) {
             if(view.selected>=view.count) view.selected=view.count?view.count-1:0;
             if(!view.count) view.page=0;
         } else view.selected=reply.request.direction==LogListDirection::Newer && view.count?view.count-1:0;
         view.error=reply.error; view.loading=false;
-    } else if(reply.request.kind==LogReadKind::Summary && screen_==ScreenId::LogDetail) {
-        view.summary=reply.summary; view.error=reply.error; view.loading=false; logs.cache_count=0;
+    } else if(reply.request.kind==LogReadKind::Summary && screen_==ScreenId::LogProperties) {
+        view.summary=reply.summary;view.error=reply.error;logs.cache_count=0;
+        view.loading=false;
+    } else if(reply.request.kind==LogReadKind::Statistics && screen_==ScreenId::LogStatistics) {
+        view.loading=false;view.error=reply.error;view.failed_record=reply.failed_record;view.statistics_ready=reply.error==LogReadError::None;
+        view.statistics_source=reply.summary;view.statistics_total=reply.summary.records;
+        if(view.statistics_ready)view.statistics=reply.data.statistics;
     } else if(reply.request.kind==LogReadKind::Records && screen_==ScreenId::LogPoint) {
         if(reply.error==LogReadError::None) {
             logs.cache_start=reply.request.start; logs.cache_count=reply.count;

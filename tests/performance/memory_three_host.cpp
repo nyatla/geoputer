@@ -106,9 +106,9 @@ int main(int argc,char** argv) {try {
         std::ofstream f(log_dir/name,std::ios::binary);f.write(reinterpret_cast<char*>(header),sizeof(header));f.write(reinterpret_cast<char*>(record),sizeof(record));
     }
     LogReader logs(log_dir.string());LogReadRequest req{};req.kind=LogReadKind::List;req.token=1;
-    auto list=[&]{check(logs.begin(req),"list begin");while(!logs.done())logs.step();check(logs.result().error==LogReadError::None,"list result");for(unsigned n=0;n<logs.result().count;++n)hash(logs.result().data.names[n]);};
+    auto list=[&]{check(logs.begin(req),"list begin");while(!logs.done())logs.step();check(logs.result().error==LogReadError::None,"list result");for(unsigned n=0;n<logs.result().count;++n)hash(logs.result().data.list.names[n]);};
     profile("log_list_cold",list);
     profile("log_list_warm_20",[&]{for(unsigned i=0;i<20;++i)list();});
-    std::strcpy(req.name,logs.result().data.names[0]);req.kind=LogReadKind::Summary;
+    std::strcpy(req.name,logs.result().data.list.names[0]);req.kind=LogReadKind::Summary;
     profile("log_summary_warm_20",[&]{for(unsigned i=0;i<20;++i){check(logs.begin(req),"summary begin");while(!logs.done())logs.step();check(logs.result().error==LogReadError::None && logs.result().summary.records==1,"summary result");hash(req.name);}});
 }catch(const std::exception& e){allocations::tracking=false;std::fprintf(stderr,"FAIL: %s\n",e.what());return 1;}}

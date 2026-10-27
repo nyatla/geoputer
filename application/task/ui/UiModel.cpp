@@ -276,9 +276,6 @@ UiKeyGuide UiModel::keyGuide() const {
     } else if (screen_==ScreenId::LogPoint) {
         guide.vertical=guide.horizontal=true;guide.up=guide.left=data_.browse().target>0;
         guide.down=guide.right=uint64_t(data_.browse().target)+1<data_.browse().summary.records;
-    } else if (screen_==ScreenId::LogDetail) {
-        guide.vertical=true;guide.up=!data_.browse().loading && selection_>0;
-        guide.down=!data_.browse().loading && selection_<2;
     } else if (screen_==ScreenId::Menu) list(MenuCount);
     else if (screen_==ScreenId::Settings && !screen_resources_.settings.card_info) {
         if (screen_resources_.settings.editing) {
@@ -331,6 +328,9 @@ void UiModel::keyPressed(UiKey key, uint32_t now_ms) {
         const auto kind = dialog_.kind();
         const auto choice = dialog_.choice();
         const auto result = dialog_.keyPressed(key);
+        if(kind==DialogKind::LogShortcut && result==DialogInput::Accepted) {
+            browseAction(choice==0?BrowseAction::Text:choice==1?BrowseAction::Map:BrowseAction::Statistics);return;
+        }
         if (kind == DialogKind::GpsControl && result == DialogInput::Accepted) {
             const auto operation = gpsControlAction(gps_dialog_state_, choice);
             if (gps_dialog_state_ == data_.recording.state && gpsControlAllowed(data_, operation)) {
@@ -407,7 +407,25 @@ void UiModel::gpsLoggerKey(UiKey key) {
 void UiModel::logBrowserKey(UiKey key) {
     const auto& view=data_.browse();
     if(key==UiKey::Escape) {
-        action(ActionKind::ChangeScreen,screen_==ScreenId::Logs?ScreenId::LivePlace:screen_==ScreenId::LogDetail?ScreenId::Logs:ScreenId::LogDetail);
+        action(ActionKind::ChangeScreen,screen_==ScreenId::Logs?ScreenId::LivePlace:
+            screen_==ScreenId::LogProperties?ScreenId::Logs:screen_==ScreenId::LogStatistics?
+            (view.statistics_from_point?ScreenId::LogPoint:ScreenId::LogProperties):ScreenId::LogProperties);
+        return;
+    }
+    if(key==UiKey::LogMenu && (screen_==ScreenId::LogProperties || screen_==ScreenId::LogPoint) && !view.loading) {
+        if(viewingLogPoint(screen_) && view.playing) {data_.editBrowse().playing=false;browseAction(BrowseAction::PausePlayback);}
+        dialog_.openActions(DialogKind::LogShortcut,3,2);
+        const bool valid=view.error==LogReadError::None;
+        dialog_.setChoiceEnabled(0,valid && view.summary.records);
+        dialog_.setChoiceEnabled(1,valid && logMapAvailable(data_) && view.summary.records);
+        dialog_.setChoiceEnabled(2,valid);changed();return;
+    }
+    if(screen_==ScreenId::LogProperties) {
+        if(key==UiKey::Enter && !view.loading && view.error==LogReadError::None && view.summary.records)browseAction(BrowseAction::OpenPoint);
+        return;
+    }
+    if(screen_==ScreenId::LogStatistics) {
+        if(key==UiKey::Recalculate && !view.loading)browseAction(BrowseAction::Recalculate);
         return;
     }
     if(screen_==ScreenId::LogPoint) {
@@ -436,13 +454,6 @@ void UiModel::logBrowserKey(UiKey key) {
         } else if(key==UiKey::Enter) {
             if(view.count) browseAction(BrowseAction::OpenFile,selection_);
             else browseAction(BrowseAction::Reload);
-        }
-    } else {
-        if(key==UiKey::Up) { --selection_; changed(); }
-        if(key==UiKey::Down) { ++selection_; changed(); }
-        if(key==UiKey::Enter) {
-            if(view.summary.session_id && view.summary.records && (!selection_ || logMapAvailable(data_)))
-                browseAction(selection_==0?BrowseAction::Points:selection_==1?BrowseAction::Map:BrowseAction::Replay);
         }
     }
     return;
@@ -678,7 +689,7 @@ void UiModel::acceptDialog(DialogKind kind) {
         case DialogKind::RebuildIndex:case DialogKind::VerifyIndex:
             datasetAction(kind==DialogKind::RebuildIndex?DatasetAction::RebuildIndex:DatasetAction::VerifyIndex,selection_);
             screen_resources_.settings.page=SettingsPage::DatasetIndex;changed();break;
-        case DialogKind::GpsControl: case DialogKind::None: return;
+        case DialogKind::LogShortcut: case DialogKind::GpsControl: case DialogKind::None: return;
     }
     action_.confirmed = true;
 }
@@ -713,6 +724,9 @@ void UiModel::tick(uint32_t now_ms) {
     if(screen_!=ScreenId::LivePlace || mode_==DisplayMode::Background) dataset_notice_started_ms_=now_ms;
     if(was_dataset_notice!=datasetFailureVisible())redraw_=true;
     if (sdAccessLit() != was_lit) redraw_ = true;
+    // Keep a requested scan visible; the inactivity interval starts at completion.
+    // Explicit S still enters Background through the normal key handler.
+    if(screen_==ScreenId::LogStatistics && data_.browse().loading) {last_input_ms_=now_ms;return;}
     if (screen_ == ScreenId::Boot || screen_ == ScreenId::UsbStorage || switchingMode(data_) || data_.datasets().applying ||
         (screen_==ScreenId::Logs && data_.browse().deleting)) return;
     if (data_.message[0] && now_ms - data_.message_at_ms >= 3000u) {

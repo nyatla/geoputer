@@ -14,6 +14,8 @@ public:
     static USBMSC& registerInterface();
     bool begin(SPIClass& spi);
     UsbStorageView snapshot() const;
+    struct Activity { uint32_t accesses; bool active; };
+    Activity takeActivity() { return {accesses_.exchange(0),io_active_.load()}; }
     bool takeLocal();
     bool publish();
     bool local() const { return local_; }
@@ -24,6 +26,13 @@ private:
     static int32_t write(uint32_t lba, uint32_t offset, uint8_t* data, uint32_t size);
     static bool startStop(uint8_t power, bool start, bool eject);
     int32_t transfer(uint32_t lba, uint32_t offset, void* data, uint32_t size, bool writing);
+    template<class Operation> bool sectorIo(Operation operation) {
+        ++accesses_;io_active_=true;
+        struct End { std::atomic<bool>& active; ~End() {active=false;} } end{io_active_};
+        return operation();
+    }
+    std::atomic<uint32_t> accesses_{0};
+    std::atomic<bool> io_active_{false};
     inline static UsbStorage* active_ = nullptr;
     USBMSC* msc_ = nullptr;
     SPIClass* spi_ = nullptr;

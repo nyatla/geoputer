@@ -66,7 +66,7 @@ void route(QueueHandle_t queue) {
             check(app->results_.send(reply),"map job return queue full");return;
         }
         if(command.kind==MessageKind::DatasetOperation || command.kind==MessageKind::ListLogs ||
-           command.kind==MessageKind::ReadLogSummary || command.kind==MessageKind::ReadLogRecords) {
+           command.kind==MessageKind::ReadLogSummary || command.kind==MessageKind::ReadLogRecords || command.kind==MessageKind::ReadLogStatistics) {
             last_read=command;result.status=OperationStatus::Ok;
             result.storage=app->data_.storage;++result.storage.revision;
             result.storage.busy=command.kind==MessageKind::DatasetOperation;
@@ -238,7 +238,7 @@ int main(){
     check(app->requestDataset(catalog),"new catalog request selects dataset payload");
     const auto catalog_token=app->dataset_waiting_;
     LogReadReply late_log{};late_log.request=log_request;late_log.count=1;
-    std::strcpy(late_log.data.names[0],"must-not-overwrite-dataset.gps.dat");
+    std::strcpy(late_log.data.list.names[0],"must-not-overwrite-dataset.gps.dat");
     app->completeBrowser(late_log);
     check(app->data_.hasDatasets() && app->data_.datasets().loading && !app->browse_waiting_,
           "late log releases its token but leaves dataset payload intact");
@@ -251,9 +251,9 @@ int main(){
     auto& list=app->data_.editBrowse();list.loading=false;list.count=2;list.selected=1;++list.revision;
     std::strcpy(list.names[0],"20261025_120000_0.gps.dat");std::strcpy(list.names[1],"20261025_130000_0.gps.dat");
     UiAction open{};open.browse_action=BrowseAction::OpenFile;open.browse_index=1;open.browse_revision=list.revision;
-    check(app->operateBrowser(open) && app->screen_==ScreenId::LogDetail,"open detail with retained list");
+    check(app->operateBrowser(open) && app->screen_==ScreenId::LogProperties,"open text directly with retained list");
     app->data_.editBrowse().summary.records=20;
-    check(app->setScreen(ScreenId::LogPoint) && app->setScreen(ScreenId::LogDetail) && app->setScreen(ScreenId::Logs),"point and back navigation");
+    check(app->setScreen(ScreenId::Logs),"point and back navigation");
     check(app->data_.hasBrowse() && app->data_.browse().selected==1 && app->data_.browse().count==2 &&
           !std::strcmp(app->data_.browse().names[1],"20261025_130000_0.gps.dat"),"browser hierarchy retains list content and selection");
     std::puts("PASS: exclusive UI page payloads, delayed dataset/log responses and retained browser hierarchy");
@@ -272,7 +272,11 @@ int main(){
           "off-screen cancellation must release Storage map job without reading App map union");
     // A record request can finish after the work union has become a map again.
     auto& point_view=app->data_.editBrowse();point_view.summary.session_id=81;point_view.summary.records=20;
-    check(app->setScreen(ScreenId::LogPoint),"open point resource group");
+    check(app->setScreen(ScreenId::LogProperties),"open properties resource group");
+    app->processBrowser();check(last_read.kind==MessageKind::ReadLogSummary,"point entry first requests the file bounds");
+    LogReadReply point_bounds{};point_bounds.request=last_read.payload.log_read;point_bounds.summary.session_id=81;point_bounds.summary.records=20;
+    app->completeBrowser(point_bounds);
+    UiAction enter_point{};enter_point.browse_action=BrowseAction::OpenPoint;check(app->operateBrowser(enter_point),"Enter opens point after properties");
     app->processBrowser();check(last_read.kind==MessageKind::ReadLogRecords,"record request accepted");
     const auto stale_records=last_read.payload.log_read;
     check(app->setScreen(ScreenId::Map) && app->screen_resources_.hasMap(),"Logs -> Map replaces log work");
@@ -312,9 +316,16 @@ int main(){
     std::strcpy(browser.names[0],"20261025_120000_0.gps.dat");
     open.browse_index=0;open.browse_revision=browser.revision;
     check(app->operateBrowser(open) && !app->data_.browse().point.valid,"new file must not expose the previous file's point");
-    auto& v=app->data_.editBrowse();v.loading=false;v.summary.session_id=91;v.summary.records=25;
-    UiAction choose{};choose.browse_action=BrowseAction::Replay;
-    check(app->operateBrowser(choose) && v.map_mode && v.playing,"map replay entry");
+    check(app->screen_==ScreenId::LogProperties,"file opens property-only screen");
+    app->processBrowser();check(last_read.payload.log_read.kind==LogReadKind::Summary,"direct view first requests validated file bounds");
+    LogReadReply opened{};opened.request=last_read.payload.log_read;opened.summary.session_id=91;opened.summary.records=25;
+    app->completeBrowser(opened);
+    auto& v=app->data_.editBrowse();check(!v.loading && !app->screen_resources_.logs().need,"properties never trigger full scan or point reads");
+    UiAction enter{};enter.browse_action=BrowseAction::OpenPoint;check(app->operateBrowser(enter),"Enter starts point viewer");
+    UiAction choose{};choose.browse_action=BrowseAction::ToggleView;
+    check(app->operateBrowser(choose) && v.map_mode,"V switches the direct viewer to map");
+    choose.browse_action=BrowseAction::Playback;
+    check(app->operateBrowser(choose) && v.playing,"P starts map replay");
     app->processReplay();check(v.playing,"initial point loading must not abort replay");
     app->processBrowser();const auto historical_request=last_read.payload.log_read;
     LogReadReply points{};points.request=historical_request;points.count=10;
@@ -372,8 +383,8 @@ int main(){
     app->handleNotification(name);app->processPlace();
     check(!app->place_flow_.pending() && !app->data_.place[0][0],"old point name must not appear after navigation");
     move.browse_index=11;check(app->operateBrowser(move),"restore point for return test");
-    ui.keyPressed(UiKey::Escape,host_tick);app->readUiContent();check(app->screen_==ScreenId::LogDetail && v.index==11,"back retains point");
-    choose.browse_action=BrowseAction::Map;check(app->operateBrowser(choose) && v.index==11 && !v.loading && !v.playing,"map entry retains selected point");
+    choose.browse_action=BrowseAction::ToggleView;
+    check(app->operateBrowser(choose) && v.index==11 && !v.loading && !v.playing,"V retains the selected point without an intermediate screen");
     app->publishUiContent();ui.keyPressed(mapPhysicalKey('-',false),host_tick);app->readUiContent();
     check(app->data_.map.scale==2 && v.index==11,"minus changes historical map scale without navigating");
     ui.keyPressed(mapPhysicalKey('+',false),host_tick);app->readUiContent();
@@ -390,6 +401,27 @@ int main(){
     app->data_.settings.dataset=0;app->publishUiContent();ui.keyPressed(UiKey::ToggleView,host_tick);app->readUiContent();
     check(!v.map_mode,"text remains available without dataset");
     ui.keyPressed(UiKey::ToggleView,host_tick);app->readUiContent();check(!v.map_mode,"map toggle rejected without dataset");
+    v.error=LogReadError::None;v.loading=false;
+    UiAction stats_action{};stats_action.browse_action=BrowseAction::Statistics;
+    check(app->operateBrowser(stats_action) && app->screen_==ScreenId::LogStatistics,"M statistics enters dedicated screen");
+    app->processBrowser();check(last_read.kind==MessageKind::ReadLogStatistics && app->browse_waiting_,"statistics accepted without waiting for complete file scan");
+    const auto stats_request=last_read.payload.log_read;
+    AppNotification progress{};progress.source=TaskId::Storage;progress.kind=MessageKind::LogStatisticsProgress;
+    progress.payload.log_progress={stats_request.token,stats_request.screen_generation,8,25,200};app->handleNotification(progress);
+    check(v.statistics.processed==8 && v.loading,"statistics progress reaches the screen through App");
+    LogReadReply stats_done{};stats_done.request=stats_request;stats_done.summary=v.summary;
+    stats_done.data.statistics.processed=25;stats_done.data.statistics.distance_m=12.5;
+    app->completeBrowser(stats_done);check(v.statistics_ready && !v.loading && v.statistics.distance_m==12.5,"complete statistics held as one cached result");
+    check(app->setScreen(ScreenId::LogPoint),"return to historical point after statistics");
+    check(app->operateBrowser(stats_action) && !app->screen_resources_.logs().need && v.statistics_ready,"reentry uses cached statistics without SD scan");
+    stats_action.browse_action=BrowseAction::Recalculate;check(app->operateBrowser(stats_action) && !v.statistics_ready && v.loading,"R explicitly requests fresh statistics");
+    app->processBrowser();const auto cancelled_stats=last_read.payload.log_read;
+    check(app->setScreen(ScreenId::Map) && app->browse_cancel_,"leaving statistics retains cancellation outside screen union");
+    LogReadReply late_stats{};late_stats.request=cancelled_stats;late_stats.data.statistics.processed=0xffffffff;
+    app->completeBrowser(late_stats);check(!app->browse_waiting_ && !app->data_.hasBrowse(),"late statistics cannot overwrite a different screen resource");
+    // Restore historical display for the independent recording regression below.
+    check(app->setScreen(ScreenId::LogPoint),"restore point after stale result test");
+    auto& restored=app->data_.editBrowse();restored.point.valid=true;restored.point.latitude=35.68;restored.index=11;restored.loading=false;
     // Live reception/recording remains independent of the currently displayed historical point.
     fail_open=false;const auto displayed_latitude=v.point.latitude;const auto displayed_index=v.index;
     operation(LogAction::Start);sample(5);
@@ -398,6 +430,23 @@ int main(){
     operation(LogAction::Stop);check(app->storage_.log_writer_.flush(host_tick),"finish log recorded while viewing");
     app->data_.storage.log=app->storage_.log_writer_.snapshot();
     std::puts("PASS: log viewer modes, historical map and names, cursor tracking, skips, cache boundaries, replay timing, end/error/modal/screen-off pause and dataset constraints");
+    // Direct entry also terminates cleanly for empty or invalid files.
+    check(app->setScreen(ScreenId::Logs),"return to the retained file list");
+    auto& final_list=app->data_.editBrowse();final_list.loading=false;final_list.count=1;final_list.total_files=1;
+    std::strcpy(final_list.names[0],"20261025_120000_0.gps.dat");++final_list.revision;
+    open.browse_index=0;open.browse_revision=final_list.revision;
+    check(app->operateBrowser(open) && app->screen_==ScreenId::LogProperties,"empty-file direct entry");
+    app->processBrowser();LogReadReply empty{};empty.request=last_read.payload.log_read;empty.summary.session_id=91;
+    app->completeBrowser(empty);
+    check(!app->data_.browse().loading && !app->data_.browse().point_loaded && !app->screen_resources_.logs().need,"empty summary must not schedule a record read or wait forever");
+    app->publishUiContent();ui.keyPressed(UiKey::Escape,host_tick);app->readUiContent();
+    check(app->screen_==ScreenId::Logs && !std::strcmp(app->data_.browse().names[0],"20261025_120000_0.gps.dat"),"Esc returns to the retained full filename");
+    open.browse_revision=app->data_.browse().revision;
+    check(app->operateBrowser(open),"invalid-file direct entry");app->processBrowser();
+    LogReadReply invalid{};invalid.request=last_read.payload.log_read;invalid.error=LogReadError::Header;
+    app->completeBrowser(invalid);
+    check(!app->data_.browse().loading && app->data_.browse().error==LogReadError::Header && !app->screen_resources_.logs().need,"invalid headers retain a visible error without entering an action menu");
+    std::puts("PASS: direct text entry, automatic initial batch, empty/header-error completion and Esc-to-list");
     hostQueueHook=nullptr;std::filesystem::remove_all(directory);
     std::puts("PASS: production App logging, GPS pause/stop/restart, fresh epochs, async close, filename, failures and wake");
 }

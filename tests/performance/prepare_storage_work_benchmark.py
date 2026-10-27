@@ -20,10 +20,10 @@ if(bench_stage>=10 && bench_stage<20) {
         if(!data_.browse().count) {Console.println("[WORK-BENCH] no logs; read-only list completed");bench_stage=19;}
         else {UiAction action{};action.browse_action=BrowseAction::OpenFile;action.browse_index=0;action.browse_revision=data_.browse().revision;
             if(operateBrowser(action))bench_stage=11;}
-    } else if(bench_stage==11 && screen_==ScreenId::LogDetail && !browse_waiting_ && !data_.browse().loading && !screen_resources_.logs().need) {
+    } else if(bench_stage==11 && screen_==ScreenId::LogPoint && !browse_waiting_ && !data_.browse().loading && !screen_resources_.logs().need) {
         Console.printf("[WORK-BENCH] log records=%lu error=%u\\n",static_cast<unsigned long>(data_.browse().summary.records),unsigned(data_.browse().error));
         if(!data_.browse().summary.records || data_.browse().error!=LogReadError::None)bench_stage=19;
-        else {UiAction action{};action.browse_action=BrowseAction::Map;if(operateBrowser(action))bench_stage=12;}
+        else {UiAction action{};action.browse_action=BrowseAction::ToggleView;if(operateBrowser(action))bench_stage=12;}
     } else if(bench_stage>=12 && bench_stage<=14 && !map_request_.token && !browse_waiting_ && !place_flow_.pending() && !data_.storage.busy && !data_.browse().loading && data_.browse().point_loaded && !data_.map.busy) {
         Console.printf("[WORK-BENCH] real-log step=%u point=%lu map_error=%u\\n",bench_stage,static_cast<unsigned long>(data_.browse().index),unsigned(data_.map.error));
         if(bench_stage==14)bench_stage=19;

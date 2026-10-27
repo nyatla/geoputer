@@ -69,7 +69,7 @@ private:
     LogWriter log_writer_;
     StorageScreenResources screen_resources_;
     uint64_t read_barrier_session_=0;
-    uint32_t read_barrier_=0, read_request_id_=0;
+    uint32_t read_barrier_=0, read_request_id_=0, statistics_progress_at_=0;
     uint32_t browse_release_generation_=0;
     bool has_read_=false, read_prepared_=false;
     unsigned sd_depth_ = 0;

@@ -46,7 +46,7 @@ enum class MessageKind : uint8_t {
     RequestMap, ReleaseMap, CancelMap, MapCompleted,
     BeginMapFrame, CommitMapFrame, DiscardMapFrame, CloseMapSession,
     SyncReturn,
-    ReleaseLogBrowse,
+    ReleaseLogBrowse, ReadLogStatistics, LogStatisticsProgress,
     BeginPlaceSearch, CommitPlaceSearch, DiscardPlaceSearch,
 };
 enum class OperationStatus : uint8_t { Ok, InvalidRequest, StaleContent, Unavailable };
@@ -99,6 +99,7 @@ union StorageRequestPayload {
 union AppNotificationPayload {
     map::FrameInfo map;
     IndexProgress index_progress;
+    LogStatisticsProgress log_progress;
     StorageSnapshot usb_storage;
     UiContentChanged changed;
     GpsSnapshot gps;

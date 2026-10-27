@@ -1,5 +1,6 @@
 #include "../../utils/Console.h"
 #include "StorageTask.h"
+#include "../../utils/ElapsedTime.h"
 #include "../../utils/HeapDiagnostics.h"
 #include "DatasetSelection.h"
 #include "dataset/DatasetIndex.h"
@@ -217,15 +218,15 @@ void StorageTask::handle(const StorageRequest& request) {
         result.status = OperationStatus::Ok;  // Individual backend outcomes are in the snapshot.
     } else if (request.kind == MessageKind::GetStorageStatus) {
         result.status = initialized_ ? OperationStatus::Ok : OperationStatus::Unavailable;
-    } else if(request.kind==MessageKind::ListLogs || request.kind==MessageKind::ReadLogSummary || request.kind==MessageKind::ReadLogRecords || request.kind==MessageKind::DeleteLog) {
+    } else if(request.kind==MessageKind::ListLogs || request.kind==MessageKind::ReadLogSummary || request.kind==MessageKind::ReadLogRecords || request.kind==MessageKind::DeleteLog || request.kind==MessageKind::ReadLogStatistics) {
         if(initialized_ && !has_read_ && !hasJob() && !replies_.completionPending() && !screen_resources_.work.mapBusy() &&
            (!usb_mode_ || (usb_.local() && state_.card_state==CardState::Mounted &&
                            state_.export_job.phase==ExportPhase::Selecting && request.kind==MessageKind::ListLogs))) {
             auto read=request.payload.log_read;
-            read.kind=request.kind==MessageKind::ListLogs?LogReadKind::List:request.kind==MessageKind::ReadLogSummary?LogReadKind::Summary:request.kind==MessageKind::DeleteLog?LogReadKind::Delete:LogReadKind::Records;
+            read.kind=request.kind==MessageKind::ReadLogStatistics?LogReadKind::Statistics:request.kind==MessageKind::ListLogs?LogReadKind::List:request.kind==MessageKind::ReadLogSummary?LogReadKind::Summary:request.kind==MessageKind::DeleteLog?LogReadKind::Delete:LogReadKind::Records;
             auto* logs=screen_resources_.work.forLogs();
             if(logs && logs->begin(read)) {
-                has_read_=true; read_prepared_=false; read_request_id_=request.request_id;
+                has_read_=true; read_prepared_=false; read_request_id_=request.request_id;statistics_progress_at_=taskTimeMs();
                 const auto log=log_writer_.snapshot(); read_barrier_session_=log.session_id; read_barrier_=log.accepted;
                 state_.busy=true; ++state_.revision; result.status=OperationStatus::Ok;
             }
@@ -590,8 +591,21 @@ void StorageTask::stepLogRead() {
             else { flushLog(true); return; }
         } else read_prepared_=true;
     }
-    if(!screen_resources_.work.logs().done()) screen_resources_.work.logs().step(&log_writer_);
-    if(!screen_resources_.work.logs().done()) return;
+    auto& reader=screen_resources_.work.logs();
+    const bool statistics=reader.result().request.kind==LogReadKind::Statistics;
+    const auto start=monotonicMicros();
+    for(unsigned n=0;!reader.done();++n) {
+        reader.step(&log_writer_);
+        if(!statistics || n+1>=config::LogStatisticsStepsPerLoop || monotonicMicros()-start>=config::LogStatisticsBudgetUs)break;
+    }
+    if(!reader.done()) {
+        if(statistics && taskTimeMs()-statistics_progress_at_>=config::LogStatisticsProgressMs) {
+            AppNotification progress{};progress.source=TaskId::Storage;progress.kind=MessageKind::LogStatisticsProgress;
+            progress.payload.log_progress=reader.progress();
+            if(sendSpeculative(notifications_,progress)==SpeculativeResult::Queued)statistics_progress_at_=taskTimeMs();
+        }
+        return;
+    }
     has_read_=false; state_.busy=false; ++state_.revision;
     state_.log=log_writer_.snapshot();
     auto& completion = replies_.beginCompletion(); completion.source=TaskId::Storage; completion.request_id=read_request_id_;
@@ -654,6 +668,14 @@ void StorageTask::run() {
         }
         if(!usb_mode_ && !replies_.returnPending() && !hasJob() && !replies_.completionPending() && !has_read_) stepMap();
         if (usb_mode_) {
+            const auto io=usb_.takeActivity();
+            const bool active=io.active || sd_depth_!=0;
+            if(io.accesses || active!=state_.sd.active) {
+                state_.sd.access_id+=io.accesses;
+                state_.sd.active=active;
+                if(!++state_.sd.revision)++state_.sd.revision;
+                sd_dirty_=true;notifyActivity();
+            }
             if(!replies_.returnPending() && !hasJob() && !has_read_ && !replies_.completionPending()) stepUsbExport();
             const auto view = usb_.snapshot();
             if (!(view == state_.usb)) { state_.usb = view; ++state_.revision; usb_dirty_ = true; }
@@ -665,7 +687,8 @@ void StorageTask::run() {
         }
         notifyActivity();
         notify();
-        vTaskDelay(pdMS_TO_TICKS(5));
+        const bool statistics=has_read_ && screen_resources_.work.logs().result().request.kind==LogReadKind::Statistics;
+        vTaskDelay(pdMS_TO_TICKS(statistics?1:5));
     }
 }
 

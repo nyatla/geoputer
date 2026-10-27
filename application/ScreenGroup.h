@@ -15,19 +15,23 @@ inline ScreenGroup screenGroup(ScreenId screen) {
 inline void prepareScreenView(UiData& data, ScreenId target, ScreenId previous) {
     if (isLogBrowser(target)) {
         auto& view=data.editBrowse();
-        if (target==ScreenId::Logs && previous!=ScreenId::LogDetail) {
+        if (target==ScreenId::Logs && !isLogBrowser(previous)) {
             view={};view.summary.first_utc=view.summary.last_utc=UINT64_MAX;view.loading=true;
         } else if(target==ScreenId::Logs) {
             view.loading=false;view.error=LogReadError::None;
-        } else if (target==ScreenId::LogDetail && previous==ScreenId::Logs) {
-            view.point={};view.point_loaded=false;view.index=view.target=0;view.playing=false;
-            view.error=LogReadError::None;view.summary={};view.summary.first_utc=view.summary.last_utc=UINT64_MAX;view.loading=true;
+        } else if (target==ScreenId::LogProperties && previous==ScreenId::Logs) {
+            view.point={};view.point_loaded=false;view.index=view.target=0;
+            view.map_mode=view.playing=false;view.error=LogReadError::None;
+            view.summary={};view.summary.first_utc=view.summary.last_utc=UINT64_MAX;view.loading=true;view.statistics_ready=false;view.statistics={};
+        } else if(target==ScreenId::LogProperties || target==ScreenId::LogStatistics) {
+            view.loading=false;view.error=LogReadError::None;
         } else if (target==ScreenId::LogPoint) {
             view.loading=!view.point_loaded;
+            if(previous==ScreenId::LogStatistics && view.point_loaded)view.error=LogReadError::None;
         }
         if(target!=ScreenId::LogPoint) {
             view.playing=false;
-            if(previous==ScreenId::LogPoint) {view.loading=false;if(view.point_loaded)view.target=view.index;}
+            if(previous==ScreenId::LogPoint && view.point_loaded)view.target=view.index;
         }
         ++view.revision;
     } else if (target==ScreenId::Settings ? !data.hasDatasets() :

@@ -107,13 +107,23 @@ bool Application::setScreen(ScreenId target, uint32_t action_id, ActionResult ac
     ui_data_dirty_ = data_.revision != sent_revision;
     if (action_id) last_processed_action_ = action_id;
     Console.printf("[APP] screen=%s generation=%lu action=%lu stack_free=%u\n",
-                  target==ScreenId::Menu ? "Menu" : target==ScreenId::Map ? "Map" : target == ScreenId::LivePlace ? "LivePlace" : target == ScreenId::Boot ? "Boot" : target==ScreenId::Logs?"Logs":target==ScreenId::LogDetail?"LogDetail":target==ScreenId::LogPoint?"LogPoint":target==ScreenId::GpsLogger?"GpsLogger":target==ScreenId::UsbStorage?"UsbStorage":"Settings",
+                  target==ScreenId::Menu ? "Menu" : target==ScreenId::Map ? "Map" : target == ScreenId::LivePlace ? "LivePlace" : target == ScreenId::Boot ? "Boot" : target==ScreenId::Logs?"Logs":target==ScreenId::LogPoint?"LogPoint":target==ScreenId::LogProperties?"LogProperties":target==ScreenId::LogStatistics?"LogStatistics":target==ScreenId::GpsLogger?"GpsLogger":target==ScreenId::UsbStorage?"UsbStorage":"Settings",
                   static_cast<unsigned long>(generation_), static_cast<unsigned long>(action_id),
                   static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)));
     return true;
 }
 
 void Application::handleNotification(const AppNotification& event) {
+    if(event.source==TaskId::Storage && event.kind==MessageKind::LogStatisticsProgress) {
+        const auto& progress=event.payload.log_progress;
+        if(screen_==ScreenId::LogStatistics && data_.hasBrowse() && progress.token==browse_waiting_ &&
+           progress.screen_generation==generation_ && !browse_cancel_) {
+            auto& view=data_.editBrowse();view.statistics.processed=progress.processed;
+            view.statistics.elapsed_ms=progress.elapsed_ms;view.statistics_total=progress.total;
+            ++data_.revision;ui_data_dirty_=true;
+        }
+        return;
+    }
     if(event.source==TaskId::Storage && event.kind==MessageKind::MapCompleted) {completeMap(event.payload.map);return;}
     if(event.source==TaskId::Storage && event.kind==MessageKind::DatasetProgress) {
         if(dataset_applying_ && dataset_waiting_ && data_.hasDatasets() && event.payload.index_progress.token==dataset_waiting_) {
@@ -338,8 +348,9 @@ void Application::readUiContent() {
                        action.screen_generation == generation_ && content.screen_generation == generation_ &&
                        ((screen_ == ScreenId::Boot && data_.boot.complete && action.target == ScreenId::LivePlace) ||
                         (rootScreenTransition(screen_, content.page, action.target) && !data_.browse().deleting) ||
-                        (screen_==ScreenId::LogDetail && action.target==ScreenId::Logs) ||
-                        (screen_==ScreenId::LogPoint && action.target==ScreenId::LogDetail));
+                        (screen_==ScreenId::LogProperties && action.target==ScreenId::Logs) ||
+                        (screen_==ScreenId::LogPoint && action.target==ScreenId::LogProperties) ||
+                        (screen_==ScreenId::LogStatistics && action.target==(data_.browse().statistics_from_point?ScreenId::LogPoint:ScreenId::LogProperties)));
     if (valid && action.action_id != last_processed_action_) {
         if (!setScreen(action.target, action.action_id, ActionResult::Applied)) ui_changed_ = true;
     } else {

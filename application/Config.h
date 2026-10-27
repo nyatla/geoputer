@@ -10,6 +10,10 @@
 
 namespace geoputer::config {
 inline constexpr bool DetailedDiagnostics = REVERSEGEOPUTER_DIAGNOSTICS != 0;
+inline constexpr unsigned LogStatisticsBatchRecords = 8;
+inline constexpr unsigned LogStatisticsStepsPerLoop = 32;
+inline constexpr uint32_t LogStatisticsBudgetUs = 2000;
+inline constexpr uint32_t LogStatisticsProgressMs = 200;
 
 
 // Cardputer ADV EXT pins reserved for disabling the unused Mesh Kit radio.

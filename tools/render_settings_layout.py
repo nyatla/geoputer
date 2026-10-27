@@ -255,12 +255,13 @@ def main():
                 with Image.open(ppm) as source_image:
                     image = source_image.convert("RGB")
                 if mode in ("about", "about-busy"):
-                    about_frames.append(image.tobytes())
+                    stable=image.copy();stable.paste((0,0,0),(156,0,240,16))
+                    about_frames.append(stable.tobytes())
                 stem = f"settings-{language}-{mode}"
                 image.save(output / f"{stem}.png")
                 image.resize((960, 540), Image.Resampling.NEAREST).save(output / f"{stem}-preview.png")
             print(f"PASS: {language}, {len(modes)} scenes, native font pixels and text bounds")
-        assert all(frame == about_frames[0] for frame in about_frames), "About changed with language or storage activity"
+        assert all(frame == about_frames[0] for frame in about_frames), "About content outside the SD/battery overlay changed with language or storage activity"
         assert license_frames[0] == license_frames[1], "Language changes license framebuffers"
         if args.license_baseline:
             assert license_frames[0] == args.license_baseline.read_bytes(), "License display differs from the original"

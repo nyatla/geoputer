@@ -81,7 +81,7 @@ void readExisting(uint8_t drive) {
     check(reader->begin(request),"accept existing log list");while(!reader->step())delay(1);
     check(reader->result().error==LogReadError::None,"read existing log directory without changes");
     if(!reader->result().count) {Serial.println("[BROWSE-EXISTING] EMPTY");return;}
-    std::snprintf(request.name,sizeof(request.name),"%s",reader->result().data.names[0]);
+    std::snprintf(request.name,sizeof(request.name),"%s",reader->result().data.list.names[0]);
     request.kind=LogReadKind::Summary;check(reader->begin(request),"existing summary request");reader->step();
     if(reader->result().error!=LogReadError::None) {
         Serial.printf("[BROWSE-EXISTING] name=%s error=%u\n",request.name,static_cast<unsigned>(reader->result().error));return;

@@ -204,9 +204,9 @@ def main():
                 image = source.convert("RGB")
             assert image.size == (240, 135)
             assert len(image.getcolors(256)) <= 9
-            assert image.getpixel((124, 2)) == ((0, 255, 0) if mode not in ("reload", "unprepared") else (255, 255, 0) if mode == "reload" else (123, 125, 123))
-            if mode in ("sd-read", "sd-write", "reload", "dictionary-read"):
-                assert image.getpixel((152, 2)) == (0, 0, 255)
+            assert image.getpixel((124, 2)) == (0, 0, 0)  # RG has been removed.
+            active = mode in ("sd-read", "sd-write", "reload", "dictionary-read")
+            assert image.getpixel((163, 2)) == ((255, 255, 255) if active else (123, 125, 123))
             if mode in ("sd-error", "gps-error"):
                 assert image.getpixel((0, 107)) == (255, 0, 0)
                 assert image.getpixel((0, 119)) == (255, 0, 0)

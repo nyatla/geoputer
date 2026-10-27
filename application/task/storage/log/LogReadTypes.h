@@ -2,10 +2,11 @@
 #include <cstddef>
 #include <cstdint>
 #include "../../gps/GpsTypes.h"
+#include "LogStatistics.h"
 
 namespace geoputer {
 constexpr unsigned LogListRows=6, LogReadCount=10, LogNameBytes=48;
-enum class LogReadKind : uint8_t { List, Summary, Records, Delete };
+enum class LogReadKind : uint8_t { List, Summary, Records, Delete, Statistics };
 enum class LogListDirection : uint8_t { Newest, Older, Newer, FromAnchor };
 enum class LogReadError : uint8_t { None, Io, InvalidName, Header, Unsupported, Corrupt, Range, Changed, Cancelled, NoCard, SaveFailed, Active, Unconfirmed, DeleteFailed, NotFound };
 struct LogSummary {
@@ -22,6 +23,12 @@ struct LogReadRequest {
     bool confirmed;
     char name[LogNameBytes], anchor[LogNameBytes];
 };
+struct LogFileList {
+    char names[LogListRows][LogNameBytes];
+    uint32_t records[LogListRows];
+    uint32_t total_files, first_index;
+};
+static_assert(sizeof(LogFileList)<=LogReadCount*32,"Directory metadata shares the existing record payload");
 struct LogReadReply {
     LogReadRequest request;
     LogSummary summary;
@@ -29,7 +36,7 @@ struct LogReadReply {
     LogReadError error;
     uint8_t count, active_mask;
     bool has_newer, has_older, eof;
-    union { uint8_t records[LogReadCount][32]; char names[LogListRows][LogNameBytes]; } data;
+    union { uint8_t records[LogReadCount][32]; LogFileList list; LogStatistics statistics; } data;
 };
 inline const char* logReadErrorName(LogReadError error) {
     switch(error) {
@@ -53,8 +60,13 @@ inline const char* logReadErrorName(LogReadError error) {
 }
 struct LogBrowserView {
     LogSummary summary;
+    LogSummary statistics_source{};
+    LogStatistics statistics{};
     GpsFix point;
+    bool statistics_ready=false, statistics_from_point=false;
+    uint32_t statistics_total=0, failed_record=0;
     uint32_t revision, index, target, page;
+    uint32_t total_files=0, list_records[LogListRows]{};
     char names[LogListRows][LogNameBytes], name[LogNameBytes];
     LogReadError error;
     uint8_t count, selected, active_mask;

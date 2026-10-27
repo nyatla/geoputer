@@ -1,10 +1,14 @@
 #include "LogReader.h"
+#include "../../../utils/ElapsedTime.h"
+#include "../../../Config.h"
 #include <cerrno>
+#include <algorithm>
 #include <cctype>
 #include <cstring>
 #include <sys/stat.h>
 
 namespace geoputer {
+static_assert(config::LogStatisticsBatchRecords>0 && config::LogStatisticsBatchRecords<=LogReadCount,"Statistics batch must fit the shared record payload");
 bool validLogName(const char* name) {
     const auto length=strnlen(name,LogNameBytes);
     if(length<9 || length>=LogNameBytes || std::strcmp(name+length-8,".gps.dat") || std::strstr(name,"..")) return false;
@@ -36,6 +40,7 @@ bool LogReader::begin(const LogReadRequest& request) {
 }
 void LogReader::fail(LogReadError error) {
     if(directory_handle_) { SdAccessScope access(observer_); closedir(directory_handle_); directory_handle_=nullptr; }
+    if(file_.opened()) { SdAccessScope access(observer_); file_.close(); }
     result_.error=error; done_=true;
 }
 void LogReader::cancel() {
@@ -57,18 +62,20 @@ const std::string& LogReader::pathFor(const char* name) {
 void LogReader::finishList(LogWriter* writer) {
     closedir(directory_handle_); directory_handle_=nullptr;
     const auto direction=result_.request.direction;
-    const auto rows=result_.request.count?result_.request.count:LogListRows;
-    if(direction!=LogListDirection::FromAnchor)
-        result_.has_newer=direction==LogListDirection::Older || (direction==LogListDirection::Newer && eligible_>rows);
-    result_.has_older=direction==LogListDirection::Newer || eligible_>rows;
+    auto& list=result_.data.list;
+    list.first_index=direction==LogListDirection::Newest?0:
+        direction==LogListDirection::Newer?eligible_-result_.count:list.total_files-eligible_;
+    result_.has_newer=list.first_index>0;
+    result_.has_older=list.first_index+result_.count<list.total_files;
     if(writer && writer->hasRetainedSession()) {
         for(unsigned n=0;n<result_.count;++n)
-            if(pathFor(result_.data.names[n])==writer->path()) result_.active_mask|=1u<<n;
+            if(pathFor(result_.data.list.names[n])==writer->path()) result_.active_mask|=1u<<n;
     }
     done_=true;
 }
 bool LogReader::step(LogWriter* writer) {
     if(done_) return true;
+    if(result_.request.kind==LogReadKind::Statistics) { stepStatistics(writer); return done_; }
     if(result_.request.kind==LogReadKind::Delete) { deleteTarget(writer); return true; }
     SdAccessScope access(observer_);
     const auto rows=result_.request.count?result_.request.count:LogListRows;
@@ -84,6 +91,13 @@ bool LogReader::step(LogWriter* writer) {
         struct stat info{};
         if(stat(pathFor(entry->d_name).c_str(),&info)) { fail(LogReadError::Io); return true; }
         if(!S_ISREG(info.st_mode)) continue;
+        auto& list=result_.data.list;
+        ++list.total_files;
+        // FAT32 sizes may be exposed through a signed 32-bit off_t.
+        const uint64_t bytes=sizeof(info.st_size)==sizeof(uint32_t)?static_cast<uint32_t>(info.st_size):
+            info.st_size>0?static_cast<uint64_t>(info.st_size):0;
+        const uint32_t records=bytes<LogHeaderBytes?0:static_cast<uint32_t>(
+            std::min<uint64_t>((bytes-LogHeaderBytes)/LogRecordBytes,UINT32_MAX));
         const auto direction=result_.request.direction;
         if(direction!=LogListDirection::Newest) {
             const int cmp=order(entry->d_name,result_.request.anchor);
@@ -92,17 +106,22 @@ bool LogReader::step(LogWriter* writer) {
         }
         ++eligible_;
         auto& count=result_.count;
-        auto& names=result_.data.names;
+        auto& names=result_.data.list.names;
         if(count==rows) {
             if(direction==LogListDirection::Newer) {
                 if(order(entry->d_name,names[0])>=0) continue;
                 std::memmove(names[0],names[1],(rows-1)*LogNameBytes);
+                std::memmove(list.records,list.records+1,(rows-1)*sizeof(uint32_t));
             } else if(order(entry->d_name,names[count-1])<=0) continue;
             --count;
         }
         unsigned position=0;
         while(position<count && order(names[position],entry->d_name)>0) ++position;
-        if(position<count) std::memmove(names[position+1],names[position],(count-position)*LogNameBytes);
+        if(position<count) {
+            std::memmove(names[position+1],names[position],(count-position)*LogNameBytes);
+            std::memmove(list.records+position+1,list.records+position,(count-position)*sizeof(uint32_t));
+        }
+        list.records[position]=records;
         std::memcpy(names[position],entry->d_name,std::strlen(entry->d_name)+1); ++count;
     }
     return false;
@@ -173,5 +192,59 @@ void LogReader::readTarget(LogWriter* writer) {
     } while(false);
     if(!active && !file.close() && result_.error==LogReadError::None) result_.error=LogReadError::Io;
     done_=true;
+}
+
+LogStatisticsProgress LogReader::progress() const {
+    return {result_.request.token,result_.request.screen_generation,statistics_.value.processed,
+        result_.summary.records,statistics_.value.elapsed_ms};
+}
+void LogReader::stepStatistics(LogWriter* writer) {
+    const auto step_start=monotonicMicros();
+    if(!started_) {
+        statistics_={};statistics_started_=step_start;
+        readTarget(writer); // Validate header and endpoints; capture the saved prefix once.
+        if(result_.error!=LogReadError::None)return;
+        started_=true;done_=false;
+        if(result_.request.session_id && result_.request.session_id!=result_.summary.session_id) {
+            fail(LogReadError::Changed);return;
+        }
+    }
+    auto& value=statistics_.value;
+    const auto remaining=result_.summary.records-value.processed;
+    const unsigned count=std::min<uint32_t>(remaining,config::LogStatisticsBatchRecords);
+    if(count) {
+        SdAccessScope access(observer_);
+        const auto read_start=monotonicMicros();
+        const auto offset=LogHeaderBytes+uint64_t(value.processed)*LogRecordBytes;
+        bool ok=false;
+        if(writer && writer->hasRetainedSession() && writer->path()==path_) {
+            ok=writer->readSaved(offset,result_.data.records[0],count*LogRecordBytes,result_.summary.session_id);
+        } else {
+            if(!file_.opened()) {
+                uint64_t bytes=0;uint8_t header[LogHeaderBytes];
+                if(!file_.openRead(path_) || !file_.size(bytes)) {fail(LogReadError::Io);return;}
+                if(bytes<result_.summary.bytes || !file_.read(header,sizeof(header)) || !validLogHeader(header) ||
+                   logGet(header+16,8)!=result_.summary.session_id) {fail(LogReadError::Changed);return;}
+                if(!file_.seek(offset)) {fail(LogReadError::Io);return;}
+            }
+            ok=file_.read(result_.data.records[0],count*LogRecordBytes);
+        }
+        value.read_us+=monotonicMicros()-read_start;
+        if(!ok) {fail(LogReadError::Io);return;}
+        for(unsigned n=0;n<count;++n) {
+            GpsFix fix{};const auto decode_start=monotonicMicros();
+            const bool valid=decodeLogRecord(result_.data.records[n],fix);
+            value.decode_us+=monotonicMicros()-decode_start;
+            if(!valid) {result_.failed_record=value.processed;fail(LogReadError::Corrupt);return;}
+            const auto math_start=monotonicMicros();statistics_.add(fix);
+            value.math_us+=monotonicMicros()-math_start;
+        }
+    }
+    value.elapsed_ms=(monotonicMicros()-statistics_started_)/1000;
+    value.max_step_us=std::max<uint32_t>(value.max_step_us,monotonicMicros()-step_start);
+    if(value.processed==result_.summary.records) {
+        if(file_.opened() && !file_.close()) {fail(LogReadError::Io);return;}
+        result_.data.statistics=value;done_=true;
+    }
 }
 } // namespace geoputer

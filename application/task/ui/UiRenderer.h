@@ -14,6 +14,8 @@ public:
     void draw(const UiModel& model);
 
 private:
+    void present(const UiModel& model,UiLanguage language);
+    void drawHeaderStatus(const UiModel& model);
     void drawMap(const UiModel& model);
     void drawScreenGuide(const UiModel& model);
     void drawKeyArrow(int x, int y, UiKey direction, bool enabled);

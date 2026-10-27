@@ -15,6 +15,13 @@ int main() {
         HostUSB::present=HostUSB::mounted=true;
         check(backend.begin(spi),"raw SD init");
         auto& msc=*USBMSC::instance;
+        uint8_t sample[512]{};
+        check(msc.read(0,0,sample,512)==512,"PC read for activity");
+        auto activity=backend.takeActivity();check(activity.accesses==1 && !activity.active,"finished PC read is retained as one pulse");
+        check(!backend.takeActivity().accesses,"activity count is consumed once");
+        check(msc.write(0,0,sample,512)==512,"PC write for activity");
+        check(backend.takeActivity().accesses==1,"PC write has the same activity path");
+        check(msc.read(3,0,sample,0)==0 && !backend.takeActivity().accesses,"empty request never lights the SD icon");
         check(!backend.takeLocal() && !usb_test::mounts,"mounted PC cannot be bypassed by a local request");
         check(saveBootMode(BootMode::UsbStorage),"persist USB mode before ownership tests");
         check(msc.start_stop(0,false,true) && backend.snapshot().ejected,"safe removal is acknowledged after SD sync");
@@ -23,6 +30,7 @@ int main() {
         const auto reads=usb_test::reads;
         check(msc.read(0,0,block,512)==-1 && usb_test::reads==reads && !backend.snapshot().io_error,
               "stray raw reads never touch a locally mounted filesystem");
+        check(!backend.takeActivity().accesses,"locally owned raw request has no activity");
         HostUSB::mounted=true;
         check(!msc.start_stop(0,true,true) && !msc.media,"reconnect/load cannot expose a locally owned card");
         check(!backend.exitToLogger(),"local ownership cannot reboot before closing its files");
@@ -37,7 +45,9 @@ int main() {
         auto permission=release.get_future().share();
         usb_test::on_read=[&]{entered.set_value();permission.wait();};
         auto read=std::async(std::launch::async,[&]{return msc.read(0,0,block,512);});
-        entered.get_future().wait();HostUSB::mounted=false;
+        entered.get_future().wait();
+        activity=backend.takeActivity();check(activity.accesses==1 && activity.active,"in-flight PC IO remains active after the pulse is consumed");
+        HostUSB::mounted=false;
         auto local=std::async(std::launch::async,[&]{return backend.takeLocal();});
         const bool waited=local.wait_for(std::chrono::milliseconds(30))==std::future_status::timeout;
         release.set_value();check(read.get()==512,"in-flight read completes");check(local.get() && waited,"local mount waits for in-flight raw IO");

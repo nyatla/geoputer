@@ -93,8 +93,8 @@ int32_t UsbStorage::transfer(uint32_t lba, uint32_t offset, void* data, uint32_t
     int32_t result = -1;
     if (ready_ && !ejected_ && !stopping_ && !local_)
         result = transferUsbBlocks(sectors_, lba, offset, data, size, writing,
-            [&](uint8_t* p, uint32_t sector) { return sd_read_raw(drive_, p, sector); },
-            [&](const uint8_t* p, uint32_t sector) { return sd_write_raw(drive_, const_cast<uint8_t*>(p), sector); }, scratch_);
+            [&](uint8_t* p, uint32_t sector) { return sectorIo([&] {return sd_read_raw(drive_, p, sector);}); },
+            [&](const uint8_t* p, uint32_t sector) { return sectorIo([&] {return sd_write_raw(drive_, const_cast<uint8_t*>(p), sector);}); }, scratch_);
     if (result < 0 && !local_ && !ejected_ && !stopping_) error_ = true;
     xSemaphoreGive(mutex_);
     return result;

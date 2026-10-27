@@ -1,4 +1,5 @@
 #include "UiRenderer.h"
+#include "SdCardIcon.h"
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
@@ -24,9 +25,9 @@ void UiRenderer::drawUsb(const UiModel& model) {
     frame_.fillSprite(TFT_BLACK);
     char line[80];
     if(page==UsbPage::Menu || page==UsbPage::WaitEject) {
-        shell("USB STORAGE","[ENTER] SELECT  [ESC] EXIT");
+        shell("USB","[ENTER] SELECT  [ESC] EXIT");
         const char* state=!usb.ready?"NO SD":usb.io_error?"SD ERROR":"SD READY";
-        text(236-8*std::strlen(state),8,state,!usb.ready||usb.io_error?TFT_RED:TFT_GREEN);
+        text(sd_icon::HeaderRight-8*std::strlen(state),8,state,!usb.ready||usb.io_error?TFT_RED:TFT_GREEN);
         large(12,31,ja?(usb.ejected?"取り外し済み":usb.connected?"接続中":"未接続"):
                        (usb.ejected?"Safely ejected":usb.connected?"PC connected":"Not connected"),
               usb.connected&&!usb.ejected?TFT_GREEN:TFT_YELLOW);
@@ -50,19 +51,18 @@ void UiRenderer::drawUsb(const UiModel& model) {
     }
     if(page==UsbPage::Files) {
         shell("EXPORT","[ENTER] SELECT  [ESC] BACK");
-        std::snprintf(line,sizeof(line),"%u/%u",files.count?selected+1:0,files.count);text(236-8*std::strlen(line),8,line,TFT_LIGHTGREY);
+        std::snprintf(line,sizeof(line),"%u/%u",files.count?selected+1:0,files.count);text(sd_icon::HeaderRight-8*std::strlen(line),8,line,TFT_LIGHTGREY);
         large(12,28,ja?"ログを選択":"Select a log");
-        if(files.loading)text(12,56,"LOADING...",TFT_YELLOW);
-        else if(files.error!=LogReadError::None)text(4,56,logReadErrorName(files.error),TFT_RED);
-        else if(!files.count)large(12,56,ja?"ログがありません":"No logs found",TFT_LIGHTGREY);
-        else for(unsigned n=0;n<files.count && n<4;++n) {
+        if(!files.loading && files.error!=LogReadError::None)text(4,56,logReadErrorName(files.error),TFT_RED);
+        else if(!files.loading && !files.count)large(12,56,ja?"ログがありません":"No logs found",TFT_LIGHTGREY);
+        else if(!files.loading)for(unsigned n=0;n<files.count && n<4;++n) {
             if(n==selected)text(4,52+n*18,">",TFT_CYAN);
             char name[28];std::snprintf(name,sizeof(name),"%.27s",files.names[n]);
             text(20,52+n*18,name,n==selected?TFT_CYAN:TFT_WHITE);
         }
     } else if(page==UsbPage::Format) {
         shell("EXPORT","[ENTER] START  [ESC] BACK");
-        std::snprintf(line,sizeof(line),"%u/3",selected+1);text(212,8,line,TFT_LIGHTGREY);
+        std::snprintf(line,sizeof(line),"%u/3",selected+1);text(sd_icon::HeaderRight-24,8,line,TFT_LIGHTGREY);
         large(12,28,ja?"形式を選択":"Select a format");
         const char* name=model.usbFile()<files.count?files.names[model.usbFile()]:"";
         std::snprintf(line,sizeof(line),"%.29s",name);text(4,49,line,TFT_LIGHTGREY);
@@ -73,7 +73,7 @@ void UiRenderer::drawUsb(const UiModel& model) {
         }
     } else if(page==UsbPage::Progress || page==UsbPage::Busy) {
         shell("EXPORT","PLEASE WAIT");
-        text(212,8,exportFormatName(job.format),TFT_CYAN);
+        text(sd_icon::HeaderRight-24,8,exportFormatName(job.format),TFT_CYAN);
         large(12,31,ja?(page==UsbPage::Progress?"書き出し中":"準備中"):
                              (page==UsbPage::Progress?"Exporting":"Preparing"),TFT_YELLOW);
         std::snprintf(line,sizeof(line),"%.29s",job.name);text(4,53,line);
@@ -86,7 +86,7 @@ void UiRenderer::drawUsb(const UiModel& model) {
             frame_.drawRect(12,98,216,8,TFT_DARKGREY);frame_.fillRect(13,99,214*std::min(percent,100u)/100,6,TFT_GREEN);
         }
     } else if(page==UsbPage::Complete) {
-        shell("EXPORT","[ENTER] BACK");text(212,8,exportFormatName(job.format),TFT_CYAN);
+        shell("EXPORT","[ENTER] BACK");text(sd_icon::HeaderRight-24,8,exportFormatName(job.format),TFT_CYAN);
         large(12,31,ja?"書き出し完了":"Export complete",TFT_GREEN);
         text(12,55,"/export/",TFT_LIGHTGREY);
         char name[ExportNameBytes];std::snprintf(name,sizeof(name),"%s%s",job.name,exportExtension(job.format));

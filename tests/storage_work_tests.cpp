@@ -80,9 +80,9 @@ int main() {
         allocations=0;track=true;
         check(reader.begin(list),"repeat list accepted");while(!reader.done())reader.step();
         track=false;
-        check(!allocations && reader.path_.data()==path && !std::memcmp(before.data.names,reader.result().data.names,sizeof(before.data.names)),
+        check(!allocations && reader.path_.data()==path && !std::memcmp(before.data.list.names,reader.result().data.list.names,sizeof(before.data.list.names)),
               "repeated scan has identical sorted names and no C++ path allocation");
-        list.kind=LogReadKind::Summary;std::strcpy(list.name,before.data.names[0]);
+        list.kind=LogReadKind::Summary;std::strcpy(list.name,before.data.list.names[0]);
         allocations=0;track=true;
         check(reader.begin(list),"summary accepted");while(!reader.done())reader.step();
         track=false;

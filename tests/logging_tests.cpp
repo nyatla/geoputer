@@ -86,7 +86,7 @@ void fileTests(const std::string& directory) {
     check(activity.depth==0,"all physical I/O scopes balanced");
 }
 void uiTests() {
-    for(auto screen:{ScreenId::GpsLogger,ScreenId::LivePlace,ScreenId::Map,ScreenId::Logs,ScreenId::LogDetail,ScreenId::Settings}) {
+    for(auto screen:{ScreenId::GpsLogger,ScreenId::LivePlace,ScreenId::Map,ScreenId::Logs,ScreenId::Settings}) {
         for(auto state:{RecordingState::Stopped,RecordingState::Starting,RecordingState::Recording,RecordingState::Paused}) {
             for(unsigned choice=0;choice<(state==RecordingState::Stopped?1u:2u);++choice) {
                 UiModel ui;UiData data{};data.settings=defaultSettings();data.storage.card_state=CardState::Mounted;

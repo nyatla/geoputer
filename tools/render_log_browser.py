@@ -24,6 +24,8 @@ int main(int argc,char** argv) {
     if(!renderer.begin(depth,std::getenv("GEOPUTER_PREVIEW_EXTERNAL") ? backing : nullptr,capacity))return 1;
     UiData data{}; data.settings=defaultSettings();data.settings.language=english?UiLanguage::English:UiLanguage::Japanese;data.storage.card_state=CardState::Mounted;
     data.settings.dataset=1;data.dataset.state=PlaceState::Ready;
+    data.editBrowse().total_files=60;
+    for(unsigned n=0;n<6;++n)data.editBrowse().list_records[n]=3527-n*100;
     data.editBrowse().revision=1;data.editBrowse().count=6;data.editBrowse().has_older=true;data.editBrowse().active_mask=1;
     for(unsigned n=0;n<6;++n)std::snprintf(data.editBrowse().names[n],LogNameBytes,"202610%02u_093012_0.gps.dat",16-n);
     std::strcpy(data.editBrowse().name,"20261016_093012_0.gps.dat");
@@ -34,9 +36,8 @@ int main(int argc,char** argv) {
     if(usb_mode){screen=ScreenId::UsbStorage;data.storage.usb.ready=true;}
     if(!std::strcmp(mode,"usb-error")){data.storage.usb.ready=false;data.storage.usb.io_error=true;}
     if(!std::strcmp(mode,"usb-ejected"))data.storage.usb.ejected=true;
-    if(!std::strcmp(mode,"detail")||!std::strcmp(mode,"long-name")||!std::strcmp(mode,"partial-tail"))screen=ScreenId::LogDetail;
     if(!std::strcmp(mode,"point")||!std::strcmp(mode,"unknown")||!std::strcmp(mode,"loading")||!std::strcmp(mode,"crc-error")||!std::strcmp(mode,"bounds"))screen=ScreenId::LogPoint;
-    if(!std::strcmp(mode,"empty")){data.editBrowse().count=0;data.editBrowse().has_older=false;}
+    if(!std::strcmp(mode,"empty")){data.editBrowse().total_files=0;data.editBrowse().count=0;data.editBrowse().has_older=false;}
     if(!std::strcmp(mode,"sd-error")){data.editBrowse().count=0;data.editBrowse().error=LogReadError::NoCard;}
     const bool delete_confirm=!std::strcmp(mode,"delete-confirm")||!std::strcmp(mode,"delete-selected")||!std::strcmp(mode,"delete-protected")||!std::strcmp(mode,"delete-short")||!std::strcmp(mode,"delete-longest");
     if(delete_confirm) {
@@ -48,7 +49,6 @@ int main(int argc,char** argv) {
     if(!std::strcmp(mode,"deleting")){data.editBrowse().loading=data.editBrowse().deleting=true;}
     if(!std::strcmp(mode,"delete-error")){data.editBrowse().error=LogReadError::DeleteFailed;data.editBrowse().active_mask=0;}
     if(!std::strcmp(mode,"long-name"))std::strcpy(data.editBrowse().name,"undated_0123456789abcdef_4294967295.gps.dat");
-    if(!std::strcmp(mode,"partial-tail"))data.editBrowse().summary.tail=7;
     data.editBrowse().point_loaded=true;
     std::strcpy(data.place[0],"千葉県 習志野市");std::strcpy(data.place[1],"鷺沼2丁目1番1号");data.place_state=PlaceState::Ready;
     data.editBrowse().index=data.editBrowse().target=123;
@@ -68,16 +68,32 @@ int main(int argc,char** argv) {
     const bool log_map=!std::strncmp(mode,"log-map",7);
     if(log_map) {screen=ScreenId::LogPoint;data.editBrowse().map_mode=true;}
     if(!std::strcmp(mode,"log-map-play"))data.editBrowse().playing=true;
-    if(!std::strcmp(mode,"detail-no-dataset")) {screen=ScreenId::LogDetail;data.settings.dataset=0;data.dataset.state=PlaceState::Unselected;}
+    if(!std::strcmp(mode,"point-no-dataset")) {screen=ScreenId::LogPoint;data.settings.dataset=0;data.dataset.state=PlaceState::Unselected;}
     if(!std::strcmp(mode,"log-map-loading"))data.editBrowse().loading=true;
     if(!std::strcmp(mode,"log-map-error"))data.map.error=map::Error::ReadError;
+    if(!std::strcmp(mode,"long-name"))std::strcpy(data.editBrowse().names[0],data.browse().name);
+    if(!std::strcmp(mode,"point-empty")) {screen=ScreenId::LogPoint;data.editBrowse().summary.records=0;data.editBrowse().point={};}
+    const bool properties=!std::strncmp(mode,"properties",10) || !std::strcmp(mode,"log-menu");
+    const bool stats=!std::strncmp(mode,"statistics",10);
+    if(properties)screen=ScreenId::LogProperties;
+    if(stats) {
+        screen=ScreenId::LogStatistics;
+        auto& view=data.editBrowse();view.statistics_total=100000;
+        if(!std::strcmp(mode,"statistics-loading")) {view.loading=true;view.statistics.processed=42800;view.statistics.elapsed_ms=1590;}
+        else if(!std::strcmp(mode,"statistics-error")) {view.error=LogReadError::Corrupt;view.failed_record=512;}
+        else {view.statistics_ready=true;view.statistics={};view.statistics.processed=100000;view.statistics.distance_m=12345.6;
+            view.statistics.has_speed=view.statistics.has_altitude=true;view.statistics.max_speed_kmh=98.4;
+            view.statistics.min_altitude_m=-12.3;view.statistics.max_altitude_m=123.4;view.statistics.elapsed_ms=3214;}
+    }
     UiModel model;model.setScreen({screen,DisplayMode::View,1,data,0,ActionResult::None});
+    if(!std::strcmp(mode,"log-menu"))model.keyPressed(UiKey::LogMenu,1);
     if(log_map) {
         map::FrameInfo info{};info.width=240;info.height=101;info.meters_per_pixel=11.132;
         auto& request=info.request;request.token=1;request.screen_generation=1;request.dataset_generation=data.dataset.generation;
         request.sample_seq=124;request.latitude=data.browse().point.latitude;request.longitude=data.browse().point.longitude;
         request.session=map::SessionId::Log;
         if(model.beginMapFrame(request,request.buffer)!=OperationStatus::Ok)throw std::runtime_error("log map begin");
+        std::memset(request.buffer.data,0,map::BoundaryBytes);
         map::BoundaryImageView image(request.buffer.data,240,101);
         for(unsigned y=0;y<101;++y)for(unsigned x=0;x<240;++x)
             if(x==53 || x==176 || y==63 || x+y==140)image.set(x,y,2);
@@ -98,7 +114,6 @@ int main(int argc,char** argv) {
         glyph(56,84,english?'C':U'取',!std::strcmp(mode,"usb-selected")?TFT_WHITE:TFT_CYAN);
         glyph(152,84,english?'E':U'終',!std::strcmp(mode,"usb-selected")?TFT_CYAN:TFT_WHITE);
     }
-    if(screen==ScreenId::LogDetail)glyph(20,97,english?'M':U'地',!std::strcmp(mode,"detail-no-dataset")?TFT_DARKGREY:TFT_WHITE);
     if(delete_confirm) {
         const bool short_name=!std::strcmp(mode,"delete-short");
         const int y=short_name?80:85;
@@ -138,7 +153,7 @@ def main():
     for name in sorted(set(re.findall(r'\bTFT_[A-Z]+\b',SCENE+renderer))):
         value=re.search(rf'\b{name}\s*=\s*(0x[0-9A-Fa-f]+)',enums)[1]
         colors.append(f'inline constexpr uint16_t {name}={value};')
-    modes=('usb','usb-screen','usb-selected','usb-error','usb-ejected','list','delete-confirm','delete-selected','delete-protected','delete-short','delete-longest','deleting','delete-error','detail','point','long-name','unknown','loading','crc-error','empty','sd-error','partial-tail','bounds','detail-no-dataset','log-map','log-map-play','log-map-loading','log-map-error')
+    modes=('properties', 'log-menu', 'statistics', 'statistics-loading', 'statistics-error', 'usb', 'usb-screen', 'usb-selected', 'usb-error', 'usb-ejected', 'list', 'delete-confirm', 'delete-selected', 'delete-protected', 'delete-short', 'delete-longest', 'deleting', 'delete-error', 'point-empty', 'point', 'long-name', 'unknown', 'loading', 'crc-error', 'empty', 'sd-error', 'bounds', 'point-no-dataset', 'log-map', 'log-map-play', 'log-map-loading', 'log-map-error')
     with tempfile.TemporaryDirectory(prefix='geoputer-browser-') as directory:
         work=Path(directory);(work/'M5GFX.h').write_text(ADAPTER+'\n'+'\n'.join(colors));(work/'scene.cpp').write_text(SCENE)
         sources=[ROOT/'application/task/ui'/f'{name}.cpp' for name in ('PixelFont','UiRenderer','UsbRenderer','UiModel','LicenseText','SettingsText','Shinonome')]
@@ -149,7 +164,7 @@ def main():
                 ppm=work/'screen.ppm'
                 with ppm.open('wb') as target:target.write(reference_frame(exe,mode,language))
                 with Image.open(ppm) as source: image=source.convert('RGB')
-                folder=args.output/('usb-storage' if mode.startswith('usb') else 'logs' if mode in ('list','empty','sd-error','delete-confirm','delete-selected','delete-protected','delete-short','delete-longest','deleting','delete-error') else 'log-detail')
+                folder=args.output/('usb-storage' if mode.startswith('usb') else 'logs' if mode in ('list','long-name','empty','sd-error','delete-confirm','delete-selected','delete-protected','delete-short','delete-longest','deleting','delete-error') else 'log-detail')
                 folder.mkdir(parents=True,exist_ok=True)
                 stem=f'log-browser-{mode}' if language=='ja' else f'log-browser-en-{mode}'
                 image.save(folder/f'{stem}.png')

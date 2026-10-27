@@ -38,7 +38,7 @@ void testKeyBindings() {
         for(unsigned row=0;row<i;++row)ui.keyPressed(UiKey::Down,1);
         ui.keyPressed(UiKey::Enter,2);check(ui.snapshot().action.target==MenuScreens[i].screen,"menu selection equals shortcut");
     }
-    for(auto child:{ScreenId::LogDetail,ScreenId::LogPoint,ScreenId::Settings}) {
+    for(auto child:{ScreenId::LogPoint,ScreenId::Settings}) {
         UiModel ui;ui.setScreen({child,DisplayMode::View,1,data,0,ActionResult::None});
         if(child==ScreenId::Settings)ui.keyPressed(UiKey::Enter,1);
         for(char key:keys)ui.keyPressed(mapPhysicalKey(key,false),2);

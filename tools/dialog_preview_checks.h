@@ -1,6 +1,7 @@
 #pragma once
 
 #include "task/ui/UiRenderer.h"
+#include "task/ui/SdCardIcon.h"
 #include <cstring>
 #include <stdexcept>
 
@@ -26,6 +27,8 @@ inline void renderAndCheckDialog(geoputer::UiRenderer& renderer, geoputer::UiMod
     if (model.dialog().kind() == DialogKind::FormatSd || model.dialog().kind() == DialogKind::ResetSettings ||
         model.dialog().kind() == DialogKind::EnterUsbMode || model.dialog().kind() == DialogKind::ExitUsbMode) {
         top = 34; bottom = 106;
+    } else if(model.dialog().kind()==DialogKind::LogShortcut || model.dialog().kind()==DialogKind::GpsControl) {
+        top=34;bottom=103;
     } else if (model.dialog().kind() == DialogKind::DeleteLog &&
                std::strlen(model.data().browse().names[model.snapshot().selected_setting]) > 27) {
         top = 33; bottom = 107;
@@ -35,7 +38,8 @@ inline void renderAndCheckDialog(geoputer::UiRenderer& renderer, geoputer::UiMod
             throw std::runtime_error("modal must have white one-pixel horizontal rules");
     for (int y = 0; y < 121; ++y) for (int x = 0; x < 240; ++x) {
         if (x >= 8 && x < 232 && y >= top && y <= bottom) continue;
-        const auto expected = original[y * 240 + x] == TFT_BLACK ? TFT_BLACK : TFT_DARKGREY;
+        const bool status=y<16 && x>=sd_icon::ReservedLeft;
+        const auto expected = status ? original[y*240+x] : original[y * 240 + x] == TFT_BLACK ? TFT_BLACK : TFT_DARKGREY;
         if (display.pixels[y * 240 + x] != expected)
             throw std::runtime_error("modal backdrop must preserve and dim the original screen");
     }
