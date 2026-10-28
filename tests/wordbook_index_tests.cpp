@@ -46,7 +46,7 @@ void testWordBookIndex(const std::string& dir,const std::string& map,const std::
     std::vector<std::string> actual,expected;
     const auto sample=count>66081?66082:count;
     check(reader.readStringSetByCode(sample,actual) && legacy.readStringSetByCode(sample,expected) && actual==expected,"sample name mismatch");
-    check(index_io.opens==1 && index_io.closes==1,"lookup must stream index with one handle");
+    check(index_io.opens==3 && index_io.closes==3,"lookup must close the index after each TI/TT/TM phase");
     std::cout<<"Wordbook index: "<<points.size()<<" names match; sample="<<sample
              <<" book_bytes="<<old_io.bytes<<"->"<<source_io.bytes<<" reads="<<old_io.reads<<"->"<<source_io.reads
              <<" seeks="<<old_io.seeks<<"->"<<source_io.seeks<<" index_bytes="<<index_io.bytes<<'\n';

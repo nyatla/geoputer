@@ -35,14 +35,21 @@ inline constexpr size_t MaxDatasetChunks = 1500;  // Inclusive; never fall back 
 inline constexpr int MapCacheSide = 128;          // uint32 pixels; 128 * 128 * 4 = 64 KiB.
 inline constexpr size_t FileReadBufferBytes = 4096; // Generic Reader default.
 inline constexpr size_t MapInitReadBufferBytes = 4096;
-inline constexpr size_t MapRectReadBufferBytes = 16384; // Rectangle fills only; measured against 4/8KiB.
+inline constexpr size_t MapRectReadBufferBytes = 4096; // GLC and index sequentially borrow the same UI workspace.
 inline constexpr size_t WordBookReadBufferBytes = 4096;
 inline constexpr size_t FileReadThroughSkipBytes = 4096; // Inclusive gap beyond buffered data; independent of buffer size; 0 disables.
 // Dataset index generation / streaming access format v1.
 inline constexpr size_t IndexReadBufferBytes = 4096;
+inline constexpr size_t MapNativePathBytes = 512; // UI back tail, separate from the 4 KiB read buffer.
+static_assert(MapRectReadBufferBytes <= IndexReadBufferBytes && WordBookReadBufferBytes <= IndexReadBufferBytes,
+              "GLC and Wordbook Readers must fit the shared UI read workspace");
 inline constexpr uint32_t IndexMinChunkBytes = 16384;
 inline constexpr uint32_t IndexGroupTargetBytes = 65536;
+// Whole-request stack cache; only requests exceeding 15 references need another scan.
+inline constexpr size_t MapReadGroupCacheEntries = 15;
 inline constexpr uint16_t IndexMaxDepth = 32; // Bounds recursive TI00 parsing during generation.
+// Per-phase stack references; never retained across TT/TM phases or searches.
+inline constexpr size_t WordBookReadPageCacheEntries = 32;
 inline constexpr size_t WordBookCacheEntries = 16;
 // Place lookup follows each changed dataset cell; no periodic throttle.
 // Independent boundary-map buffers; the 128x128 point cache is untouched.
@@ -68,6 +75,8 @@ static_assert(UiColorDepth == 4 || UiColorDepth == 16, "Supported UI frame forma
 static_assert(SdMaxOpenFiles >= 2, "Map header validation opens two readers");
 static_assert(MapCacheSide > 0 && FileReadBufferBytes > 0 && MapInitReadBufferBytes > 0 &&
               MapRectReadBufferBytes > 0 && WordBookReadBufferBytes > 0, "Read buffers must be nonempty");
+static_assert(WordBookReadPageCacheEntries > 0 && WordBookReadPageCacheEntries <= 32,
+              "Wordbook phase references must fit the reviewed stack budget");
 static_assert(WordBookCacheEntries > 0 && WordBookCacheEntries <= UINT8_MAX,
               "WordBook cache indices are eight bits");
 static_assert(ExportRecordsPerStep > 0 && ExportRecordsPerStep <= 16, "Export read buffer holds sixteen records");

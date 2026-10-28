@@ -1,4 +1,5 @@
 #include "task/storage/StorageWorkArea.h"
+#include "task/storage/StorageScreenResources.h"
 #include "task/storage/StorageReplies.h"
 #include "map/MapFrameReceiver.h"
 #include <atomic>
@@ -31,16 +32,36 @@ extern "C" int __wrap_fclose(FILE* file) {
     if(fail_close){fail_close=false;return EOF;}return result;
 }
 int main() {
+    {
+        map::CodeImageBuffer fixed{};StorageScreenResources resources(fixed);
+        auto& live=resources.live_map;auto& history=resources.log_map;
+        check(live.pixels==fixed.data() && history.pixels==fixed.data(),"one fixed map array with two logical session identities");
+        live.plan.source={0,0,1,1};live.plan.width=live.plan.height=1;
+        live.info.width=live.info.height=1;live.valid=true;fixed[0]=0x12345678;
+        map::Request r{};r.token=21;r.screen_generation=1;r.dataset_generation=9;r.latitude=35;r.longitude=140;
+        map::FixedBoundaryImage output;r.buffer={output.storageData(),output.Capacity,1};
+        live.info.request=r;
+        auto next=r;next.screen_generation=2;++next.token;
+        auto* job=resources.work.forMap();check(job && job->start(next,live) && !job->reading(),"fresh UI generation reuses a matching retained raster without SD");
+        while(!job->complete())job->step();
+        check(job->info().request.screen_generation==2 && job->info().region==fixed[0] && job->release(next),"cached frame transfers under the new screen identity");
+        allocations=0;track=true;
+        for(unsigned i=0;i<100;++i) {resources.selectMap(map::SessionId::Log);history.valid=true;resources.selectMap(map::SessionId::Live);live.reserve(fixed.size());}
+        track=false;
+        check(!allocations && !history.valid && live.pixels==fixed.data() && fixed[0]==0x12345678,"switching owners invalidates metadata, not storage, with zero allocations");
+        bool rejected=false;try {live.reserve(fixed.size()+1);}catch(const std::bad_alloc&){rejected=true;}
+        check(rejected && live.pixels==fixed.data(),"oversized raster cannot allocate a fallback");
+    }
     StorageWorkArea work;work.setDrive(0);
     check(work.activeLogs() && !work.activeMap(),"initial reader is live");
     LogReadRequest read{};read.kind=LogReadKind::List;read.token=22;
     check(work.logs().begin(read) && !work.forMap(),"unfinished reader excludes a map");
     work.logs().cancel();check(work.forMap(),"cancelled and closed reader permits map");
-    map::MapSession session;session.plan.width=240;session.plan.height=101;
+    map::CodeImageBuffer session_pixels{};map::MapSession session(session_pixels);session.plan.width=240;session.plan.height=101;
     session.plan.source={0,0,240,101};session.plan.grid_rows_per_pixel=1;
     session.plan.center_x=120;session.plan.center_y=50;
     session.reserve(240*101);session.valid=true;
-    std::fill_n(session.pixels.get(),240*101,0);
+    std::fill_n(session.pixels,240*101,0);
     map::Request request{};request.token=1;request.screen_generation=1;request.dataset_generation=1;
     map::FixedBoundaryImage output;request.buffer={output.storageData(),output.Capacity,1};
     session.info.request=request;session.info.width=240;session.info.height=101;
@@ -122,18 +143,19 @@ int main() {
 
     // A live index Reader prevents returning the buffer to UI or changing work.
     map::MapFrameReceiver receiver;
+    const auto retained_plan=session.plan;session.valid=false;
     request.buffer={};request.reuse=false;++request.token;
     check(receiver.begin(request,request.buffer),"lend UI pool to index Reader");
     auto* reading_job=work.forMap();check(reading_job && reading_job->start(request,session),"start borrowed index job");
     {
-        FileReadBuffer reader;reader.resize(4096,reading_job->indexReadBuffer());
+        FileReadBuffer reader;reader.resize(4096,reading_job->readBuffer());
         receiver.clear();std::fill_n(reader.data(),reader.size(),0x5a);
         auto other=request;other.buffer={};++other.token;map::BufferLease denied{};
         check(!reading_job->release(request) && !work.forLogs() && !receiver.begin(other,denied),
               "reader borrowing prevents cancellation return and UI pool reuse after screen leave");
     }
     check(reading_job->release(request) && receiver.discard(request),"return loan only after Reader destruction");
-    session.info.request=request;session.info.width=240;session.info.height=101;
+    session.plan=retained_plan;session.info.request=request;session.info.width=240;session.info.height=101;
     session.info.meters_per_pixel=1;session.valid=true;request.reuse=true;
     // Each update reuses two fixed UI arrays, including workspace replacement.
     uint8_t* slots[2]{};

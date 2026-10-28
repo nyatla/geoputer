@@ -175,9 +175,9 @@ void StorageTask::handle(const StorageRequest& request) {
                 screen_resources_.retainedMapBytes());
         }
     } else if(request.kind==MessageKind::CloseMapSession) {
-        auto& session=screen_resources_.session(request.payload.map.session);
         if(!screen_resources_.work.mapBusy()) {
-            if(session.belongs(request.payload.map))session.clear();
+            // UI detaches; Storage keeps the fixed raster and its pixel key.
+            // A new screen may render it again when the dataset/viewport match.
             result.status=OperationStatus::Ok;reportMapHeap("session-closed",request.payload.map.token);
         }
     } else if(request.kind==MessageKind::UsbExportOperation) {
@@ -387,7 +387,8 @@ void StorageTask::completeJob() {
         } else if (!state_.settings.dataset || (mounted_ && state_.card_state == CardState::Mounted)) {
             if(dataset_job)place=place_lookup_.prepare();
             else {
-                BorrowedReadBuffer work(place_request_.buffer.data,place_request_.work_bytes);
+                auto& bytes=placeReaderMemory(place_request_);
+                BorrowedReadBuffer work(bytes.data(),bytes.size());
                 place_lookup_.searchInto(place_request_,place,&work);
             }
         } else { place.request = place_request_; place.state = PlaceState::NoCard; place.dataset = place_lookup_.datasetInfo(); place.dataset.state = PlaceState::NoCard; }
@@ -628,9 +629,8 @@ void StorageTask::stepMap() {
         const auto request=map->info().request;
         const auto started=config::DetailedDiagnostics ? taskTimeMs() : 0;
         reportMapHeap("read-begin",request.token);
-        map->loaded(readBoundaryMap(DatasetCatalog{}.directory(state_.settings.dataset),
-            state_.settings.wordbook_language,request,drive_,this,
-            std::move(screen_resources_.session(request.session)),map->indexReadBuffer()));
+        map->loaded(readBoundaryMap(selected_dataset_,request,drive_,this,
+            std::move(screen_resources_.session(request.session)),map->readBuffer(),map->readFile(),map->pathBuffer()));
         if constexpr (config::DetailedDiagnostics) Console.printf("[MAP] read token=%lu error=%u elapsed_ms=%lu heap=%u\n",
             static_cast<unsigned long>(request.token),static_cast<unsigned>(map->info().error),
             static_cast<unsigned long>(taskTimeMs()-started),ESP.getFreeHeap());

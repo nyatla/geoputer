@@ -3,12 +3,17 @@
 #include <galuchat/wgsmap3_reader.hpp>
 #include "../dataset/DatasetIndex.h"
 namespace geoputer {
+class ObservedFileReaderFactory;
 // Holds one validated metadata summary, never an array of chunk entries.
 class DiskIndexedMapReader {
 public:
     DiskIndexedMapReader(DatasetMapIndex info,std::shared_ptr<const galuchat::ReaderFactory> map,
                          std::shared_ptr<const galuchat::ReaderFactory> index)
         : info_(info),map_(std::move(map)),index_(std::move(index)) {}
+    // Borrow lvalue factories for this synchronous Reader session.
+    DiskIndexedMapReader(DatasetMapIndex info,ObservedFileReaderFactory& map,
+                         ObservedFileReaderFactory& index)
+        :info_(info),file_map_(&map),file_index_(&index){}
     void readRect(const galuchat::Rect& target,uint32_t* pixels) const;
     // Nearest-neighbor decimation anchored at target.x/y, before edge extraction.
     // Caller supplies ceil(width/scale)*ceil(height/scale) uint32 pixels.
@@ -21,5 +26,7 @@ private:
     uint32_t value(size_t offset) const;
     DatasetMapIndex info_;
     std::shared_ptr<const galuchat::ReaderFactory> map_,index_;
+    const ObservedFileReaderFactory* file_map_=nullptr;
+    const ObservedFileReaderFactory* file_index_=nullptr;
 };
 }

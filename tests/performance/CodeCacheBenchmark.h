@@ -46,7 +46,7 @@ template<class Print> void runCodeCacheBenchmark(uint8_t drive,StorageObserver* 
                 const int x=std::lround(lon*ux),y=std::lround(lat*uy);
                 uint32_t expected=0;reference.readRect({x,y,1,1},&expected);
                 for(unsigned round=0;round<3;++round)for(unsigned side:order[round]) {
-                    CachedMapReader cache(info,map_factory,index_factory,observer,side);
+                    CodeCacheBuffer pixels{};CachedMapReader cache(pixels,info,map_factory,index_factory,observer,side);
                     const auto heap_before=ESP.getFreeHeap();
                     map_io={};index_io={};
                     const auto start=monotonicMicros();const auto code=cache.readWgsPoint(lon,lat);const auto elapsed=monotonicMicros()-start;

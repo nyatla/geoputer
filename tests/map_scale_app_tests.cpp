@@ -7,17 +7,17 @@
 #include <cstdio>
 using namespace geoputer;
 namespace {
-MapBuildJob backend;map::MapSession session;
+MapBuildJob backend;map::CodeImageBuffer session_pixels{};map::MapSession session(session_pixels);
 std::vector<MessageKind> commands;
 bool reject_cancel=false,reject_request=false,reject_discard=false;
 void check(bool value,const char* why){if(!value)throw std::runtime_error(why);}
 MapSourceResult source(const map::Request& request) {
-    MapSourceResult out;out.info.request=request;
+    MapSourceResult out(session_pixels);out.info.request=request;
     check(map::planViewport(request.latitude,request.longitude,10000,10000,96*1024,out.plan)==map::Error::None,"fixture viewport");
     out.info.width=240;out.info.height=101;out.info.region=11;
     out.info.meters_per_pixel=out.plan.meters_per_pixel*request.scale;
-    out.pixels.reset(new uint32_t[size_t(out.plan.source.width)*out.plan.source.height]);
-    std::fill_n(out.pixels.get(),out.view().count,11u);return out;
+    out.reserve(size_t(out.plan.source.width)*out.plan.source.height);
+    std::fill_n(out.pixels,out.view().count,11u);return out;
 }
 void acknowledgeScale(Application& app) {
     auto& ui=app.ui_.model_;
@@ -68,7 +68,7 @@ bool Application::awaitSyncResult(SyncSendResult sent,SyncReturn& result) {
             else status=backend.release(request.payload.map)?OperationStatus::Ok:OperationStatus::InvalidRequest;
             break;
         case MessageKind::CloseMapSession:
-            if(session.belongs(request.payload.map))session.clear();
+            // Closing UI ownership retains the fixed cached raster.
             status=OperationStatus::Ok;break;
         default:break;
     }
@@ -135,12 +135,12 @@ int main() {
     app.screen_=ScreenId::Map;app.mode_=DisplayMode::Background;check(!app.changeMapScale(1),"background changes map scale");
     app.mode_=DisplayMode::View;
     // Changing region inside the tracking window reuses the retained raster.
-    const auto* retained=session.pixels.get();const auto original_center=app.screen_resources_.map().anchor.request;
+    const auto* retained=session.pixels;const auto original_center=app.screen_resources_.map().anchor.request;
     app.data_.place_state=PlaceState::Ready;app.data_.place_fix=app.data_.gps.fix;app.data_.place_region=22;
     app.processMap();check(app.map_request_.reuse && !backend.reading(),"region change must start rendering without SD read");
     check(app.map_request_.latitude==original_center.latitude && app.map_request_.longitude==original_center.longitude,"highlight must preserve map origin");
     finish(app);deliver(app);
-    check(session.pixels.get()==retained && app.screen_resources_.map().info.region==22 && !backend.occupied(),"highlight retains pixels and releases worker");
+    check(session.pixels==retained && app.screen_resources_.map().info.region==22 && !backend.occupied(),"highlight retains pixels and releases worker");
     // Cancellation and UI return may fail independently; neither may recycle
     // memory while Storage still owns it, even after the screen is replaced.
     check(app.changeMapScale(1),"start lease-cancellation scenario");acknowledgeScale(app);app.processMap();
@@ -160,6 +160,6 @@ int main() {
     check(app.map_cancel_ && !app.map_storage_owned_ && app.ui_.model_.mapFrame().leased(),"Storage rejection cannot orphan a UI loan");
     app.screen_=ScreenId::LivePlace;app.processMap();
     check(!app.map_request_.token && !app.ui_.model_.mapFrame().leased(),"unaccepted operation returns loan without cancelling Storage");
-    check(!session.pixels && !app.map_session_.token,"leaving map must release the retained raster even with no pending job");
+    check(session.pixels==session_pixels.data() && !app.map_session_.token,"leaving map returns UI ownership but retains the fixed array");
     std::puts("PASS: real App zoom cancellation, stale completions, direct-buffer ownership, retry barriers, unchanged GPS, no-fix recovery and atomic frame commit");
 }

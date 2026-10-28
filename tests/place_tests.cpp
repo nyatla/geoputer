@@ -18,10 +18,15 @@ static void testPlaceLoans() {
     PlaceRequest request{1,17,{35.68,140.02,0,true}};
     request.token=100;request.dataset_generation=4;request.work_bytes=config::IndexReadBufferBytes;
     check(ui.beginPlaceSearch(request,request.buffer)==OperationStatus::Ok && validPlaceMemory(request),"main screen lends aligned scratch and result space");
+    auto malformed=request;++malformed.buffer.data;--malformed.buffer.capacity;
+    check(!validPlaceMemory(malformed),"misaligned place layout must be rejected");
+    malformed=request;malformed.buffer.capacity=sizeof(PlaceReadWorkspace)-1;
+    check(!validPlaceMemory(malformed),"undersized place layout must be rejected");
     auto* result=placeResultMemory(request);
+    check(result->region_code==0 && !result->lines[0][0] && !result->detail[0],"only the new result starts empty");
     check(samePlaceRequest(result->request,request) && reinterpret_cast<uint8_t*>(result)>=request.buffer.data+request.work_bytes &&
           reinterpret_cast<uint8_t*>(result+1)<=request.buffer.data+request.buffer.capacity,"scratch/result are disjoint and bounded");
-    std::memset(request.buffer.data,0xa5,request.work_bytes);
+    auto& reader=placeReaderMemory(request);std::memset(reader.data(),0xa5,reader.size());
     check(samePlaceRequest(result->request,request),"index scratch cannot overwrite result identity");
     auto next=request;next.buffer={};++next.token;map::BufferLease denied{};
     check(ui.beginPlaceSearch(next,denied)==OperationStatus::Unavailable,"one outstanding work loan at a time");
@@ -45,7 +50,7 @@ static void testPlaceLoans() {
     check(ui.commitMapFrame(frame)==OperationStatus::Ok,"publish map before name lookup");
     next={3,18,{35.68,140.02,0,true}};next.token=101;next.dataset_generation=4;next.work_bytes=config::IndexReadBufferBytes;
     check(ui.beginPlaceSearch(next,next.buffer)==OperationStatus::Ok,"map screen lends only unused back");
-    std::memset(next.buffer.data,0xff,next.work_bytes);
+    auto& next_reader=placeReaderMemory(next);std::memset(next_reader.data(),0xff,next_reader.size());
     check(ui.mapFrame().image().data()[0]==0x60 && ui.mapFrame().info().request.token==200,"name scratch cannot change visible map");
     check(ui.discardPlaceSearch(stale)==OperationStatus::StaleContent && ui.mapFrame().leased(),"old return cannot revoke new loan");
     auto* found=placeResultMemory(next);found->state=PlaceState::Ready;found->dataset=data.dataset;

@@ -54,7 +54,7 @@ void runWordBookIndexBenchmark(const std::string& directory,const DatasetMetadat
     auto book_source=std::make_shared<ObservedFileReaderFactory>(book_path,nullptr,&book_io,FileReadOptions{4096,4096},drive);
     auto map_index=std::make_shared<ObservedFileReaderFactory>(index_path,nullptr,&map_index_io,FileReadOptions{4096,0},drive);
     auto book_index=std::make_shared<ObservedFileReaderFactory>(index_path,nullptr,&book_index_io,FileReadOptions{4096,0},drive);
-    auto map=std::make_unique<CachedMapReader>(map_info,map_source,map_index);
+    CodeCacheBuffer pixels{};auto map=std::make_unique<CachedMapReader>(pixels,map_info,map_source,map_index);
     auto sequential=std::make_unique<galuchat::GaluchatGisWordBookReader>(book_source,0);
     auto indexed=std::make_unique<DiskIndexedWordBookReader>(book_info,book_source,book_index);
     auto names=std::make_unique<WordBookCache>();

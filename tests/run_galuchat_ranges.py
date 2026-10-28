@@ -5,7 +5,7 @@ import tempfile
 
 root = Path(__file__).resolve().parents[1]
 with tempfile.TemporaryDirectory(prefix="reversegeoputer-ranges-") as directory:
-    for name in ("sequential_reader_compatibility_test", "rect_without_tail_test", "chunk_range_test", "block_range_test", "rle_span_test", "raw_row_test"):
+    for name in ("chunk_storage_test", "sequential_reader_compatibility_test", "rect_without_tail_test", "chunk_range_test", "block_range_test", "rle_span_test", "raw_row_test"):
         binary = Path(directory) / name
         subprocess.run([
             "g++", "-O2", "-std=c++17", "-Wall", "-Wextra", "-Werror", "-pedantic",

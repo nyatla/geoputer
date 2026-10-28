@@ -68,14 +68,14 @@ if(hstage && hstage<90) {
         case 11:
             if(hquiet && !data_.browse().loading && !screen_resources_.logs().need) {
                 if(data_.browse().error!=LogReadError::None) {setScreen(ScreenId::Logs);++hrow;hstage=10;break;}
-#if HEAP_COMPARISON_AFTER
+#if HEAP_COMPARISON_HAS_STATS
                 benchmark::snapshot(hcycle,"properties");benchmark::mark(benchmark::Properties);hstable=hnow;hstage=12;
 #else
                 Console.printf("[HEAP-FILE] name=%s records=%lu\n",data_.browse().name,(unsigned long)data_.browse().summary.records);
                 benchmark::snapshot(hcycle,"point");benchmark::mark(benchmark::Point);hstable=hnow;hstage=14;
 #endif
             }break;
-#if HEAP_COMPARISON_AFTER
+#if HEAP_COMPARISON_HAS_STATS
         case 12:
             if(hquiet && hnow-hstable>=1000) {
                 benchmark::snapshot(hcycle,"properties-hold");UiAction open{};open.browse_action=BrowseAction::OpenPoint;
@@ -90,14 +90,14 @@ if(hstage && hstage<90) {
         case 14:
             if(hquiet && hnow-hstable>=1000) {
                 benchmark::snapshot(hcycle,"point-hold");
-#if HEAP_COMPARISON_AFTER
+#if HEAP_COMPARISON_HAS_STATS
                 benchmark::mark(benchmark::Statistics);UiAction stats{};stats.browse_action=BrowseAction::Statistics;
                 if(operateBrowser(stats))hstage=15;
 #else
                 hstage=20;
 #endif
             }break;
-#if HEAP_COMPARISON_AFTER
+#if HEAP_COMPARISON_HAS_STATS
         case 15:
             if(hquiet && !data_.browse().loading && !screen_resources_.logs().need) {
                 benchmark::snapshot(hcycle,"statistics-done");

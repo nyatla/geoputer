@@ -33,18 +33,18 @@ int main(int argc,char** argv) {
     UiData data{};data.settings=defaultSettings();data.settings.dataset=1;data.dataset.generation=1;data.map.scale=request.scale;
     data.storage.card_state=CardState::Mounted;data.storage.rg.state=RgCacheState::Ready;
     data.recording.state=RecordingState::Paused;data.place_state=PlaceState::Ready;
-    PlaceLookup lookup;lookup.configure(argv[2],"ja");
+    CodeCacheBuffer lookup_pixels{};SelectedDataset lookup_dataset;PlaceLookup lookup(lookup_pixels,lookup_dataset);lookup.configure(argv[2],"ja");
     check(lookup.prepare().state==PlaceState::Ready);data.dataset=lookup.datasetInfo();
-    data.dataset.generation=request.dataset_generation;
+    request.dataset_generation=data.dataset.generation;
     data.gps.reception=GpsReception::Fix;data.gps.fix={request.latitude,request.longitude,19921000,true};
     UiModel model;model.tick(1000);model.setBattery(72,false,true);
     check(model.setScreen({ScreenId::Map,DisplayMode::View,1,data,0,ActionResult::None})==OperationStatus::Ok);
     const bool reading=!std::strcmp(mode,"reading");
     map::FrameInfo origin{};
-    map::MapSession session;MapBuildJob job;
+    map::CodeImageBuffer session_pixels{};map::MapSession session(session_pixels);MapBuildJob job;
     if(!reading) {
         check(model.beginMapFrame(request,request.buffer)==OperationStatus::Ok);
-        check(job.start(request,session));job.loaded(readBoundaryMap(argv[2],"ja",request,0,nullptr));
+        check(job.start(request,session));job.loaded(readBoundaryMap(lookup_dataset,request,0,nullptr,std::move(session)));
         for(int n=0;n<20&&!job.complete();++n)job.step();
         check(job.complete() && job.info().error==map::Error::None);
         origin=job.info();check(job.release(request));

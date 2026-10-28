@@ -114,7 +114,7 @@ std::vector<uint8_t> oversizedMapFixture(unsigned count) {
 void testMapCache() {
     const auto at_limit = mapset(std::vector<std::array<uint64_t, 4>>(config::MaxDatasetChunks, {1, 2, 3, 4}), true);
     auto indexed_source = std::make_shared<CountingFactory>(at_limit);
-    auto indexed=test_index::cache(indexed_source,at_limit);
+    geoputer::CodeCacheBuffer indexed_pixels{};auto indexed=test_index::cache(indexed_pixels,indexed_source,at_limit);
     check(indexed.chunkCount() == config::MaxDatasetChunks && indexed.stats().bytes == 0,
           "exactly the configured maximum chunks are accepted without allocating the image");
     const auto indexed_before = indexed_source->creates;
@@ -131,7 +131,7 @@ void testMapCache() {
     header->readMbUInt(); header->readMbUInt(); header->readMbUInt(); header->readMbUInt();
     rejected_source->read_budget = header->pos();
     bool rejected_limit = false;
-    try { auto rejected=test_index::cache(rejected_source,over_limit); }
+    try { geoputer::CodeCacheBuffer rejected_pixels{};auto rejected=test_index::cache(rejected_pixels,rejected_source,over_limit); }
     catch (const MapChunkLimitExceeded& error) {
         rejected_limit = error.count == config::MaxDatasetChunks + 1 && error.limit == config::MaxDatasetChunks;
     }
@@ -139,8 +139,8 @@ void testMapCache() {
           "max + 1 chunks are rejected before reading origins or any GI01 header/body");
     const auto bytes = mapset({{1, 2, 3, 4}});
     auto factory = std::make_shared<CountingFactory>(bytes);
-    auto cache=test_index::cache(factory,bytes);
-    check(cache.stats().bytes == 0 && !cache.stats().valid, "header preparation does not allocate an image");
+    geoputer::CodeCacheBuffer cache_pixels{};auto cache=test_index::cache(cache_pixels,factory,bytes);
+    check(cache.stats().bytes == 0 && !cache.stats().valid, "header preparation leaves the fixed image invalid");
     const auto before = factory->creates;
     check(!cache.isCached(10, 5) && factory->creates == before && cache.stats().bytes == 0,
           "access-mode prediction on a cold cache does not read or allocate");
@@ -189,7 +189,7 @@ void testMapCache() {
 
     const auto overlaps = mapset({{1, 0, 3, 4}, {2, 2, 2, 2}});
     galuchat::GaluchatWGSMapSet3Reader raw(overlaps);
-    auto overlapping=test_index::cache(std::make_shared<galuchat::BufferReaderFactory>(overlaps),overlaps);
+    geoputer::CodeCacheBuffer overlapping_pixels{};auto overlapping=test_index::cache(overlapping_pixels,std::make_shared<galuchat::BufferReaderFactory>(overlaps),overlaps);
     uint32_t rect[4]{};
     galuchat::RasterView<uint32_t> raster(2, 2, rect);
     raw.readWgsRect({100, 100, 2, 2}, raster);
@@ -201,10 +201,10 @@ void testMapCache() {
               "cache preserves first-nonzero point priority and transparent zeros");
     }
     const auto limit = mapset({{UINT32_MAX, 0, 0, 0}});
-    auto full=test_index::cache(std::make_shared<galuchat::BufferReaderFactory>(limit),limit);
+    geoputer::CodeCacheBuffer full_pixels{};auto full=test_index::cache(full_pixels,std::make_shared<galuchat::BufferReaderFactory>(limit),limit);
     check(full.readWgsPoint(10, 5) == UINT32_MAX, "all uint32 code bits are preserved");
     const auto overflow = mapset({{UINT64_C(1) << 32, 0, 0, 0}});
-    auto tooLarge=test_index::cache(std::make_shared<galuchat::BufferReaderFactory>(overflow),overflow);
+    geoputer::CodeCacheBuffer tooLarge_pixels{};auto tooLarge=test_index::cache(tooLarge_pixels,std::make_shared<galuchat::BufferReaderFactory>(overflow),overflow);
     throws([&] { tooLarge.readWgsPoint(10, 5); }, "out-of-range codes cannot silently truncate");
     check(!tooLarge.stats().valid, "code overflow leaves no valid cache");
     std::cout << "PASS: cache boundaries, zero hits/no map I/O, invalidation, partial read failures, overlaps and uint32 range\n";
@@ -221,7 +221,7 @@ void testMapCacheFile(const std::string& path, const std::string& book, const st
     const auto index_path = (directory / "_mapindex.dat").string();
     auto source = std::make_shared<CountingFactory>(map.string());
     auto index = std::make_shared<CountingFactory>(index_path);
-    geoputer::CachedMapReader cache(geoputer::DatasetIndex{}.loadMap(index_path, map.string()), source, index);
+    geoputer::CodeCacheBuffer cache_pixels{};geoputer::CachedMapReader cache(cache_pixels,geoputer::DatasetIndex{}.loadMap(index_path, map.string()), source, index);
     galuchat::GaluchatWGSMapSet3Reader point(std::make_shared<galuchat::FileReaderFactory>(path, 4096));
     const std::array<std::pair<double, double>, 4> centers{{
         {140.027194, 35.681641}, {139.7528, 35.6852}, {140.0, 35.0}, {-0.2, -0.1}}};

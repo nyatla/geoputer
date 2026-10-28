@@ -1,0 +1,5 @@
+kind,depth,tt,tm,refs,index_opens,peak_readers,elapsed_us,stack_free,equal,code,free_start,min_free,sampled_used,components
+synthetic,32,32,32,32,3,1,4474,4148,1,,,,,
+synthetic,32,32,65,32,5,1,6285,4148,1,,,,,
+file,,,,32,,1,70151,4148,,66087,63628,58712,4916,4
+file,,,,32,,1,60364,3572,,64706,63980,58696,5284,4

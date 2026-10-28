@@ -5,6 +5,8 @@
 #include <cassert>
 
 namespace geoputer {
+static_assert(sizeof(MapBuildJob)<=sizeof(LogReader), "Map FIL must fit the existing log workspace");
+
 // Storage-only ownership. Exactly one read job or map job occupies this area.
 // A finished map can stay here without occupying the Storage task.
 class StorageWorkArea {

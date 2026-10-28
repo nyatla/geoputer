@@ -4,6 +4,8 @@
 #include "../StoragePath.h"
 #include "../log/LogFile.h"
 #include "../galuchat/ReadTiming.h"
+#include "../../../utils/FileReadBuffer.h"
+#include "../ReadFile.h"
 #include <galuchat/wgsmap3_reader.hpp>
 #include <algorithm>
 #include <array>
@@ -44,6 +46,18 @@ struct File : LogFile {
 private:
     StorageObserver* observer_;
     FileIoTiming* timing_;
+};
+// Source is read-only; its small file wrapper stays on the Source frame.
+struct SourceFile : ReadFile {
+    SourceFile(uint8_t drive,StorageObserver* observer,FileIoTiming* timing,ReadFileSlot* slot)
+        :ReadFile(drive,slot),observer_(observer),timing_(diagnosticTiming(timing)){}
+    ~SourceFile() {
+        if(opened()) {SdAccessScope access(observer_);FileIoTime elapsed(timing_,&FileIoTiming::close_us);
+            if(timing_)++timing_->closes;
+            close();}
+    }
+private:
+    StorageObserver* observer_;FileIoTiming* timing_;
 };
 // Missing files and IO errors are distinct: never overwrite an unreadable old index.
 bool exists(uint8_t drive,const std::string& path) {
@@ -108,11 +122,13 @@ struct Progress {
 };
 class Source final : public ByteReader {
 public:
-    Source(uint8_t drive,const std::string& path,StorageObserver* observer,bool through=false,FileIoTiming* timing=nullptr)
-        : file_(std::make_unique<File>(drive,observer,timing)),observer_(observer),buffer_(config::IndexReadBufferBytes),through_(through),timing_(diagnosticTiming(timing)) {
+    Source(uint8_t drive,const std::string& path,StorageObserver* observer,bool through=false,FileIoTiming* timing=nullptr,
+           BorrowedReadBuffer* work=nullptr,ReadFileSlot* file_slot=nullptr)
+        : file_(drive,observer,timing,file_slot),observer_(observer),through_(through),timing_(diagnosticTiming(timing)) {
+        buffer_.resize(config::IndexReadBufferBytes,work);
         SdAccessScope access(observer_); uint64_t length=0;
         FileIoTime elapsed(timing_,&FileIoTiming::open_us); if(timing_)++timing_->opens;
-        require(file_->openRead(path) && file_->size(length)); size_=u32(length);
+        require(file_.openRead(path) && file_.size(length)); size_=u32(length);
     }
     size_t pos() const override { return position_; }
     bool atEnd() const override { return position_==size_; }
@@ -124,7 +140,7 @@ public:
         if (offset>=buffer_start_ && uint64_t(offset)-buffer_start_<=buffer_used_) position_=offset;
         else {
             SdAccessScope access(observer_); FileIoTime elapsed(timing_,&FileIoTiming::seek_us); if(timing_)++timing_->seeks;
-            require(file_->seek(offset));
+            require(file_.seek(offset));
             position_=offset; buffer_start_=offset; buffer_used_=0;
         }
     }
@@ -155,15 +171,15 @@ private:
         buffer_start_=position_; buffer_used_=std::min<size_t>(buffer_.size(),size_-position_);
         // Physical position is always immediately after the previous buffer.
         { FileIoTime elapsed(timing_,&FileIoTiming::read_us); if(timing_)++timing_->reads;
-          require(file_->read(buffer_.data(),buffer_used_)); if(timing_)timing_->bytes+=buffer_used_; }
+          size_t received=0;require(file_.read(buffer_.data(),buffer_used_,received) && received==buffer_used_); if(timing_)timing_->bytes+=buffer_used_; }
         if(progress_)progress_->report(IndexPhase::Map,uint64_t(position_)+buffer_used_,size_);
 #ifdef ARDUINO_ARCH_ESP32
         vTaskDelay(1); // Keep input / drawing tasks responsive throughout full-map scans.
 #endif
     }
-    std::unique_ptr<File> file_;
+    FileReadBuffer buffer_;
+    SourceFile file_;
     StorageObserver* observer_;
-    std::vector<uint8_t> buffer_;
     uint32_t size_=0,position_=0,buffer_start_=0;
     size_t buffer_used_=0;
     bool through_;
@@ -599,19 +615,19 @@ MapHeader mapHeader(Source& source) {
 } // namespace
 
 DatasetMapIndex DatasetIndex::loadMap(const std::string& path,const std::string& map,FileIoTiming* map_timing,FileIoTiming* index_timing,
-                                     DatasetWordBookIndex* book,const std::string& language) const {
+                                     DatasetWordBookIndex* book,const std::string& language,BorrowedReadBuffer* work,ReadFileSlot* file_slot) const {
     Stamp stamp;
     MapHeader metadata;
     {
         SdAccessScope access(observer_);
         { FileIoTime elapsed(diagnosticTiming(map_timing),&FileIoTiming::stat_us); if(config::DetailedDiagnostics && map_timing)++map_timing->stats; stamp=statFile(drive_,map); }
-        Source source(drive_,map,observer_,false,map_timing); metadata=mapHeader(source);
+        Source source(drive_,map,observer_,false,map_timing,work,file_slot); metadata=mapHeader(source);
         stamp.header_crc=source.crc(0,metadata.chunk.end);
     }
     DatasetMapIndex info;
     { FileIoTime elapsed(diagnosticTiming(index_timing),&FileIoTiming::stat_us); if(config::DetailedDiagnostics && index_timing)++index_timing->stats;
       if(!exists(drive_,path)) throw std::runtime_error("Missing _mapindex.dat; reapply dataset"); }
-    try { Source index(drive_,path,observer_,false,index_timing); Validation(index).run(&info,book,language); }
+    try { Source index(drive_,path,observer_,false,index_timing,work,file_slot); Validation(index).run(&info,book,language); }
     catch(const std::bad_alloc&) { throw; }
     catch(const std::exception&) { throw std::runtime_error("Invalid _mapindex.dat; reapply dataset"); }
     if (book && !book->section_offset) throw std::runtime_error("Missing Wordbook index; reapply dataset");

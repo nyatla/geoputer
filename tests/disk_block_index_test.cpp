@@ -26,48 +26,62 @@ struct Fixture {
     geoputer::DatasetMapIndex info{};
     size_t first=0;
     static constexpr size_t BlockBytes=16386, PerGroup=4, Total=24;
-    explicit Fixture(bool patterned=false) {
+    explicit Fixture(bool patterned=false, size_t per_group=PerGroup, unsigned side=128) {
+        const size_t block_bytes=size_t(side)*side+2;
+        check(per_group && Total%per_group==0 && (side==128 || side==256),"fixture grid");
         Bytes h(16);const std::string format="WGSMapSet/3";std::copy(format.begin(),format.end(),h.begin());
         h.insert(h.end(),{1,1,0,1,0,0});map=chunk("GLCH",h);
         const auto start=map.size();
-        Bytes payload;mb(payload,768);mb(payload,512);payload.push_back(7);
+        Bytes payload;mb(payload,side*6);mb(payload,side*4);payload.push_back(side==128?7:8);
         for (size_t i=0;i<Total;++i) {
             payload.push_back(0);payload.push_back(0x70);
-            for(int y=0;y<128;++y)for(int x=0;x<128;++x)
+            for(unsigned y=0;y<side;++y)for(unsigned x=0;x<side;++x)
                 payload.push_back(patterned?uint8_t((i*19+x*3+y*5)%251):uint8_t(i+1));
         }
         const auto image=chunk("GI01",payload);map.insert(map.end(),image.begin(),image.end());
-        first=map.size()-Total*BlockBytes;
-        const uint32_t index_bytes=40+Total/PerGroup*16;
+        first=map.size()-Total*block_bytes;
+        const uint32_t index_bytes=40+Total/per_group*16;
         put(info.header.data()+16,64+index_bytes);put(info.header.data()+20,map.size());
         put(info.header.data()+36,1);put(info.header.data()+40,1);put(info.header.data()+44,1);put(info.header.data()+60,index_bytes);
-        info.width=768;info.height=512;
+        info.width=side*6;info.height=side*4;
         index.assign(info.header.begin(),info.header.end());
         std::array<uint8_t,40> c{};
-        put(c.data()+8,768);put(c.data()+12,512);put(c.data()+16,128);
+        put(c.data()+8,side*6);put(c.data()+12,side*4);put(c.data()+16,side);
         put(c.data()+20,start);put(c.data()+24,image.size());put(c.data()+28,first);
-        put(c.data()+32,Total);put(c.data()+36,Total/PerGroup);index.insert(index.end(),c.begin(),c.end());
-        for (size_t n=0;n<Total;n+=PerGroup) {
-            std::array<uint8_t,16> g{};put(g.data(),n);put(g.data()+4,PerGroup);
-            put(g.data()+8,first+n*BlockBytes);put(g.data()+12,PerGroup*BlockBytes);
+        put(c.data()+32,Total);put(c.data()+36,Total/per_group);index.insert(index.end(),c.begin(),c.end());
+        for (size_t n=0;n<Total;n+=per_group) {
+            std::array<uint8_t,16> g{};put(g.data(),n);put(g.data()+4,per_group);
+            put(g.data()+8,first+n*block_bytes);put(g.data()+12,per_group*block_bytes);
             index.insert(index.end(),g.begin(),g.end());
         }
     }
 };
-struct Trace {std::vector<size_t> opens, reads;};
+struct Trace {
+    std::vector<size_t> opens, reads;
+    Trace* peer=nullptr;
+    unsigned live=0, peak=0;
+    size_t fail_at=SIZE_MAX;
+};
 class Factory final : public galuchat::ReaderFactory {
 public:
     Factory(const Bytes& bytes, Trace& trace):bytes_(bytes),trace_(trace) {}
     std::unique_ptr<galuchat::ByteReader> create(size_t offset=0) const override {return createRange(offset,bytes_.size()-offset);}
     std::unique_ptr<galuchat::ByteReader> createRange(size_t offset,size_t length) const override {
+        check(!trace_.peer || !trace_.peer->live,"index and GLC Readers overlap");
         trace_.opens.push_back(offset);
         class Reader final : public galuchat::ByteReader {
         public:
-            Reader(std::unique_ptr<galuchat::ByteReader> input,size_t base,Trace& trace):input_(std::move(input)),base_(base),trace_(trace) {}
+            Reader(std::unique_ptr<galuchat::ByteReader> input,size_t base,Trace& trace):input_(std::move(input)),base_(base),trace_(trace) {
+                trace_.peak=std::max(trace_.peak,++trace_.live);
+            }
+            ~Reader() override {--trace_.live;}
             size_t pos() const override {return input_->pos();}
             bool atEnd() const override {return input_->atEnd();}
         protected:
-            uint8_t nextByte() override {trace_.reads.push_back(base_+pos());return input_->readByte();}
+            uint8_t nextByte() override {
+                if(base_+pos()==trace_.fail_at)throw std::runtime_error("injected read failure");
+                trace_.reads.push_back(base_+pos());return input_->readByte();
+            }
             void skipByte(size_t n) override {input_->skipInByte(n);}
         private:
             std::unique_ptr<galuchat::ByteReader> input_;size_t base_;Trace& trace_;
@@ -80,7 +94,7 @@ void rectangles() {
     Fixture f;
     for (const galuchat::Rect target : {galuchat::Rect{256,0,1,256},{520,390,128,128},{0,128,768,256},
                                        {125,125,260,260},{-20,-20,128,128},{760,500,128,128},{800,600,1,1}}) {
-        Trace map_trace,index_trace;
+        Trace map_trace,index_trace;map_trace.peer=&index_trace;index_trace.peer=&map_trace;
         auto map=std::make_shared<Factory>(f.map,map_trace),index=std::make_shared<Factory>(f.index,index_trace);
         geoputer::DiskIndexedMapReader reader(f.info,map,index);
         std::vector<uint32_t> pixels(size_t(target.width)*target.height,999);
@@ -110,7 +124,7 @@ void decimation() {
     for (unsigned scale : {1u,2u,4u})
     for (const galuchat::Rect rect : {galuchat::Rect{0,0,768,512},{1,3,259,133},{-7,-5,137,139},
                                      {123,127,267,261},{757,503,17,13},{800,600,1,1},{0,0,1,1}}) {
-        Trace mt,it;
+        Trace mt,it;mt.peer=&it;it.peer=&mt;
         geoputer::DiskIndexedMapReader reader(f.info,std::make_shared<Factory>(f.map,mt),std::make_shared<Factory>(f.index,it));
         const unsigned width=1+(unsigned(rect.width)-1)/scale,height=1+(unsigned(rect.height)-1)/scale;
         std::vector<uint32_t> pixels(size_t(width)*height+2,0xdeadbeef);
@@ -125,7 +139,7 @@ void decimation() {
         }
         check(it.opens.size()==1 && mt.opens.size()<=1,"decimation repeats index/map sessions");
     }
-    Trace mt,it;
+    Trace mt,it;mt.peer=&it;it.peer=&mt;
     geoputer::DiskIndexedMapReader reader(f.info,std::make_shared<Factory>(f.map,mt),std::make_shared<Factory>(f.index,it));
     for(unsigned scale:{0u,3u,8u}) {
         uint32_t pixel=123;bool rejected=false;
@@ -159,7 +173,7 @@ void failuresAndBypass() {
     Fixture f;
     // A corrupt skipped prefix proves that decoding actually restarts at group 2.
     f.map[f.first]=0x30;
-    Trace mt,it;auto map=std::make_shared<Factory>(f.map,mt),index=std::make_shared<Factory>(f.index,it);
+    Trace mt,it;mt.peer=&it;it.peer=&mt;auto map=std::make_shared<Factory>(f.map,mt),index=std::make_shared<Factory>(f.index,it);
     geoputer::DiskIndexedMapReader reader(f.info,map,index);uint32_t pixel=0;
     reader.readRect({256,128,1,1},&pixel);check(pixel==9,"indexed group could not bypass an unused corrupt prefix");
     check(mt.opens==std::vector<size_t>{f.first+8*Fixture::BlockBytes},"incorrect restarted file offset");
@@ -173,6 +187,85 @@ void failuresAndBypass() {
     bool failed=false;try {reader.readRect({256,128,1,1},&pixel);}catch(const std::runtime_error&){failed=true;}
     check(failed,"corruption inside a selected group accepted");
 }
+void boundedSelection() {
+    // A 1/4 viewport straddling both axes selects exactly 5x3 256-cell blocks.
+    // One index group per block makes this the worst case for the 15 slots.
+    Fixture f(false,1,256);
+    for(const galuchat::Rect rect:{galuchat::Rect{255,255,957,329}, {0,0,1536,1024}}) {
+        Trace mt,it;mt.peer=&it;it.peer=&mt;
+        auto mf=std::make_shared<Factory>(f.map,mt),ix=std::make_shared<Factory>(f.index,it);
+        geoputer::DiskIndexedMapReader reader(f.info,mf,ix);
+        const unsigned width=1+(unsigned(rect.width)-1)/4,height=1+(unsigned(rect.height)-1)/4;
+        std::vector<uint32_t> pixels(size_t(width)*height+2,0xdeadbeef);
+        reader.readRectDecimated(rect,4,pixels.data()+1);
+        for(unsigned y=0;y<height;++y)for(unsigned x=0;x<width;++x) {
+            const unsigned px=unsigned(rect.x)+4*x,py=unsigned(rect.y)+4*y;
+            check(pixels[1+size_t(y)*width+x]==(py/256)*6+px/256+1,"bounded group batch lost pixels");
+        }
+        check(pixels.front()==0xdeadbeef && pixels.back()==0xdeadbeef,"group cache overflow damaged output");
+        const size_t batches=rect.x?1:2;
+        check(mt.opens.size()==batches && it.opens.size()==batches,"wrong number of bounded batches");
+        check(!mt.live && !it.live && mt.peak==1 && it.peak==1,"Reader lifetime escaped read");
+    }
+    // Failures release both Readers, including failure on the next full-index pass.
+    for(bool source_failure:{false,true}) {
+        Trace mt,it;mt.peer=&it;it.peer=&mt;
+        if(source_failure)mt.fail_at=f.first+2;else it.fail_at=104+16*16;
+        geoputer::DiskIndexedMapReader reader(f.info,std::make_shared<Factory>(f.map,mt),std::make_shared<Factory>(f.index,it));
+        std::vector<uint32_t> pixels(size_t(1536)*1024);
+        bool failed=false;
+        try{reader.readRect({0,0,1536,1024},pixels.data());}catch(const std::runtime_error&){failed=true;}
+        check(failed && !mt.live && !it.live,"failure leaked a suspended Reader");
+    }
+}
+
+void wholeRequestSelection() {
+    // Two adjacent 256-cell grids contribute 6+9 references. A trailing,
+    // nonintersecting chunk proves the index is fully scanned before GLC I/O.
+    Bytes map=chunk("GLCH",Bytes(16)), records;
+    for(unsigned c=0;c<3;++c) {
+        const unsigned columns=c==0?2:c==1?3:1,rows=c<2?3:1;
+        const unsigned west=c==0?0:c==1?512:10000,south=c<2?0:10000;
+        std::vector<Bytes> blocks;
+        for(unsigned b=0;b<columns*rows;++b) {
+            Bytes raw{0x70};raw.insert(raw.end(),256*256,uint8_t(c*20+b+1));
+            blocks.push_back(rle_fixture::block(0,raw));
+        }
+        const auto image=rle_fixture::image(256,blocks,columns);
+        const auto start=map.size();rle_fixture::append(map,image);
+        size_t first=map.size();for(const auto& b:blocks)first-=b.size();
+        std::array<uint8_t,40> record{};
+        put(record.data(),west);put(record.data()+4,south);put(record.data()+8,columns*256);put(record.data()+12,rows*256);
+        put(record.data()+16,256);put(record.data()+20,start);put(record.data()+24,image.size());put(record.data()+28,first);
+        put(record.data()+32,blocks.size());put(record.data()+36,blocks.size());
+        rle_fixture::append(records,Bytes(record.begin(),record.end()));
+        for(size_t b=0,offset=first;b<blocks.size();offset+=blocks[b++].size()) {
+            std::array<uint8_t,16> g{};put(g.data(),b);put(g.data()+4,1);put(g.data()+8,offset);put(g.data()+12,blocks[b].size());
+            rle_fixture::append(records,Bytes(g.begin(),g.end()));
+        }
+    }
+    geoputer::DatasetMapIndex info{};put(info.header.data()+16,64+records.size());put(info.header.data()+20,map.size());
+    put(info.header.data()+36,3);put(info.header.data()+60,records.size());
+    Bytes index(info.header.begin(),info.header.end());rle_fixture::append(index,records);
+    Trace mt,it;mt.peer=&it;it.peer=&mt;
+    geoputer::DiskIndexedMapReader reader(info,std::make_shared<Factory>(map,mt),std::make_shared<Factory>(index,it));
+    constexpr unsigned width=240,height=83;
+    std::vector<uint32_t> pixels(width*height);
+    reader.readRectDecimated({255,255,957,329},4,pixels.data());
+    for(unsigned y=0;y<height;++y)for(unsigned x=0;x<width;++x) {
+        const unsigned px=255+4*x,py=255+4*y;
+        const auto expected=px<512?(py/256)*2+px/256+1:21+(py/256)*3+(px-512)/256;
+        check(pixels[y*width+x]==expected,"whole-request selection lost a chunk's geometry");
+    }
+    check(it.opens.size()==1 && mt.opens.size()==1 && !it.live && !mt.live,"whole request reopened index/GLC");
+    // A malformed trailing chunk must be rejected before any GLC is opened.
+    put(index.data()+64+40+6*16+40+9*16+8,0);
+    mt={};it={};mt.peer=&it;it.peer=&mt;
+    bool failed=false;
+    try{reader.readRectDecimated({255,255,957,329},4,pixels.data());}catch(const std::runtime_error&){failed=true;}
+    check(failed && mt.opens.empty() && !it.live,"GLC opened before the entire index was checked");
+}
+
 void rleComposition() {
     // Exercise the actual application's uint32 destination, both ungrouped GI01s
     // and disk-indexed block groups, with transparent zeros and overlapping chunks.
@@ -258,6 +351,6 @@ void rleComposition() {
 
 }
 int main() {
-    rectangles();decimation();decimationBeforeEdges();failuresAndBypass();rleComposition();
-    std::cout<<"disk block index: pixels, group/row boundaries, direct offsets, single open and failures OK\n";
+    rectangles();decimation();decimationBeforeEdges();failuresAndBypass();boundedSelection();wholeRequestSelection();rleComposition();
+    std::cout<<"disk block index: pixels, group/row boundaries, direct offsets, exclusive Readers, whole-request 15-group cache, batching and failures OK\n";
 }

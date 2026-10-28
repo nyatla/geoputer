@@ -98,14 +98,14 @@ void syntheticChecks() {
     Bytes bytes = dataset();
     auto factory = std::make_shared<Factory>(bytes);
     Observer observer;
-    auto cache=test_index::cache(factory,bytes,&observer);
-    require(cache.chunkCount() == 1 && cache.stats().bytes == 0, "lazy cache allocation");
+    geoputer::CodeCacheBuffer cache_pixels{};auto cache=test_index::cache(cache_pixels,factory,bytes,&observer);
+    require(cache.chunkCount() == 1 && cache.stats().bytes == 0, "fixed backing, no logical cache loaded");
     factory->accesses.clear();
     require(cache.readWgsPoint(64,64) == 1, "first cached point");
     require(factory->accesses.size() == 1 && factory->accesses[0]->end == 13,
             "cache rebuild traversed the unused GI01 tail");
     require(cache.stats().bytes == 65536 && cache.stats().valid
-            && observer.state == geoputer::RgCacheState::Ready, "cache allocation / RG ready");
+            && observer.state == geoputer::RgCacheState::Ready, "fixed cache filled / RG ready");
     factory->accesses.clear();
     require(cache.readWgsPoint(127,127) == 1 && factory->accesses.empty(), "cache hit performed I/O");
     require(cache.stats().fills == 1 && cache.stats().hits == 1, "cache hit counters");
@@ -127,16 +127,16 @@ void syntheticChecks() {
     for (uint8_t first : {uint8_t{0}, uint8_t{1}}) {
         Bytes overlap = dataset(2, first);
         auto overlapping = std::make_shared<galuchat::BufferReaderFactory>(overlap);
-        auto cached=test_index::cache(overlapping,overlap);
+        geoputer::CodeCacheBuffer cached_pixels{};auto cached=test_index::cache(cached_pixels,overlapping,overlap);
         require(cached.readWgsPoint(64,64) == (first == 0 ? 10 : 1), "overlap point priority");
     }
     Bytes at_limit = dataset(geoputer::config::MaxDatasetChunks);
-    auto accepted=test_index::cache(std::make_shared<galuchat::BufferReaderFactory>(at_limit),at_limit);
+    geoputer::CodeCacheBuffer accepted_pixels{};auto accepted=test_index::cache(accepted_pixels,std::make_shared<galuchat::BufferReaderFactory>(at_limit),at_limit);
     require(accepted.chunkCount() == geoputer::config::MaxDatasetChunks, "inclusive chunk limit");
     Bytes too_many = dataset(geoputer::config::MaxDatasetChunks + 1);
     bool rejected = false;
     try {
-        auto invalid=test_index::cache(std::make_shared<galuchat::BufferReaderFactory>(too_many),too_many);
+        geoputer::CodeCacheBuffer invalid_pixels{};auto invalid=test_index::cache(invalid_pixels,std::make_shared<galuchat::BufferReaderFactory>(too_many),too_many);
     } catch (const geoputer::MapChunkLimitExceeded& error) {
         require(error.count == geoputer::config::MaxDatasetChunks + 1
                 && error.limit == geoputer::config::MaxDatasetChunks, "application limit details");
@@ -149,7 +149,7 @@ void syntheticChecks() {
 void realDataChecks(const char* path) {
     geoputer::FileIoTiming timing{};
     auto factory = std::make_shared<geoputer::ObservedFileReaderFactory>(path, nullptr, &timing);
-    auto cache=test_index::cacheFile(factory,path);
+    geoputer::CodeCacheBuffer cache_pixels{};auto cache=test_index::cacheFile(cache_pixels,factory,path);
     galuchat::GaluchatWGSMapSet3Reader reference(factory);
     for (const auto& point : std::vector<galuchat::DoubleRect>{
             {140.027194,35.681641,0,0}, {140.027194,35.681641,0,0},

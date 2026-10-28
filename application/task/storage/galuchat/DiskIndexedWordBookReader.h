@@ -6,7 +6,8 @@
 #include "../dataset/DatasetIndex.h"
 
 namespace geoputer {
-// Validated header only. Root/page tables remain on SD and are streamed per miss.
+// Validated header only. Per-phase stack references end before the next phase.
+// Index and body Readers never overlap, allowing one shared read buffer.
 class DiskIndexedWordBookReader {
 public:
     DiskIndexedWordBookReader(DatasetWordBookIndex info,

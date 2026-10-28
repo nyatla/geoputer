@@ -131,20 +131,22 @@ SDカード直下/
 
 Wordbookと`dataset.ini`、タスク間メッセージ、UIの文字列はUTF-8に統一する。Wordbook内部の`token_encoding`を優先し、未指定または空の場合は`text_encoding`を参照する。値は大文字・小文字を区別せず`utf8`または`utf-8`だけを受け付ける。文字コードの未指定・未対応や不正なUTF-8は`ENCODING ERROR`とし、端末内で文字コード変換は行わない。SJIS（CP932）版やUTF-16版のWordbookは使用できない。既存のSDカードでは、同じGLCに対応するUTF-8版Wordbookへ置き換え、INIの`wordbook`をそのファイル名へ変更する。ファイル名やメタデータだけの変更では文字コードを変換できない。[UTF-8統一の検証結果](../doc/検証/UTF-8統一検証.md)に実ファイル試験と容量を記録する。
 
-Storageがマウント済みの`/sd`をSDK互換の`ObservedFileReaderFactory`から読む。ESP32では実際のドライブ番号をFactoryへ渡し、`/sd/...`を`<drive>:/...`へ変換してFatFsの`f_open`・`f_read`・`f_lseek`・`f_close`・`f_stat`を直接使用する。ホストではstdioを維持する。実際のopen・seek・バッファ補充・closeだけをSDアクセスとして観測し、バッファ内の1バイト参照は対象外にする。先読み量は用途別とし、地図の初期化・チャンク索引構築とWordbookは4KiB、地図の矩形取得は16KiBを使用する。WordBookのSDK内トークンキャッシュは無効とし、データ全体のRAM展開は行わない。スキップがバッファ内なら位置だけを進め、バッファ外に残る距離が`FileReadThroughSkipBytes`以下なら通常のバッファ補充で読み流す。初期値は4096バイトで、0はバッファ外の移動を常にシークで処理する。長い距離はシークを維持し、読み流した後の先読み余剰は次の読出しに再利用する。読み流し専用の追加バッファは確保せず、地図とWordbookの両方に適用する。読み流しでは実際のf_read（ホストはfread）を観測し、RAM上のスキップはI/Oとして数えない。SDKのReaderを基準とする[third_party/galuchat](../third_party/galuchat/README.md)を使用し、現在はチャンク範囲Readerの試作差分をアプリ内だけに保持する。coreとSDKは変更しない。C++17と例外処理を有効にする。
+Storageがマウント済みの`/sd`をSDK互換の`ObservedFileReaderFactory`から読む。ESP32では実際のドライブ番号をFactoryへ渡し、`/sd/...`を`<drive>:/...`へ変換してFatFsの`f_open`・`f_read`・`f_lseek`・`f_close`・`f_stat`を直接使用する。ホストではstdioを維持する。実際のopen・seek・バッファ補充・closeだけをSDアクセスとして観測し、バッファ内の1バイト参照は対象外にする。先読み量は用途別とし、地図の初期化・矩形取得、索引とWordbookは4KiBを使用する。地図生成と地名検索のGLC・索引・Wordbook ReaderはUIから借りた同じ4KiBを順に使用する。WordBookのSDK内トークンキャッシュは無効とし、データ全体のRAM展開は行わない。スキップがバッファ内なら位置だけを進め、バッファ外に残る距離が`FileReadThroughSkipBytes`以下なら通常のバッファ補充で読み流す。初期値は4096バイトで、0はバッファ外の移動を常にシークで処理する。長い距離はシークを維持し、読み流した後の先読み余剰は次の読出しに再利用する。読み流し専用の追加バッファは確保せず、地図とWordbookの両方に適用する。読み流しでは実際のf_read（ホストはfread）を観測し、RAM上のスキップはI/Oとして数えない。SDKのReaderを基準とする[third_party/galuchat](../third_party/galuchat/README.md)を使用し、現在はチャンク範囲Readerの試作差分をアプリ内だけに保持する。coreとSDKは変更しない。C++17と例外処理を有効にする。
 
-アプリの`FileReadOptions`でバッファ容量と読み流し閾値を独立して指定する。汎用の既定値はともに4096バイト。容量0はファイルI/Oの前に拒否する。`ObservedFileReaderFactory::setReadOptions`は以後に生成するReaderだけへ作用し、生成済みReaderの容量・閾値は維持する。Storageが地図の索引構築完了後にFactoryを矩形用へ切り替える。Readerが生存中の再確保や追加のキャッシュ・索引は行わない。アプリ限定試作では、範囲指定時に先読みバッファをチャンク全体長までに抑え、読出しの補充を指定範囲の末尾までに制限する。矩形取得用16KiBでは先読みバッファ容量が従来4KiBに対しReader一つあたり12KiB増えるが、初期化の同時2 Readerは合計8KiBを維持する。[用途別先読み量の実機比較](../doc/検証/用途別先読み量の実機比較.md)に条件と結果を記録する。
+アプリの`FileReadOptions`でバッファ容量と読み流し閾値を独立して指定する。汎用の既定値はともに4096バイト。容量0はファイルI/Oの前に拒否する。`ObservedFileReaderFactory::setReadOptions`は以後に生成するReaderだけへ作用し、生成済みReaderの容量・閾値は維持する。Storageが地図の索引構築完了後にFactoryを矩形用へ切り替える。Readerが生存中の再確保や追加のキャッシュ・索引は行わない。アプリ限定試作では、範囲指定時に先読みバッファをチャンク全体長までに抑え、読出しの補充を指定範囲の末尾までに制限する。現在の矩形取得は4KiBとし、App経由のUI作業領域がある場合は索引Readerの終了後に同じ領域をGLC Readerへ貸す。借用を指定しない呼出しは同容量を自己所有する。[現行GLC読出しバッファ比較](../doc/検証/現行GLC読出しバッファ比較.md)に4/8/16KiBの条件と結果を記録する。
 
 FatFsの長距離シークはファイル先頭からの絶対位置で指定し、`f_tell`で到達位置も確認する。読取専用の`f_lseek`はEOFを超える位置を切り詰めて成功する場合があるため、要求位置と異なる場合はエラーとする。読出しは戻りコードと実読出し数を確認し、失敗時やReaderの破棄時にファイルを解放する。バッファ容量・範囲制限・読み流し閾値は従来どおりであり、セクタ境界への整列、DMA化、ファイルの継続利用はこの変更に含めない。[FatFs直結の実機比較](../doc/検証/FatFs直結の実機比較.md)に測定条件と結果を記録する。
 
 地図のRLE描画は、アプリ内Galuchatの区間書込みに対応する出力先を使用する。ランを行・列境界で分割し、座標変換とクリップを区間単位で行う。区域コードは既存のuint32画像へ直接書き込み、ゼロ透過と先に得た非ゼロ値の優先を維持する。追加の画像バッファは確保しない。`set`のみを持つ従来の出力先には画素単位の経路を残す。[RLE区間描画の最適化](../doc/検証/RLE区間描画の最適化.md)に検証結果を記録する。 単色領域も同じ区間書込みを使用する。能力判定は`HasSpan`へ統一し、RLEは行・列ごとに矩形との交差を判定する従来の区間描画を維持する。事前の範囲除外は試験後に取り下げた。[追加最適化の検証](../doc/検証/単色領域の区間描画とRLE範囲除外.md)を参照する。
 
 
+選択中データセットの実行用情報はStorageTaskのSelectedDatasetへまとめる。初期化時にINIを読み、GLC・索引・Wordbookのパス、選択言語、地名表示書式、検証済みヘッダーと状態・世代を保持する。PlaceLookupとMapSourceはこれを共有し、地図生成ごとのINI解析・パス構築・初期化検証を行わない。Factoryは安定したパス文字列を参照し、選択変更・SD再マウント・索引メンテナンスでは既存Readerを終了してから情報を更新する。設定のデータセット一覧・詳細は、未選択データセットも調べるため従来どおり個別に読む。地図読出しではUI backの先頭4KiBに続く512BをFatFsパス変換へ貸し、パス変換用stringも確保しない。読出し後はback全体を境界画像として使う。[統合設計と検証](../doc/検証/選択中データセット情報の統合.md)を参照する。
+
 WordBookの地名検索はアプリ側のWordBookCacheで包む。32bit区域コードとUTF-8検証・書式展開済みの地名2行（各64バイト）を16件まで固定長で保持する。利用順だけを16バイトのインデックス配列で管理するLRUとし、時刻・内部Tickは使わない。ヒット時は辞書読出しとUTF-8検証・整形を省き、ミス時に成功した結果だけを登録する。今回の座標・時刻・要求世代は毎回の要求から結果へ設定する。
 
 地名キャッシュは矩形の再構築・GPS喪失・画面切替では保持し、PlaceLookupのclose、SD媒体操作、Reader再オープンで消去する。矩形と地名がともにヒットした検索ではSDを読まない。RGは従来どおり矩形の状態、SDはログ等も含めた実I/Oを表示する。実装と検証は[WordBook地名キャッシュ検証](../doc/検証/WordBook地名キャッシュ検証.md)を参照する。
 
-区域コードの取得は`CachedMapReader`で包み、最初の点検索時に128×128の`uint32_t`画像1枚（64KiB）を確保する。経度・緯度はSDKと同じ解像度と丸め方で整数座標へ変換する。範囲内は画像の値を返し、初回または範囲外では取得点をセル(64,64)とする矩形をアプリの`DiskIndexedMapReader`で読み直す。保存索引のチャンク情報を1件ずつ読み、対象チャンクの群情報を1件ずつ確認し、必要な群へ直接移動して追加APIの`readRectFromBlockRange()`で復号する。群を持たない16KiB未満のチャンクは既存の`readRectWithoutTail()`を使用する。原点は`(ix-64, iy-64)`、幅・高さは128、範囲の上端は含まない。区域なしのコード0も有効なキャッシュ値とする。
+区域コードの取得は`CachedMapReader`で包み、Storage所有の固定128×128 `uint32_t`画像1枚（64 KiB）を借用し、最初の点検索で内容を読み込む。経度・緯度はSDKと同じ解像度と丸め方で整数座標へ変換する。範囲内は画像の値を返し、初回または範囲外では取得点をセル(64,64)とする矩形をアプリの`DiskIndexedMapReader`で読み直す。保存索引のチャンク情報を1件ずつ読み、対象チャンクの群情報を1件ずつ確認し、必要な群へ直接移動して追加APIの`readRectFromBlockRange()`で復号する。群を持たない16KiB未満のチャンクは既存の`readRectWithoutTail()`を使用する。原点は`(ix-64, iy-64)`、幅・高さは128、範囲の上端は含まない。区域なしのコード0も有効なキャッシュ値とする。
 
 アプリは`DiskIndexedMapReader`を使用し、保存索引から対象チャンクを選ぶ。`MaxDatasetChunks`（1500）は索引読込み前に確認する。SDKの`GaluchatWGSMapSet3IndexedReader`は今回の比較試験の旧方式だけに使用し、製品側でRAMチャンク索引を作らない。従来の`GaluchatWGSMapSet3Reader`と既存APIは変更しない。矩形取得では最後に必要なブロックの処理を完了した時点で停止し、後続ブロックの走査とGI01全体長の一致の検証を省く。必要ブロック内の復号・バイト境界整列・RAWS/LZSSの終端検証は維持する。チャンクごとに独立したReaderを閉じるため、次のチャンクに備えた末尾への移動は行わない。保存チャンク索引と既存の画像キャッシュを使用する。保存ファイル内のブロック群索引も使用し、群ごとに復号範囲を制限する。同じチャンクの複数群はファイルとバッファを使い回し、追加画像は作らない。
 
@@ -235,6 +237,8 @@ USBログの取得には、pyserialを導入したPythonで`python tests/capture
 
 Galuchatの実ファイル検証は、同じ組の日本向けWGSMapSetとUTF-8のWordbookを指定して`python3 tests/run_place_files.py <mapset.glc> <names.giswordbook>`を実行する。習志野市庁舎・皇居付近の繰り返し検索、未収録座標、ファイル不足・重複・破損・修復後の再読込みを検証する。キャッシュは元の点検索との324点の比較、矩形境界、コード0、負座標、地図重なり、32bit値域、読込み途中の失敗と復旧、ヒット時に地図読出しセッションを作らないことを検証する。
 
+`python3 tests/run_wordbook_phases.py`は最大32階層・TT32ページ・TM32/33/65ページの合成辞書をstdioとFatFsアダプターで読む。従来SDKとの文字列一致、共有4 KiBの単独借用、32件境界と超過時の再走査、TI/TT/TMの読出し失敗後の回復を確認する。
+
 検証手順と結果は[Galuchat矩形キャッシュ検証](../doc/検証/Galuchat矩形キャッシュ検証.md)、[表示時計・アクセス表示検証](../doc/検証/表示時計・アクセス表示検証.md)、[東雲フォント・Settings文字サイズ検証](../doc/検証/東雲フォント・Settings文字サイズ検証.md)を参照する。
 
 USBログの`[CACHE]`はHIT / MISS / INVALID、画像容量、累計ヒット・ミス・再構成件数と検索全体の所要時間（マイクロ秒）を出す。所要時間には地名キャッシュの検索、ミス時のWordBook読出し・表示用変換も含む。`[WORDBOOK]`は地名キャッシュのHIT / MISS、登録数/16と累計ヒット・ミスを出し、地名結果が成功しなかった場合はNONEとする。辞書統計はReader閉鎖時にリセットする。`[GIS]`のheap / min_heap / largestは現在空きヒープ、起動以降の最小空きヒープ、現在の最大連続空き領域をバイト単位で示す。
@@ -262,7 +266,7 @@ M5Cardputer 1.1.1は、キーボード容量を構築時に固定した[同梱�
 
 ## Galuchatのリソース設定とチャンク索引
 
-ビルド時のGIS設定は`application/Config.h`へ集約する。`MaxDatasetChunks`は1500（上限を含む）、`MapCacheSide`は128、`FileReadBufferBytes`・`MapInitReadBufferBytes`・`WordBookReadBufferBytes`・`FileReadThroughSkipBytes`は4096、`MapRectReadBufferBytes`は16384、`IndexReadBufferBytes`は4096、`WordBookCacheEntries`は16とする。利用者が画面から変更する設定の候補・初期値は引き続き`Settings.h` / `Settings.cpp`で管理する。
+ビルド時のGIS設定は`application/Config.h`へ集約する。`MaxDatasetChunks`は1500（上限を含む）、`MapCacheSide`は128、`FileReadBufferBytes`・`MapInitReadBufferBytes`・`WordBookReadBufferBytes`・`FileReadThroughSkipBytes`は4096、`MapRectReadBufferBytes`・`IndexReadBufferBytes`は4096、検索1回のTT/TM参照先を局所スタックへ置く`WordBookReadPageCacheEntries`は32、地名LRUの`WordBookCacheEntries`は16とする。利用者が画面から変更する設定の候補・初期値は引き続き`Settings.h` / `Settings.cpp`で管理する。
 
 通常起動では保存索引の全体検証と元GLCHの照合を行い、チャンク配列をRAMへ保持しない。矩形検索時は交差するチャンクだけを開く。起動時・Reader再オープン時にチャンク数を確認し、1501以上は保存索引の検証とGI01の読出しへ進まず利用不可とする。逐次探索へ戻さない。上限超過とメモリ確保失敗はGPS更新によって再試行せず、Readerの明示的な閉鎖・SD再マウント後に再確認する。GPS受信とログ記録は継続する。
 
@@ -332,7 +336,7 @@ SD全体の利用不可、書込みだけの失敗、NVSの設定復元失敗・
 
 `DiskIndexedMapReader`は共通ヘッダーと全体範囲だけを保持する。画像キャッシュのミス時は索引を1回開き、チャンク情報40バイトを順に読む。交差しないチャンクの群情報はskipし、交差するチャンクの群情報16バイトを1件ずつ確認して、必要な群だけ保存位置から復号する。マップ索引領域の末尾で先読みを止め、毎検索の全体CRCは行わない。128×128画像・地名LRUは維持し、画像ヒット時は地図用の索引・GLCを開かない。地名LRUがミスする場合はWordbook用の索引を別に開く。`[INDEX-IO]`と`[INDEX-IO-TIME]`は両方の索引I/Oの合計を記録し、`[READ-IO]`のmap/bookは元GLC・元Wordbookだけを記録する。
 
-ブロック群の途中再開はアプリ内Galuchatの追加APIで実装した。索引ファイル形式は変更せず、既存索引をそのまま使う。WordbookもDiskIndexedWordBookReaderで保存済みTI00・TT00・TM00索引を利用する。選択言語と元Wordbookの識別情報を起動時に照合し、地名キャッシュのミスごとに索引を前方向へ1回読み、対象枝・ページ・断片を直接取得する。Core・SDKへは今回の追加APIを反映していない。前段実装の実機比較は[保存チャンク索引の比較](../doc/検証/保存チャンク索引の性能比較.md)、現在の群索引の利用・試験は[保存ブロック群索引の検証](../doc/検証/保存ブロック群索引の検証.md)と[保存Wordbook索引の検証](../doc/検証/保存Wordbook索引の検証.md)に記す。
+ブロック群の途中再開はアプリ内Galuchatの追加APIで実装した。索引ファイル形式は変更せず、既存索引をそのまま使う。WordbookもDiskIndexedWordBookReaderで保存済みTI00・TT00・TM00索引を利用する。選択言語と元Wordbookの識別情報を起動時に照合し、地名キャッシュのミスごとにTI・TT・TMの各索引領域を前方向へ読み、索引Readerを閉じてから対象枝・ページ・断片を直接取得する。TTとTMは各関数内の最大32件の参照先配列を順に使う。1件24 B、ESP32では管理情報込み776 Bで、上限を超えた段階は残りを再走査する。配列を検索間で保持せず、GLC読出しとWordbook読出しを直列化する。Readerと借用指定は例外を含むスコープ終了時に破棄し、全経路で同じUIの4KiBを共用する。Core・SDKへは今回の追加APIを反映していない。前段実装の実機比較は[保存チャンク索引の比較](../doc/検証/保存チャンク索引の性能比較.md)、現在の群索引の利用・試験は[保存ブロック群索引の検証](../doc/検証/保存ブロック群索引の検証.md)と[保存Wordbook索引の検証](../doc/検証/保存Wordbook索引の検証.md)に記す。
 
 保存索引は地図とINIの全地名言語のWordbookを1ファイルへ収録する。適用時は有効な領域を再利用し、設定→動作設定→データセットのキャッシュ再生成・キャッシュ検証で、対象番号を選び地図と全言語Wordbookを一括処理する。通常起動の軽い確認と、明示操作による元データの全走査突合を区別する。詳細は[データセット事前索引ファイル仕様11節](../doc/11_データセット事前索引ファイル仕様.md#11-索引保守と全言語の利用)に従う。
 
@@ -381,9 +385,9 @@ LIVEとGPS画面の数値整形は`GpsPresentation.h`へ集約する。表示位
 Storageの同期結果・完了通知の未送信データはStorageRepliesの共用体で保持する。索引の読取り専用検証では比較用Sourceのみを確保し、書込み用ファイル・バッファを作らない。ログのV切替で文字表示へ戻る際はUIの画像表示を無効にする。2枚の固定配列は常駐し、未返却の貸出しはStorageの取消確認後に解消する。
 
 
-StorageWorkAreaはLogReaderとMapBuildJobをstd::variantで排他保持する。UIのMapFrameReceiverは6,060 Bの固定画像を2枚所有する。Appがbackの貸出しを同期取得してStorageへ渡し、MapBuildJobは借用先へ直接生成する。Storageの生成用画像とAppの行転送配列は持たない。MapCompleted後、AppがReleaseMapの成功を回収してからUIへCommitMapFrameを送る。失敗・取消時はStorageの返却確認後にUIへDiscardMapFrameを送る。画面を離れても未返却の貸出しは保持し、完了・取消が遅れても同じ領域を再貸出ししない。未完了の読出し・地図結果は切り替えず、ログ結果の返送領域へのコピー後、ファイルcloseが成功してからReaderを破棄する。MapSessionの区域コード画像とUIの表示・受信画像は共用領域の外に置く。切替とclose失敗の試験は`python3 tests/run_storage_work.py`で実行する。メモリ・所要時間の比較は[Storage作業領域共用の検証](../doc/検証/Storage作業領域共用の検証.md)を参照する。
+StorageWorkAreaはLogReaderとMapBuildJobをstd::variantで排他保持する。地図のFILはMapBuildJob内に置き、既存のLogReader用領域と排他で共用する。事前確認・索引・GLCの順に同じFILを借り、地図用ReaderはFactoryのwithRange内でスタック上に構築・破棄する。Reader本体とFILのヒープ確保を地図生成経路から除き、SDK互換Factoryと他の処理経路は維持する。UIのMapFrameReceiverは6,060 Bの固定画像を2枚所有する。Appがbackの貸出しを同期取得してStorageへ渡し、MapBuildJobは借用先へ直接生成する。Storageの生成用画像とAppの行転送配列は持たない。MapCompleted後、AppがReleaseMapの成功を回収してからUIへCommitMapFrameを送る。失敗・取消時はStorageの返却確認後にUIへDiscardMapFrameを送る。画面を離れても未返却の貸出しは保持し、完了・取消が遅れても同じ領域を再貸出ししない。未完了の読出し・地図結果は切り替えず、ログ結果の返送領域へのコピー後、ファイルcloseが成功してからReaderを破棄する。MapSessionの区域コード画像とUIの表示・受信画像は共用領域の外に置く。切替とclose失敗の試験は`python3 tests/run_storage_work.py`で実行する。メモリ・所要時間の比較は[Storage作業領域共用の検証](../doc/検証/Storage作業領域共用の検証.md)を参照する。
 
-地図生成の索引Readerは、UIから貸し出されたback画像の先頭4KiBを借用する。全Readerが破棄されて借用が解除された後に同じ配列へ境界画像を生成し、索引読出し用の動的確保を1回省く。マップ本体の16KiBバッファは維持し、借用を指定しないReaderも従来どおり自己所有する。`python3 tests/run_borrowed_reader.py`で寿命・排他・例外時の返却を検証し、`run_borrowed_map_files.py <map> <wordbook>`で区域コード・境界画像と要求確保量を比較する。
+地図生成の索引ReaderとGLC Readerは、UIから貸し出されたback画像の先頭4KiBを順に借用する。全Readerが破棄されて借用が解除された後に同じ配列へ境界画像を生成し、両Readerの読出しバッファの動的確保を省く。GLCの先読みは4KiBとし、借用を指定しないReaderも従来どおり自己所有する。`python3 tests/run_borrowed_reader.py`で寿命・排他・例外時の返却を検証し、`run_borrowed_map_files.py <map> <wordbook>`で区域コード・境界画像と要求確保量を比較する。
 
 借用導入前後の空きヒープ・連続空き領域・所要時間は[Reader借用バッファの実機比較](../doc/検証/Reader借用バッファの実機比較.md)を参照する。
 
@@ -392,7 +396,9 @@ Wordbook検索は、TT00の対象選択とTM00のトークン選択で同じ番�
 ログ画面群を離れた際は、Appが終端結果を回収した後にReleaseLogBrowseを一方向通知する。Storageは世代を照合し、読出し・結果返送・closeの終了後にパス容量を解放する。LogWriterも正常なclose完了後にパスを解放し、ファイル名は状態スナップショットへ残す。消灯時のUI画像保持は従来どおりとする。アプリ側の16バイト固定ヘッダ照合にはFixedHeader.hを用い、文字列の一時確保を行わない。[実装検証](../doc/検証/寿命整理と固定ヘッダ照合の実装検証.md)を参照する。
 
 
-地名検索もUIの固定backを作業域として借りる。BeginPlaceSearchでアドレス・容量・貸出しIDを取得し、SearchPlaceへ渡す。先頭4KiBを索引Readerへ、その後の整列済み領域をPlaceResultへ使用する。Storageの完了通知はメタデータだけとし、AppのprocessPlaceが結果を確認してCommitPlaceSearchまたはDiscardPlaceSearchを送る。通知ハンドラから同期UI要求は送らない。画面離脱・消灯・古いログ点の結果でも処理終了まで貸出しを保持し、返却を確認してから新しい検索・地図生成を許可する。Appの通常表示スナップショットも確定済み結果に揃え、古い地名への巻戻りを防ぐ。索引Factoryの借用設定は検索内だけで復元し、既存の自己所有Readerも利用できる。`tests/run_borrowed_place_files.py <map> <wordbook> ...`で実データの結果一致・確保削減・例外時返却を検証する。
+借用領域はMapReadWorkspace（Readerとパス）・PlaceReadWorkspace（Readerと結果）の用途別構造体で配置を定義し、BorrowedLayoutへ容量・アラインメント検証と構築・破棄・型変換を集約する。読出し配列を初期化時にゼロクリアせず、結果だけを初期化する。[整理と性能比較](../doc/検証/借用メモリの型付きレイアウト整理.md)を参照する。
+
+地名検索もUIの固定backを作業域として借りる。BeginPlaceSearchでアドレス・容量・貸出しIDを取得し、SearchPlaceへ渡す。先頭4KiBを索引・GLC Readerへ順に渡し、その後の整列済み領域をPlaceResultへ使用する。Storageの完了通知はメタデータだけとし、AppのprocessPlaceが結果を確認してCommitPlaceSearchまたはDiscardPlaceSearchを送る。通知ハンドラから同期UI要求は送らない。画面離脱・消灯・古いログ点の結果でも処理終了まで貸出しを保持し、返却を確認してから新しい検索・地図生成を許可する。Appの通常表示スナップショットも確定済み結果に揃え、古い地名への巻戻りを防ぐ。索引・GLC Factoryの借用設定は検索内だけで復元し、既存の自己所有Readerも利用できる。`tests/run_borrowed_place_files.py <map> <wordbook> ...`で実データの結果一致・確保削減・例外時返却を検証する。
 
 地名検索のUI作業域借用の実装・確保量・実機書込み結果は[検証報告](../doc/検証/地名検索のUI作業域借用の検証.md)を参照する。
 
@@ -403,3 +409,7 @@ RGの表示を廃止し、全画面共通のSDカードアイコンへ統一し�
 全画面の共通ヘッダーはSDカード→電池アイコン→残量率の順とし、電池は既存の5秒周期で更新する。READING/LOADING等の単純な読出し文言は省き、SD実アクセス表示へ統合した。削除・保存終了待ち・生成/検証の進捗とエラー表示は維持する。
 
 ログ一覧のサイズ由来件数・ページ表示・直接閲覧とSDアイコン更新は[検証報告](../doc/検証/ログ一覧と直接閲覧の検証.md)にまとめる。
+
+## 固定の区域コード領域
+
+StorageTask内のStorageCodeImagesが地名判定用64 KiBと地図用96 KiBを所有し、CachedMapReaderとMapSessionは借用参照を使う。両配列はヒープを使わず、画面の有無にかかわらず予約する。地図用は通常地図/ログ地図で1枚を排他的に使用する。CloseMapSession後も有効な内容を保持し、要求のデータセット世代・緯度経度・倍率等が一致すれば再描画する。容量超過時はエラーを返し、動的確保へ逃げない。詳細は[設計と借用候補](../doc/14_Storage固定画像領域と作業領域の設計.md)を参照する。

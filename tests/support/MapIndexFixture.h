@@ -18,7 +18,7 @@ public:
     }
 private:Bytes bytes_;
 };
-inline geoputer::CachedMapReader cache(std::shared_ptr<const galuchat::ReaderFactory> factory,const Bytes& bytes,geoputer::StorageObserver* observer=nullptr) {
+inline geoputer::CachedMapReader cache(geoputer::CodeCacheBuffer& pixels,std::shared_ptr<const galuchat::ReaderFactory> factory,const Bytes& bytes,geoputer::StorageObserver* observer=nullptr) {
     galuchat::BufferReader src(bytes);
     if(galuchat::detail::readAscii(src,4)!="GLCH")throw std::runtime_error("fixture GLCH");
     const auto payload=src.readMbUInt();const auto end=src.pos()+payload;
@@ -51,10 +51,10 @@ inline geoputer::CachedMapReader cache(std::shared_ptr<const galuchat::ReaderFac
     put(info.header.data()+16,index.size());put(info.header.data()+60,index.size()-64);
     std::copy(info.header.begin(),info.header.end(),index.begin());
     info.west=west;info.south=south;info.width=east-west;info.height=north-south;
-    return geoputer::CachedMapReader(info,std::move(factory),std::make_shared<OwnedFactory>(std::move(index)),observer);
+    return geoputer::CachedMapReader(pixels,info,std::move(factory),std::make_shared<OwnedFactory>(std::move(index)),observer);
 }
-inline geoputer::CachedMapReader cacheFile(std::shared_ptr<const galuchat::ReaderFactory> factory,const std::string& path) {
-    std::ifstream f(path,std::ios::binary);return cache(std::move(factory),Bytes(std::istreambuf_iterator<char>(f),{}));
+inline geoputer::CachedMapReader cacheFile(geoputer::CodeCacheBuffer& pixels,std::shared_ptr<const galuchat::ReaderFactory> factory,const std::string& path) {
+    std::ifstream f(path,std::ios::binary);return cache(pixels,std::move(factory),Bytes(std::istreambuf_iterator<char>(f),{}));
 }
 inline void generate(const std::string& directory,const std::string& map,const std::string& book) {
     geoputer::DatasetMetadata metadata;metadata.map=map;metadata.wordbook=book;metadata.language="ja";

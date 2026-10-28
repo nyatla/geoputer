@@ -299,7 +299,7 @@ inline std::string readBStrAscii(ByteReader& reader, size_t length) {
 class LimitedReader final : public ByteReader {
 public:
     LimitedReader(ByteReader& source, size_t length)
-        : source_(source), length_(length) {}
+        : source_(&source), length_(length) {}
 
     size_t pos() const override { return pos_; }
     bool atEnd() const override { return pos_ == length_; }
@@ -308,7 +308,7 @@ public:
 protected:
     uint8_t nextByte() override {
         if (atEnd()) throw std::runtime_error("declared byte range exceeded");
-        uint8_t value = source_.readByte();
+        uint8_t value = source_->readByte();
         pos_++;
         return value;
     }
@@ -317,12 +317,12 @@ protected:
         if (length > remaining()) {
             throw std::runtime_error("declared byte range exceeded");
         }
-        source_.skipInByte(length);
+        source_->skipInByte(length);
         pos_ += length;
     }
 
 private:
-    ByteReader& source_;
+    ByteReader* source_;
     size_t length_;
     size_t pos_ = 0;
 };
@@ -952,16 +952,11 @@ private:
 class GaluchatImageDataChunk01Reader {
 public:
     explicit GaluchatImageDataChunk01Reader(ByteReader& reader)
+        : payload_reader_(reader, readPayloadSize(reader))
     {
-        if (detail::readAscii(reader, 4) != "GI01") {
-            throw std::runtime_error("invalid GI01 chunk");
-        }
-        size_t payload_size = detail::toSize(reader.readMbUInt(), "GI01 payload size");
-        payload_reader_ = std::make_unique<detail::LimitedReader>(reader, payload_size);
-        reader_ = payload_reader_.get();
-        width = detail::positiveInt(reader_->readMbUInt(), "GI01 width");
-        height = detail::positiveInt(reader_->readMbUInt(), "GI01 height");
-        int square_unit_log2 = static_cast<int>(reader_->readByte());
+        width = detail::positiveInt(payload_reader_.readMbUInt(), "GI01 width");
+        height = detail::positiveInt(payload_reader_.readMbUInt(), "GI01 height");
+        int square_unit_log2 = static_cast<int>(payload_reader_.readByte());
         if (square_unit_log2 > 30) {
             throw std::runtime_error("GI01 squareUnit exponent is out of range");
         }
@@ -970,6 +965,11 @@ public:
         vus = (height - 1) / square_unit + 1;
         validateBlockLayout();
     }
+
+    GaluchatImageDataChunk01Reader(const GaluchatImageDataChunk01Reader&) = delete;
+    GaluchatImageDataChunk01Reader& operator=(const GaluchatImageDataChunk01Reader&) = delete;
+    GaluchatImageDataChunk01Reader(GaluchatImageDataChunk01Reader&&) noexcept = default;
+    GaluchatImageDataChunk01Reader& operator=(GaluchatImageDataChunk01Reader&&) noexcept = default;
 
     int width = 0;
     int height = 0;
@@ -1041,8 +1041,8 @@ public:
             block.readBlockRect({part.x - cell.x, part.y - cell.y, part.width, part.height},
                                 dest, part.x - target.x, part.y - target.y);
         }
-        decoder.reader_->skipToByte();
-        if (stop > range.first_block && stop == range_end && !decoder.payload_reader_->atEnd()) {
+        decoder.payload_reader_.skipToByte();
+        if (stop > range.first_block && stop == range_end && !decoder.payload_reader_.atEnd()) {
             throw std::runtime_error("GI01 block range has trailing bytes");
         }
     }
@@ -1053,27 +1053,28 @@ public:
     void visitBlockPositions(Visitor visitor) {
         if (consumed_) throw std::runtime_error("GI01 reader has already been consumed");
         consumed_ = true;
-        const size_t first = reader_->pos();
+        const size_t first = payload_reader_.pos();
         BlockReader block(*this);
         for (int index = 0; index < hus * vus; ++index) {
-            const size_t start = reader_->pos();
+            const size_t start = payload_reader_.pos();
             block.skipBlock(1);
-            visitor(static_cast<size_t>(index), start - first, reader_->pos() - start);
+            visitor(static_cast<size_t>(index), start - first, payload_reader_.pos() - start);
         }
-        reader_->skipToByte();
-        if (!payload_reader_->atEnd()) throw std::runtime_error("GI01 has trailing bytes");
+        payload_reader_.skipToByte();
+        if (!payload_reader_.atEnd()) throw std::runtime_error("GI01 has trailing bytes");
     }
 
     void skipToEnd() {
-        reader_->skipToByte();
-        reader_->skipInByte(payload_reader_->remaining());
+        payload_reader_.skipToByte();
+        payload_reader_.skipInByte(payload_reader_.remaining());
         consumed_ = true;
     }
 
 private:
     // Used only by the opt-in range API. The released constructor/read paths
     // continue to parse and consume their original GI01 stream unchanged.
-    GaluchatImageDataChunk01Reader(ByteReader& source, const BlockRange& range) {
+    GaluchatImageDataChunk01Reader(ByteReader& source, const BlockRange& range)
+        : payload_reader_(source, range.data_bytes) {
         if (source.bitOffset() != 0 || range.width <= 0 || range.height <= 0
             || range.square_unit <= 0 || range.square_unit > (1 << 30)
             || (range.square_unit & (range.square_unit - 1)) != 0) {
@@ -1088,8 +1089,6 @@ private:
             || range.block_count > total - range.first_block || !range.data_bytes) {
             throw std::runtime_error("invalid GI01 block range bounds");
         }
-        payload_reader_ = std::make_unique<detail::LimitedReader>(source, range.data_bytes);
-        reader_ = payload_reader_.get();
     }
 
     enum class TailMode { Consume, Leave };
@@ -1125,8 +1124,8 @@ private:
                 crossed.x - target.x,
                 crossed.y - target.y);
         }
-        reader_->skipToByte();
-        if (tail == TailMode::Consume && !payload_reader_->atEnd()) {
+        payload_reader_.skipToByte();
+        if (tail == TailMode::Consume && !payload_reader_.atEnd()) {
             throw std::runtime_error("GI01 chunk size does not match decoded blocks");
         }
     }
@@ -1154,8 +1153,8 @@ private:
 
     class BlockReader {
     public:
-        explicit BlockReader(const GaluchatImageDataChunk01Reader& owner)
-            : owner_(owner), reader_(*owner.reader_) {}
+        explicit BlockReader(GaluchatImageDataChunk01Reader& owner)
+            : owner_(owner), reader_(owner.payload_reader_) {}
 
         void skipBlock(int count) {
             for (int i = 0; i < count; i++) {
@@ -1624,8 +1623,16 @@ private:
         }
     }
 
-    std::unique_ptr<detail::LimitedReader> payload_reader_;
-    ByteReader* reader_ = nullptr;
+    static size_t readPayloadSize(ByteReader& reader) {
+        if (detail::readAscii(reader, 4) != "GI01") {
+            throw std::runtime_error("invalid GI01 chunk");
+        }
+        return detail::toSize(reader.readMbUInt(), "GI01 payload size");
+    }
+
+    // Inline storage follows the decoder's lifetime. No pointer aliases this
+    // member, so default moves preserve the source and current bit/byte state.
+    detail::LimitedReader payload_reader_;
     bool consumed_ = false;
 };
 

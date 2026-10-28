@@ -122,11 +122,11 @@ void testMapScaleKeys() {
     check(model.snapshot().action.kind==ActionKind::Wake && model.data().map.scale==4,"first key while dark only wakes the display");
 }
 MapSourceResult source(const map::Request& request) {
-    MapSourceResult result;result.info.request=request;
+    static map::CodeImageBuffer source_pixels{};MapSourceResult result(source_pixels);result.info.request=request;
     check(map::planViewport(35.681641,140.027194,10000,10000,96*1024,result.plan)==map::Error::None,"map plan succeeds within independent memory budget");
     result.info.width=result.plan.width;result.info.height=result.plan.height;result.info.meters_per_pixel=result.plan.meters_per_pixel;
     result.info.region=11;
-    const auto& b=result.plan.source;result.pixels.reset(new uint32_t[size_t(b.width)*b.height]);
+    const auto& b=result.plan.source;result.reserve(size_t(b.width)*b.height);
     for(int y=0;y<b.height;++y)for(int x=0;x<b.width;++x)result.pixels[size_t(y)*b.width+x]=x<120?11:22;
     return result;
 }
@@ -177,7 +177,7 @@ void testMaps() {
     map::BufferLease denied{};auto another=request;another.buffer={};++another.token;
     check(!receiver.begin(another,denied),"an outstanding lease excludes another writer");
     input=source(request);
-    map::MapSession session;MapBuildJob job;check(job.start(request,session) && !job.start(request,session),"only one accepted map operation is retained");
+    map::CodeImageBuffer session_pixels{};map::MapSession session(session_pixels);MapBuildJob job;check(job.start(request,session) && !job.start(request,session),"only one accepted map operation is retained");
     job.loaded(std::move(input));for(int n=0;n<13;++n)job.step();
     check(job.complete() && job.notificationPending(),"direct output ready after bounded render steps");
     const auto completed=job.info();
@@ -189,13 +189,13 @@ void testMaps() {
     check(job.release(request) && !job.occupied(),"Storage drops all buffer references before UI commit");
     check(receiver.commit(completed) && receiver.image().bytes()==6060,"complete fixed image becomes front atomically");
     check(session.valid && session.pixels && session.bytes()==session.view().count*4,"job release preserves its screen session");
-    const auto* retained=session.pixels.get();auto recolor=request;++recolor.token;recolor.buffer={};
+    const auto* retained=session.pixels;auto recolor=request;++recolor.token;recolor.buffer={};
     recolor.reuse=true;recolor.region_known=true;recolor.region=0;
     check(receiver.begin(recolor,recolor.buffer) && recolor.buffer.data!=first_buffer.data,"next writer gets the other fixed array");
     check(receiver.image().get(119,10)==2,"a new writer never changes the visible old frame");
     check(job.start(recolor,session) && !job.reading(),"recolor requires no reader");
     while(!job.complete())job.step();
-    check(session.pixels.get()==retained && (recolor.buffer.data[29]&3)==1,"recolor reuses source and directly replaces the highlighted edge");
+    check(session.pixels==retained && (recolor.buffer.data[29]&3)==1,"recolor reuses source and directly replaces the highlighted edge");
     auto recolored=job.info();check(job.release(recolor) && receiver.commit(recolored),"recolored map commits after write ownership return");
     auto failed=request;++failed.token;failed.buffer={};
     check(receiver.begin(failed,failed.buffer) && failed.buffer.data==first_buffer.data,"fixed arrays alternate without reallocation");

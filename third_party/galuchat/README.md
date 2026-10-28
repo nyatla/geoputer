@@ -59,6 +59,15 @@ RAWセルは矩形との交差をセルごとに求め、描画対象の行を�
 行バッファ、追加のヒープ領域、出力先の新しいAPIは不要である。
 Core・SDKへは未反映。互換性とホスト比較は[RAW行処理の検証](../../doc/検証/RAW行処理の検証.md)を参照する。
 
+## アプリ限定のGI01 Reader保持方式
+
+`GaluchatImageDataChunk01Reader`は、ペイロードの`LimitedReader`を値メンバーとして保持する。
+チャンク単位・ブロック群単位の生成で`make_unique`を行わず、呼出し側のデコーダと同じ寿命にする。
+従来の入力位置・ビット位置・末尾検証、単回利用の制約、コピー禁止とムーブ可能な性質を維持する。
+メンバー自身を指すポインタを置かず、ムーブ後も入力元への参照と読出し状態を維持する。
+アプリ内の変更であり、Core・SDKへの同期は別途行う。
+[地図生成の残存ヒープ調査](../../doc/検証/地図生成の残存ヒープ調査.md)にFactoryのスタック化と合わせて記録する。
+
 ## アプリ限定のWordbook索引用API
 
 `gis_wordbook_reader.hpp`の既存コンストラクタ・逐次検索メソッドは変更せず、外部索引で位置決めしたByteReaderから読む静的APIを追加する。API自身は索引を保持しない。
@@ -74,7 +83,7 @@ Core・SDKへは未反映。互換性とホスト比較は[RAW行処理の検証
 | ヘッダ | SHA-256 |
 |---|---|
 | `gis_wordbook_reader.hpp` | `27018e7f168ac18ad8f9bf9751ca74be61342e57b275e5941e23a28f539af8aa` |
-| `wgsmap3_reader.hpp` | `8e6dc5dc6cbec7294cf9b91eacbbf54720229902c0488b543685fcb967d1b9ac` |
+| `wgsmap3_reader.hpp` | `1af63584a21daf4dc02204b4dc0851b1d5d576ecea5679ab2fb6c9c6b2f25601` |
 | `wgsmapset3_indexed_reader.hpp` | `bab035394f1b82c13511d8e2bfa7d9b0140c54ddcb9209e041c0e2534848287f` |
 
 ホスト検証はリポジトリのルートで`python3 tests/run_galuchat_ranges.py`を実行する。

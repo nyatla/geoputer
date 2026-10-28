@@ -38,7 +38,7 @@ void testMissingCacheRelease(const fs::path& root,const fs::path& map,const fs::
     SettingsStore store;check(store.begin(),"real-file test NVS opens");
     StorageSnapshot state{};state.settings=defaultSettings();state.settings.dataset=1;std::strcpy(state.settings.wordbook_language,"ja");
     check(store.save(state.settings),"selection persisted before cache removal");
-    Activity activity;PlaceLookup lookup;lookup.setObserver(&activity);lookup.configure(directory.string(),"ja");
+    Activity activity;CodeCacheBuffer lookup_pixels{};SelectedDataset lookup_dataset;PlaceLookup lookup(lookup_pixels,lookup_dataset);lookup.setObserver(&activity);lookup.configure(directory.string(),"ja");
     const auto failed=lookup.prepare();check(failed.state==PlaceState::DataError,"missing saved index fails startup preparation");
     check(releaseUnusableDataset(store,state,failed.state),"failed startup clears selected dataset");
     lookup.configure("");const auto accesses=activity.accesses;
@@ -47,7 +47,7 @@ void testMissingCacheRelease(const fs::path& root,const fs::path& map,const fs::
     check(activity.accesses==accesses && lookup.cacheStats().bytes==0,"automatic release performs no later dataset I/O and retains no raster");
     Settings restored{};SettingsStore reboot;check(reboot.begin() && reboot.load(restored)==SettingsState::Loaded && !restored.dataset,
         "a reboot after missing cache restores None");
-    PlaceLookup next_boot;next_boot.setObserver(&activity);next_boot.configure(restored.dataset?directory.string():"");
+    CodeCacheBuffer next_boot_pixels{};SelectedDataset next_boot_dataset;PlaceLookup next_boot(next_boot_pixels,next_boot_dataset);next_boot.setObserver(&activity);next_boot.configure(restored.dataset?directory.string():"");
     check(next_boot.prepare().state==PlaceState::Unselected && activity.accesses==accesses,"next boot skips broken dataset completely");
     test_index::generate(directory.string(),"map.glc","names.giswordbook");
     check(reboot.load(restored)==SettingsState::Loaded && !restored.dataset,"cache regeneration does not select the repaired dataset");
@@ -62,7 +62,7 @@ void testLiveDatasetSwitch(const fs::path& root,const fs::path& map,const fs::pa
             <<(directory==first?"FIRST %0":"SECOND %1%2%3%4")<<"\ndisplay_line2=\n";
         test_index::generate(directory.string(),"map.glc","names.giswordbook");
     }
-    Activity activity;PlaceLookup lookup;lookup.setObserver(&activity);
+    Activity activity;CodeCacheBuffer lookup_pixels{};SelectedDataset lookup_dataset;PlaceLookup lookup(lookup_pixels,lookup_dataset);lookup.setObserver(&activity);
     PlaceRequest request{7,31,{35.681641,140.027194,1000,true}};
     lookup.configure(first.string(),"ja");
     check(lookup.prepare().state==PlaceState::Ready && !std::strcmp(lookup.search(request).lines[0],"FIRST 千葉県"),
@@ -101,7 +101,7 @@ int main(int argc, char** argv) {
         PlaceRequest request{7, 31, {35.681641, 140.027194, 1000, true}};
         Activity activity;
         {
-            PlaceLookup disabled;disabled.setObserver(&activity);disabled.configure("");
+            CodeCacheBuffer disabled_pixels{};SelectedDataset disabled_dataset;PlaceLookup disabled(disabled_pixels,disabled_dataset);disabled.setObserver(&activity);disabled.configure("");
             const auto accesses=activity.accesses;
             const auto generation=disabled.datasetInfo().generation;
             for(unsigned i=0;i<3;++i) {
@@ -116,7 +116,7 @@ int main(int argc, char** argv) {
             disabled.configure("");
             check(disabled.prepare().state==PlaceState::Unselected,"unselection clears even a latched dataset fault");
         }
-        PlaceLookup lookup(data.string());
+        CodeCacheBuffer lookup_pixels{};SelectedDataset lookup_dataset;PlaceLookup lookup(lookup_pixels,lookup_dataset,data.string());
         lookup.setObserver(&activity);
         check(lookup.prepare().state == PlaceState::DatasetMissing, "startup detects missing dataset without GPS");
         check(lookup.search(request).state == PlaceState::DatasetMissing, "missing dataset");
@@ -151,7 +151,7 @@ int main(int argc, char** argv) {
         fs::copy_file(argv[3], data / "names.giswordbook");
         test_index::generate(data.string(),"area.glc","names.giswordbook");
         {
-            PlaceLookup no_memory(data.string());no_memory.setObserver(&activity);
+            CodeCacheBuffer no_memory_pixels{};SelectedDataset no_memory_dataset;PlaceLookup no_memory(no_memory_pixels,no_memory_dataset,data.string());no_memory.setObserver(&activity);
             fail_next_allocation=true;
             check(no_memory.prepare().state==PlaceState::OutOfMemory,"allocation failure becomes a dataset rejection");
             check(!fail_next_allocation,"allocation failure was injected");
@@ -161,7 +161,7 @@ int main(int argc, char** argv) {
             no_memory.close();check(no_memory.prepare().state==PlaceState::Ready,"explicit revalidation recovers from memory failure");
         }
         check(lookup.prepare().state == PlaceState::Ready, "startup opens real file headers without a GPS fix");
-        check(lookup.cacheStats().bytes == 0, "Boot dataset preparation does not allocate the cache image");
+        check(lookup.cacheStats().bytes == 0 && !lookup.cacheStats().valid, "Boot binds the fixed array without reading a logical cache image");
         check(activity.cache == RgCacheState::Unprepared,"dataset headers alone do not prepare the image");
         check(lookup.search(request).state == PlaceState::Ready && activity.cache == RgCacheState::Ready,
               "completed rectangle rebuild reports persistent ready state");

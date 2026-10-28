@@ -4,7 +4,8 @@ namespace geoputer {
 // Sessions follow the displayed map; the worker follows accepted jobs.
 // StorageTask admits one read/map job, independently of the retained raster.
 struct StorageScreenResources {
-    explicit StorageScreenResources(StorageObserver* observer=nullptr):work(observer){}
+    explicit StorageScreenResources(map::CodeImageBuffer& pixels,StorageObserver* observer=nullptr)
+        :live_map(pixels),log_map(pixels),work(observer){}
     map::MapSession live_map,log_map;
     map::MapSession& session(map::SessionId id) {return id==map::SessionId::Log?log_map:live_map;}
     size_t retainedMapBytes() const {return live_map.bytes()+log_map.bytes();}

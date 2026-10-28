@@ -66,14 +66,14 @@ OperationStatus UiModel::beginPlaceSearch(const PlaceRequest& request,map::Buffe
     if(!validPlaceMemory(place_borrow_)) {
         screen_resources_.map.frame.returnWork(request.token,buffer);place_borrow_={};return OperationStatus::Unavailable;
     }
-    auto* output=new (placeResultMemory(place_borrow_)) PlaceResult{};
+    auto* output=beginPlaceMemory(place_borrow_);
     output->request=place_borrow_;
     return OperationStatus::Ok;
 }
 OperationStatus UiModel::discardPlaceSearch(const PlaceRequest& request) {
     if(!place_borrow_.token || !samePlaceRequest(place_borrow_,request))return OperationStatus::StaleContent;
     // App has already observed Storage's completion (or never submitted it).
-    placeResultMemory(place_borrow_)->~PlaceResult();
+    endPlaceMemory(place_borrow_);
     if(!screen_resources_.map.frame.returnWork(request.token,request.buffer))return OperationStatus::InvalidRequest;
     place_borrow_={};return OperationStatus::Ok;
 }

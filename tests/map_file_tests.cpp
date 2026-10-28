@@ -25,7 +25,7 @@ int main(int argc,char** argv) {
         fs::copy_file(argv[2],dir/"map.glc");fs::copy_file(argv[3],dir/"names.giswordbook");
         std::ofstream(dir/"dataset.ini")<<"[dataset]\nversion=1\nmap=map.glc\ndefault_language=ja\n[ja]\ntitle=Test\nwordbook=names.giswordbook\n";
         test_index::generate(dir.string(),"map.glc","names.giswordbook");
-        Observer observer;PlaceLookup lookup;lookup.setObserver(&observer);lookup.configure(dir.string(),"ja");
+        map::CodeImageBuffer source_pixels{},sample_pixels{};Observer observer;CodeCacheBuffer lookup_pixels{};SelectedDataset lookup_dataset;PlaceLookup lookup(lookup_pixels,lookup_dataset);lookup.setObserver(&observer);lookup.configure(dir.string(),"ja");
         check(lookup.prepare().state==PlaceState::Ready,"existing lookup opens normally");
         PlaceRequest point{1,1,{35.681641,140.027194,1000,true}};
         const auto place=lookup.search(point);check(place.state==PlaceState::Ready,"existing 128 cache populated");
@@ -34,7 +34,7 @@ int main(int argc,char** argv) {
         request.latitude=point.fix.latitude;request.longitude=point.fix.longitude;
         map::MapFrameReceiver receiver;check(receiver.begin(request,request.buffer),"fixed UI output lent before source read");
         const auto started=std::chrono::steady_clock::now();
-        auto result=readBoundaryMap(dir.string(),"ja",request,0,&observer);
+        auto result=readBoundaryMap(lookup_dataset,request,0,&observer,map::MapSession(source_pixels));
         const auto elapsed=std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()-started).count();
         check(result.info.error==map::Error::None && result.pixels,"independent map source succeeds");
         check(result.info.region==place.region_code,"map center matches the shared point lookup");
@@ -45,21 +45,21 @@ int main(int argc,char** argv) {
               lookup.datasetInfo().generation==generation && observer.rg==rg,"map never invalidates, reuses or changes the 128 cache or RG state");
         const auto raw_bytes=result.view().count*4;const auto name=std::string(place.lines[0])+" / "+place.lines[1];
         const auto plan=result.plan;
-        map::MapSession session;MapBuildJob job;job.start(request,session);job.loaded(std::move(result));
+        map::CodeImageBuffer session_pixels{};map::MapSession session(session_pixels);MapBuildJob job;job.start(request,session);job.loaded(std::move(result));
         unsigned steps=0;while(!job.complete() && ++steps<20)job.step();
         check(job.complete() && job.info().error==map::Error::None,"map renders in bounded steps");
         const auto completed=job.info();
         check(job.release(request) && receiver.commit(completed) && receiver.image().bytes()==6060,"direct map output commits after writer release");
-        const auto* retained=session.pixels.get();const auto retained_bytes=session.bytes();const auto before_highlight=observer.sd;
+        const auto* retained=session.pixels;const auto retained_bytes=session.bytes();const auto before_highlight=observer.sd;
         check(session.valid && retained && retained_bytes==raw_bytes && !job.occupied(),"raster survives worker release");
         auto highlight=request;highlight.buffer={};++highlight.token;highlight.reuse=true;highlight.region_known=true;highlight.region=0;
         check(receiver.begin(highlight,highlight.buffer) && job.start(highlight,session) && !job.reading(),"highlight skips SD loading");
         while(!job.complete())job.step();
-        check(session.pixels.get()==retained && observer.sd==before_highlight && job.info().region==0,"highlight reuses pixels without SD IO");
+        check(session.pixels==retained && observer.sd==before_highlight && job.info().region==0,"highlight reuses pixels without SD IO");
         check(job.release(highlight) && receiver.discard(highlight),"return recolor output");
         auto shifted=request;++shifted.token;shifted.longitude+=.0001;
-        auto refilled=readBoundaryMap(dir.string(),"ja",shifted,0,&observer,std::move(session));
-        check(refilled.info.error==map::Error::None && refilled.pixels.get()==retained && refilled.bytes()==retained_bytes,"next viewport overwrites the same allocation");
+        auto refilled=readBoundaryMap(lookup_dataset,shifted,0,&observer,std::move(session));
+        check(refilled.info.error==map::Error::None && refilled.pixels==retained && refilled.bytes()==retained_bytes,"next viewport overwrites the same allocation");
         refilled.clear();
         const auto accesses=observer.sd;
         const auto repeated=lookup.search(point);
@@ -68,7 +68,7 @@ int main(int argc,char** argv) {
         for(unsigned scale:{2u,4u}) {
             auto scaled=request;scaled.buffer={};scaled.scale=scale;++scaled.token;
             map::MapFrameReceiver sampled_frame;check(sampled_frame.begin(scaled,scaled.buffer),"sampled fixed output loan");
-            auto small=readBoundaryMap(dir.string(),"ja",scaled,0,&observer);
+            auto small=readBoundaryMap(lookup_dataset,scaled,0,&observer,map::MapSession(sample_pixels));
             check(small.info.error==map::Error::None && small.pixels,"sampled map source succeeds");
             check(small.info.region==place.region_code,"sampled map retains its generation-center code");
             check(small.view().count*4==raw_bytes && small.info.meters_per_pixel==plan.meters_per_pixel*scale,
@@ -84,11 +84,11 @@ int main(int argc,char** argv) {
             std::vector<uint32_t> expected(small.view().count);
             for(int y=0;y<small.plan.source.height;++y)for(int x=0;x<small.plan.source.width;++x)
                 expected[size_t(y)*small.plan.source.width+x]=full[size_t(y*scale)*b.width+x*scale];
-            check(!std::memcmp(expected.data(),small.pixels.get(),expected.size()*4),"direct sampled result differs from full-resolution reference decimation");
+            check(!std::memcmp(expected.data(),small.pixels,expected.size()*4),"direct sampled result differs from full-resolution reference decimation");
             map::BoundaryImage edges;edges.resize(240,101);
             check(map::buildBoundaryRows({expected.data(),small.plan.source,expected.size()},small.plan,place.region_code,0,101,edges)==map::Error::None,
                   "reference decimated image uses the ordinary edge detector");
-            map::MapSession sampled_session;MapBuildJob sampled_job;sampled_job.start(scaled,sampled_session);sampled_job.loaded(std::move(small));
+            map::CodeImageBuffer sampled_session_pixels{};map::MapSession sampled_session(sampled_session_pixels);MapBuildJob sampled_job;sampled_job.start(scaled,sampled_session);sampled_job.loaded(std::move(small));
             while(!sampled_job.complete())sampled_job.step();
             const auto sampled_info=sampled_job.info();
             check(sampled_job.release(scaled) && sampled_frame.commit(sampled_info) &&
@@ -100,19 +100,23 @@ int main(int argc,char** argv) {
         }
         std::ofstream(dir/"dataset.ini",std::ios::app)<<"display_line1=AREA %0 %%\ndisplay_line2=%1%2%3%4%5\n";
         lookup.configure(dir.string(),"ja");check(lookup.prepare().state==PlaceState::Ready,"formatted point lookup prepares");
-        const auto formatted=lookup.search(point);auto formatted_map=readBoundaryMap(dir.string(),"ja",request,0,&observer);
+        const auto formatted=lookup.search(point);request.dataset_generation=lookup_dataset.info.generation;auto formatted_map=readBoundaryMap(lookup_dataset,request,0,&observer,map::MapSession(source_pixels));
         check(formatted_map.info.error==map::Error::None && std::string(formatted.lines[0]).find("AREA ")==0,"shared lookup honours formatting independently of map generation");
         std::ofstream(dir/"dataset.ini")<<"[dataset]\nversion=1\nmap=map.glc\ndefault_language=ja\n[ja]\ntitle=Test\nwordbook=names.giswordbook\ndisplay_line1=\ndisplay_line2=\n";
-        auto blank=readBoundaryMap(dir.string(),"ja",request,0,&observer);
+        auto blank=readBoundaryMap(lookup_dataset,request,0,&observer,map::MapSession(source_pixels));
         check(blank.info.error==map::Error::None,"map generation is independent of place row formatting");
+        fs::rename(dir/"dataset.ini",dir/"dataset.hidden");
+        check(readBoundaryMap(lookup_dataset,request,0,&observer,map::MapSession(source_pixels)).info.error==map::Error::None,
+              "initialized map must not reopen INI");
+        fs::rename(dir/"dataset.hidden",dir/"dataset.ini");
         fs::rename(dir/"names.giswordbook",dir/"names.hidden");
-        check(readBoundaryMap(dir.string(),"ja",request,0,&observer).info.error==map::Error::None,
+        check(readBoundaryMap(lookup_dataset,request,0,&observer,map::MapSession(source_pixels)).info.error==map::Error::None,
               "boundary generation must not open or search the Wordbook");
         fs::rename(dir/"names.hidden",dir/"names.giswordbook");
         const auto configured_generation=lookup.datasetInfo().generation;
         const auto configured_stats=lookup.cacheStats();
         fs::remove(dir/"_mapindex.dat");
-        check(readBoundaryMap(dir.string(),"ja",request,0,&observer).info.error==map::Error::ReadError,"missing index becomes a map error");
+        check(readBoundaryMap(lookup_dataset,request,0,&observer,map::MapSession(source_pixels)).info.error==map::Error::ReadError,"missing index becomes a map error");
         check(lookup.datasetInfo().generation==configured_generation && lookup.cacheStats().fills==configured_stats.fills && lookup.search(point).state==PlaceState::Ready,
               "independent map errors do not mutate the existing cache or selection");
         std::cout<<"PASS: independent map source, center/name="<<name<<", work_bytes="<<raw_bytes<<", image_bytes=6060, source_host_ms="<<elapsed<<"; 128 cache preserved\n";

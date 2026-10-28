@@ -6,6 +6,8 @@
 
 namespace geoputer {
 struct FileIoTiming;
+class BorrowedReadBuffer;
+class ReadFileSlot;
 struct DatasetMapIndex {
     std::array<uint8_t,index_format::Header::Bytes> header{};
     int32_t west=0,south=0,width=0,height=0;
@@ -37,10 +39,12 @@ public:
                                      IndexTarget target=IndexTarget::All) const;
     // Forward-only structural / CRC validation. Does not load a table into RAM.
     bool validate(const std::string& path) const;
-    // Boot / explicit check: full index CRC + structure and GLC identity.
+    // Full index CRC + structure and GLC identity. A map request may lend
+    // one buffer: the map-header and index Sources use it sequentially.
     DatasetMapIndex loadMap(const std::string& index,const std::string& map,
                             FileIoTiming* map_timing=nullptr,FileIoTiming* index_timing=nullptr,
-                            DatasetWordBookIndex* wordbook=nullptr,const std::string& language="") const;
+                            DatasetWordBookIndex* wordbook=nullptr,const std::string& language="",
+                            BorrowedReadBuffer* work=nullptr,ReadFileSlot* file_slot=nullptr) const;
     // Verify the selected Wordbook fingerprint, chunk layout and common headers.
     // Returns GW00 metadata; no page/root index is retained or generated here.
     std::string checkWordBook(const DatasetWordBookIndex& index,const std::string& book,

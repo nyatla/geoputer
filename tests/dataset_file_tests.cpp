@@ -47,7 +47,7 @@ void testDatasetFiles(const std::string& temporary,const std::string& map,const 
     check(detail.error==DatasetError::None && !std::strcmp(detail.info.language,"en"),"next language selects the exact named Wordbook");
     fs::remove(dir/"en.giswordbook");request.action=DatasetAction::Detail;std::strcpy(request.language,"en");
     check(catalog.read(request,UiLanguage::Japanese).error==DatasetError::Missing,"missing selected Wordbook does not fall back to another file");
-    PlaceLookup lookup(dir.string());lookup.configure(dir.string(),"ja");
+    CodeCacheBuffer lookup_pixels{};SelectedDataset lookup_dataset;PlaceLookup lookup(lookup_pixels,lookup_dataset,dir.string());lookup.configure(dir.string(),"ja");
     check(lookup.prepare().state==PlaceState::DataError,"missing saved index is a dataset error without automatic generation");
     test_index::generate(dir.string(),"map.glc","ja.giswordbook");lookup.close();
     check(lookup.prepare().state==PlaceState::Ready && lookup.selectedLanguage()=="ja","strict manifest tolerates unselected extra files");

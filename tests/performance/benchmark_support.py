@@ -42,12 +42,24 @@ def instrument_decode_reader(work):
     path = work / "application/task/storage/galuchat/DiskIndexedMapReader.cpp"
     source = replace_once(path.read_text(), '#include "DiskIndexedMapReader.h"',
                           '#include "DiskIndexedMapReader.h"\n#include "../../../benchmark/DecodeProfile.h"')
-    source = replace_once(source, '            auto stream = map.createRange(start, bytes);',
-                          '            benchmark::DecodeScope decode_scope;\n            auto stream = map.createRange(start, bytes);')
-    source = replace_once(source, '                galuchat::GaluchatImageDataChunk01Reader::readRectFromBlockRange(',
-                          '                { benchmark::DecodeScope decode_scope;\n                galuchat::GaluchatImageDataChunk01Reader::readRectFromBlockRange(')
-    source = replace_once(source, '*stream, {int(width), int(height), int(square), number, count, length}, x, y, view);',
-                          '*stream, {int(width), int(height), int(square), number, count, length}, x, y, view); }')
+    # Current whole-request collection closes the index before decoding.
+    # Also support saved per-chunk and original readers used by comparisons.
+    if 'r.number, r.count, r.length' in source:
+        source = replace_once(source, '            chunk.readRectWithoutTail(x, y, view);',
+                              '            { benchmark::DecodeScope decode_scope; chunk.readRectWithoutTail(x, y, view); }')
+        call = '            galuchat::GaluchatImageDataChunk01Reader::readRectFromBlockRange('
+        end = '*stream, {int(r.width), int(r.height), int(r.square), r.number, r.count, r.length}, x, y, view);'
+    else:
+        source = replace_once(source, '            auto stream = map.createRange(start, bytes);',
+                              '            benchmark::DecodeScope decode_scope;\n            auto stream = map.createRange(start, bytes);')
+        if 'g.number, g.count, g.length' in source:
+            call = '        galuchat::GaluchatImageDataChunk01Reader::readRectFromBlockRange('
+            end = '*stream, {int(width), int(height), int(square), g.number, g.count, g.length}, x, y, view);'
+        else:
+            call = '                galuchat::GaluchatImageDataChunk01Reader::readRectFromBlockRange('
+            end = '*stream, {int(width), int(height), int(square), number, count, length}, x, y, view);'
+    source = replace_once(source, call, '        { benchmark::DecodeScope decode_scope;\n' + call)
+    source = replace_once(source, end, end + ' }')
     path.write_text(source)
     return path, source
 

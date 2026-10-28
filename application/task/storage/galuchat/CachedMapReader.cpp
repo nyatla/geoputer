@@ -12,6 +12,7 @@ bool CachedMapReader::contains(int x, int y) const {
 
 void CachedMapReader::rebuild(int x, int y) {
     ++stats_.misses;
+    stats_.bytes=size_t(side_)*side_*sizeof(uint32_t);
     stats_.last_rect_us = 0;
     stats_.valid = false;
     if (observer_) observer_->cacheState(RgCacheState::Rebuilding);
@@ -19,13 +20,9 @@ void CachedMapReader::rebuild(int x, int y) {
         const galuchat::Rect target{
             galuchat::detail::subtractInt(x, side_ / 2, "cache west"),
             galuchat::detail::subtractInt(y, side_ / 2, "cache south"), int(side_), int(side_)};
-        if (!pixels_) {
-            pixels_.reset(new uint32_t[size_t(side_)*side_]);
-            stats_.bytes = size_t(side_)*side_*sizeof(uint32_t);
-        }
         {
             ElapsedTime elapsed(stats_.last_rect_us);
-            reader_.readRect(target, pixels_.get());
+            reader_.readRect(target, pixels_.data());
         }
         stats_.bounds = target;
         stats_.valid = true;

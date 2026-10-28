@@ -11,7 +11,9 @@ with tempfile.TemporaryDirectory(prefix='rgp-borrowed-map-') as folder:
     sources=['tests/borrowed_map_file_tests.cpp','application/Settings.cpp',
         'application/task/storage/dataset/DatasetIndex.cpp','application/task/storage/dataset/DatasetMetadata.cpp',
         'application/task/storage/galuchat/MapSource.cpp','application/task/storage/galuchat/DiskIndexedMapReader.cpp',
-        'application/task/storage/galuchat/TextEncoding.cpp']
+        'application/task/storage/galuchat/TextEncoding.cpp',
+        'application/task/storage/galuchat/PlaceLookup.cpp','application/task/storage/galuchat/CachedMapReader.cpp',
+        'application/task/storage/galuchat/DiskIndexedWordBookReader.cpp']
     subprocess.run(['g++','-std=c++17','-O1','-no-pie','-Wall','-Wextra','-Werror','-pedantic',
         '-fsanitize=address,undefined','-fno-sanitize-recover=all','-D_GLIBCXX_ASSERTIONS',
         '-I'+str(root/'tests'),'-I'+str(root/'tests/support'),'-I'+str(root/'application'),

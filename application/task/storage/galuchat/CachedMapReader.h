@@ -3,12 +3,15 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <array>
 #include <stdexcept>
 #include "DiskIndexedMapReader.h"
 #include "../StorageActivity.h"
 #include "../../../Config.h"
 
 namespace geoputer {
+
+using CodeCacheBuffer=std::array<uint32_t,size_t(config::MapCacheSide)*config::MapCacheSide>;
 
 struct MapCacheStats {
     uint32_t hits = 0;
@@ -21,16 +24,16 @@ struct MapCacheStats {
     galuchat::Rect bounds{};
 };
 
-// Storage-only point interface backed by a single, lazily allocated rectangle.
+// Storage-only point interface backed by its owner's fixed full-resolution array.
 class CachedMapReader {
 public:
     static constexpr int Side = config::MapCacheSide;
     static constexpr size_t Pixels = Side * Side;
     static constexpr size_t Bytes = Pixels * sizeof(uint32_t);
 
-    CachedMapReader(DatasetMapIndex info,std::shared_ptr<const galuchat::ReaderFactory> map,
+    CachedMapReader(CodeCacheBuffer& pixels,DatasetMapIndex info,std::shared_ptr<const galuchat::ReaderFactory> map,
                     std::shared_ptr<const galuchat::ReaderFactory> index,StorageObserver* observer=nullptr,unsigned side=Side)
-        : reader_(info,std::move(map),std::move(index)),observer_(observer),side_(side) {
+        : reader_(info,std::move(map),std::move(index)),pixels_(pixels),observer_(observer),side_(side) {
         if(!side_ || side_>Side)throw std::invalid_argument("invalid code cache side");
     }
 
@@ -49,7 +52,7 @@ private:
     void rebuild(int x, int y);
 
     DiskIndexedMapReader reader_;
-    std::unique_ptr<uint32_t[]> pixels_;
+    CodeCacheBuffer& pixels_;
     MapCacheStats stats_{};
     StorageObserver* observer_;
     unsigned side_;

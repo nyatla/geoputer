@@ -15,7 +15,7 @@ std::vector<MessageKind> calls;
 bool fail_open=false,hold_place_queries=false;
 AppNotification late_dataset{};bool deliver_dataset_on_ui_send=false;
 StorageRequest last_read{};
-MapBuildJob map_backend;map::MapSession live_session,log_session;
+MapBuildJob map_backend;map::CodeImageBuffer shared_map_pixels{};map::MapSession live_session(shared_map_pixels),log_session(shared_map_pixels);
 bool reject_screen=false,reject_place_return=false;
 void check(bool ok,const char* why){if(!ok)throw std::runtime_error(why);}
 void route(QueueHandle_t queue) {
@@ -350,10 +350,10 @@ int main(){
     app->data_.gps.fix.valid=false;app->data_.gps.reception=GpsReception::NoFix;
     app->publishUiContent();app->processMap();
     check(app->map_request_.token && app->map_request_.latitude==v.point.latitude,"historical map uses saved coordinates without live GPS fix");
-    MapSourceResult source;source.info.request=map_backend.info().request;
+    MapSourceResult source(shared_map_pixels);source.info.request=map_backend.info().request;
     check(map::planViewport(v.point.latitude,v.point.longitude,10000,10000,96*1024,source.plan)==map::Error::None,"historical viewport");
     source.info.width=240;source.info.height=101;source.info.meters_per_pixel=source.plan.meters_per_pixel;
-    source.pixels.reset(new uint32_t[source.view().count]);std::fill_n(source.pixels.get(),source.view().count,11u);
+    source.reserve(source.view().count);std::fill_n(source.pixels,source.view().count,11u);
     map_backend.loaded(std::move(source));while(!map_backend.complete())map_backend.step();app->completeMap(map_backend.info());
     for(unsigned n=0;n<20 && app->map_request_.token;++n)app->processMap();
     check(!app->map_request_.token && app->ui_.model_.mapFrame().image().bytes(),"historical map reaches UI atomically");

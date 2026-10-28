@@ -5,6 +5,7 @@
 #include "../../map/MapTypes.h"
 #include "../../Config.h"
 #include "../gps/GpsTypes.h"
+#include "ReadWorkspace.h"
 
 namespace geoputer {
 
@@ -57,26 +58,35 @@ struct PlaceResult {
     DatasetInfo dataset;
 };
 
-// Scratch first, then an aligned result object. UI constructs the result before
-// lending; Storage ends all Reader use before publishing completion.
-inline size_t placeResultOffset(size_t work_bytes) {
-    return (work_bytes+alignof(PlaceResult)-1)&~size_t(alignof(PlaceResult)-1);
-}
+// Active for one UI -> Storage -> App search. The reader array is left
+// untouched; only the result is initialized. UI ends this lifetime on return.
+struct PlaceReadWorkspace {
+    ReaderWorkspaceBytes reader;
+    PlaceResult result{};
+};
 inline bool validPlaceMemory(const PlaceRequest& request) {
-    return request.token && map::validBuffer(request.buffer) && request.work_bytes==config::IndexReadBufferBytes &&
-        placeResultOffset(request.work_bytes)<=request.buffer.capacity &&
-        sizeof(PlaceResult)<=request.buffer.capacity-placeResultOffset(request.work_bytes) &&
-        reinterpret_cast<uintptr_t>(request.buffer.data)%alignof(PlaceResult)==0;
+    return request.token && map::validBuffer(request.buffer) && request.work_bytes==sizeof(ReaderWorkspaceBytes) &&
+        BorrowedLayout<PlaceReadWorkspace>::fits(request.buffer.data,request.buffer.capacity);
+}
+inline PlaceResult* beginPlaceMemory(const PlaceRequest& request) {
+    return &BorrowedLayout<PlaceReadWorkspace>::construct(request.buffer.data,request.buffer.capacity)->result;
+}
+inline void endPlaceMemory(const PlaceRequest& request) {
+    BorrowedLayout<PlaceReadWorkspace>::destroy(request.buffer.data,request.buffer.capacity);
 }
 inline PlaceResult* placeResultMemory(const PlaceRequest& request) {
-    return reinterpret_cast<PlaceResult*>(request.buffer.data+placeResultOffset(request.work_bytes));
+    return &BorrowedLayout<PlaceReadWorkspace>::get(request.buffer.data,request.buffer.capacity)->result;
 }
+inline ReaderWorkspaceBytes& placeReaderMemory(const PlaceRequest& request) {
+    return BorrowedLayout<PlaceReadWorkspace>::get(request.buffer.data,request.buffer.capacity)->reader;
+}
+static_assert(offsetof(PlaceReadWorkspace,result)>=sizeof(ReaderWorkspaceBytes),"Reader scratch must not overlap the place result");
+static_assert(sizeof(PlaceReadWorkspace)<=map::BoundaryBytes,"Place scratch and result must fit the UI back image");
 inline bool samePlaceRequest(const PlaceRequest& a,const PlaceRequest& b) {
     return a.token==b.token && a.screen_generation==b.screen_generation && a.sample_seq==b.sample_seq &&
         a.dataset_generation==b.dataset_generation && a.work_bytes==b.work_bytes && map::sameBuffer(a.buffer,b.buffer);
 }
-static_assert(config::IndexReadBufferBytes+alignof(PlaceResult)-1+sizeof(PlaceResult)<=map::BoundaryBytes,
-              "One UI back image must fit index scratch and the complete place result");
+
 
 inline const char* placeStateName(PlaceState state) {
     switch (state) {

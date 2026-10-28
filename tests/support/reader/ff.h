@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <cstdint>
 #include <string>
+#include <cstdlib>
 #include <sys/stat.h>
 using BYTE=uint8_t;
 using UINT=unsigned;
@@ -17,18 +18,19 @@ inline bool fail_open=false,fail_stat=false,fail_seek=false,fail_read=false;
 inline unsigned live=0,opens=0,closes=0,seeks=0,reads=0;
 inline unsigned drive=0;
 inline std::string last_open,last_stat;
-inline std::string native(const char* path) {
-    const std::string prefix=std::to_string(drive)+":";
-    const std::string value=path;
-    return value.compare(0,prefix.size(),prefix)==0 ? value.substr(prefix.size()) : "";
+inline const char* native(const char* path) {
+    // Match a decimal drive prefix without adding fake-backend C++ allocations.
+    if(!path || *path<'0' || *path>'9')return "";
+    char* end=nullptr;const auto value=std::strtoul(path,&end,10);
+    return value==drive && *end==':'?end+1:"";
 }
 }
 inline FRESULT f_stat(const char* path,FILINFO* info) {
     fatfs_test::last_stat=path;
     const auto native=fatfs_test::native(path);
-    if(native.empty())return FR_INVALID_DRIVE;
+    if(!native[0])return FR_INVALID_DRIVE;
     struct stat st{};
-    if(fatfs_test::fail_stat || stat(native.c_str(),&st))return FR_NO_FILE;
+    if(fatfs_test::fail_stat || stat(native,&st))return FR_NO_FILE;
     info->fsize=static_cast<FSIZE_t>(st.st_size);
     info->fattrib=S_ISDIR(st.st_mode)?AM_DIR:0;
     return FR_OK;
@@ -36,9 +38,9 @@ inline FRESULT f_stat(const char* path,FILINFO* info) {
 inline FRESULT f_open(FIL* file,const char* path,BYTE mode) {
     fatfs_test::last_open=path;
     const auto native=fatfs_test::native(path);
-    if(native.empty())return FR_INVALID_DRIVE;
+    if(!native[0])return FR_INVALID_DRIVE;
     if(mode!=FA_READ || fatfs_test::fail_open)return FR_DENIED;
-    file->handle=std::fopen(native.c_str(),"rb");
+    file->handle=std::fopen(native,"rb");
     if(!file->handle)return FR_NO_FILE;
     struct stat st{};
     if(fstat(fileno(file->handle),&st)){std::fclose(file->handle);file->handle=nullptr;return FR_DISK_ERR;}
@@ -58,6 +60,7 @@ inline FRESULT f_lseek(FIL* file,FSIZE_t offset) {
     file->fptr=offset;return FR_OK;
 }
 inline FSIZE_t f_tell(const FIL* file){return file->fptr;}
+inline FSIZE_t f_size(const FIL* file){return file->size;}
 inline FRESULT f_read(FIL* file,void* buffer,UINT count,UINT* received) {
     ++fatfs_test::reads;
     if(fatfs_test::fail_read)count=std::min(count,3u);

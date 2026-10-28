@@ -1,10 +1,12 @@
 #include "DiskIndexedMapReader.h"
+#include "ObservedFileReader.h"
 #include "../dataset/DatasetIndexFormat.h"
 #include <algorithm>
 #include <array>
 #include <cstddef>
 #include <limits>
 #include <stdexcept>
+#include <utility>
 
 namespace geoputer {
 namespace {
@@ -13,6 +15,16 @@ using namespace index_format;
 void check(bool value) {
     if (!value) throw std::runtime_error("Map index changed or invalid; revalidate dataset");
 }
+// Generic factories retain SDK ownership semantics. File-backed map rendering
+// uses a scoped Reader instead, without changing the SDK ReaderFactory API.
+struct SourceRef {
+    const galuchat::ReaderFactory* factory;
+    const ObservedFileReaderFactory* file;
+    template<class Consumer>void withRange(size_t offset,size_t length,Consumer&& consume)const {
+        if(file)file->withRange(offset,length,std::forward<Consumer>(consume));
+        else {auto reader=factory->createRange(offset,length);consume(*reader);}
+    }
+};
 struct Destination {
     int width, height, dx, dy, pitch;
     uint32_t* pixels;
@@ -86,87 +98,141 @@ bool intersectsBlocks(uint32_t first, uint32_t count, uint64_t columns,
     if (column > x1) { ++row; column = x0; }
     return row <= y1 && row * columns + column < uint64_t(first) + count;
 }
-template<class MakeDestination>
-void readRectangle(const DatasetMapIndex& info, const galuchat::ReaderFactory& map,
-                   const galuchat::ReaderFactory& index_factory, const galuchat::Rect& target,
-                   MakeDestination make_destination) {
+// Collect references for the entire request before opening the GLC. Each
+// reference carries its chunk geometry, so no index Reader must remain alive.
+struct SelectedRange {
+    int32_t west, south;
+    uint32_t width, height, square;
+    // count==0 means an unindexed whole chunk; number then holds the absolute
+    // first-block position used to validate its GI01 header.
+    uint32_t number, count, offset, length;
+};
+struct Selection {
+    std::array<SelectedRange, config::MapReadGroupCacheEntries> ranges;
+    size_t count = 0;
+    bool more = false;
+};
+static_assert(config::MapReadGroupCacheEntries == 15, "Review stack budget when changing group cache size");
+static_assert(sizeof(SelectedRange) == 36, "References include their own chunk geometry");
+static_assert(sizeof(Selection::ranges) == 540, "Keep the whole-request stack cache bounded");
+
+// This frame (including the file Reader) ends before decoding starts. Usually
+// one scan collects the entire request. Oversized/general requests use bounded
+// batches and rescan only when more than 15 selected references really exist.
+[[gnu::noinline]] void collectSelection(const DatasetMapIndex& info, SourceRef index_factory,
+                      const galuchat::Rect& target, uint64_t skip, Selection& selected) {
     auto value = [&](size_t offset) { return index_format::get(info.header.data() + offset); };
-    const uint64_t map_end = uint64_t(64) + value(index_format::Header::MapIndexBytes);
+    const uint64_t map_end = uint64_t(Header::Bytes) + value(Header::MapIndexBytes);
     check(map_end <= SIZE_MAX);
-    auto index = index_factory.createRange(0, static_cast<size_t>(map_end));
-    const auto header = readRecord<Header::Bytes>(*index);
-    check(header == info.header);
-    uint64_t previous_end = 0;
-    for (uint32_t i = 0; i < value(Header::ChunkCount); ++i) {
-        check(uint64_t(index->pos()) + 40 <= map_end);
-        const auto record = readRecord<ChunkRecord::Bytes>(*index);
-        const auto* p = record.data();
-        const int64_t west = static_cast<int32_t>(get(p)), south = static_cast<int32_t>(get(p + ChunkRecord::South));
-        const uint32_t width = get(p + ChunkRecord::Width), height = get(p + ChunkRecord::Height), square = get(p + ChunkRecord::SquareUnit);
-        const uint32_t start = get(p + ChunkRecord::ChunkOffset), bytes = get(p + ChunkRecord::ChunkBytes), first = get(p + ChunkRecord::FirstBlockOffset);
-        const uint32_t blocks = get(p + ChunkRecord::BlockCount), groups = get(p + ChunkRecord::GroupCount);
-        const uint64_t end = uint64_t(start) + bytes;
-        check(width > 0 && height > 0 && width <= INT32_MAX && height <= INT32_MAX
-              && square && square <= uint32_t(1) << 30 && !(square & (square - 1)));
-        check(west + width <= INT32_MAX && south + height <= INT32_MAX && bytes
-              && end <= value(index_format::Header::MapBytes) && first > start && first < end);
-        check(start >= previous_end && (!i || start == previous_end));
-        const uint64_t columns = (uint64_t(width) + square - 1) / square;
-        check(uint64_t(blocks) == columns * ((uint64_t(height) + square - 1) / square));
-        check(bytes < config::IndexMinChunkBytes ? groups == 0 : groups > 0 && groups <= blocks);
-        const uint64_t group_bytes = uint64_t(groups) * 16;
-        check(uint64_t(index->pos()) + group_bytes <= map_end && group_bytes <= SIZE_MAX);
-        const auto left = std::max<int64_t>(target.x, west), bottom = std::max<int64_t>(target.y, south);
-        const auto right = std::min<int64_t>(int64_t(target.x) + target.width, west + width);
-        const auto top = std::min<int64_t>(int64_t(target.y) + target.height, south + height);
-        if (left >= right || bottom >= top) {
-            index->skipInByte(static_cast<size_t>(group_bytes));
-            previous_end = end;
-            continue;
-        }
-        auto view = make_destination(int(right - left), int(top - bottom),
-                                     int(left - target.x), int(bottom - target.y));
-        const int x = int(left - west), y = int(bottom - south);
-        if (!groups) {
-            auto stream = map.createRange(start, bytes);
-            galuchat::GaluchatImageDataChunk01Reader chunk(*stream);
-            check(chunk.width == int(width) && chunk.height == int(height)
-                  && chunk.square_unit == int(square) && uint64_t(start) + stream->pos() == first);
-            chunk.readRectWithoutTail(x, y, view);
-        } else {
-            const uint64_t x0 = uint64_t(x) / square, x1 = uint64_t(right - west - 1) / square;
-            const uint64_t y0 = uint64_t(y) / square, y1 = uint64_t(top - south - 1) / square;
-            uint64_t next_block = 0, next_offset = first;
-            std::unique_ptr<galuchat::ByteReader> stream;
-            uint64_t stream_base = 0;
-            for (uint32_t g = 0; g < groups; ++g) {
-                const auto entry = readRecord<Group::Bytes>(*index);
-                const uint32_t number = get(entry.data()), count = get(entry.data() + Group::BlockCount);
-                const uint32_t offset = get(entry.data() + Group::DataOffset), length = get(entry.data() + Group::DataBytes);
-                check(number == next_block && count && uint64_t(number) + count <= blocks
-                      && offset == next_offset && length && uint64_t(offset) + length <= end);
-                next_block += count;
-                next_offset += length;
-                if (!intersectsBlocks(number, count, columns, x0, x1, y0, y1)) continue;
-                if (!stream) {
-                    stream = map.createRange(offset, static_cast<size_t>(end - offset));
-                    stream_base = offset;
-                } else {
-                    const uint64_t position = stream_base + stream->pos();
-                    check(position <= offset);
-                    stream->skipInByte(static_cast<size_t>(offset - position));
-                }
-                // The range API bounds decoding to this group. Reuse the same
-                // file/buffer for later groups instead of reopening the GLC.
-                galuchat::GaluchatImageDataChunk01Reader::readRectFromBlockRange(
-                    *stream, {int(width), int(height), int(square), number, count, length}, x, y, view);
+    index_factory.withRange(0, static_cast<size_t>(map_end), [&](galuchat::ByteReader& source) {
+        auto* index=&source;
+        check(readRecord<Header::Bytes>(*index) == info.header);
+        uint64_t previous_end = 0, matches = 0;
+        selected.count = 0; selected.more = false;
+        for (uint32_t i = 0; i < value(Header::ChunkCount); ++i) {
+            check(uint64_t(index->pos()) + ChunkRecord::Bytes <= map_end);
+            const auto record = readRecord<ChunkRecord::Bytes>(*index);
+            const auto* p = record.data();
+            const int32_t west = static_cast<int32_t>(get(p)), south = static_cast<int32_t>(get(p + ChunkRecord::South));
+            const uint32_t width = get(p + ChunkRecord::Width), height = get(p + ChunkRecord::Height), square = get(p + ChunkRecord::SquareUnit);
+            const uint32_t start = get(p + ChunkRecord::ChunkOffset), bytes = get(p + ChunkRecord::ChunkBytes), first = get(p + ChunkRecord::FirstBlockOffset);
+            const uint32_t blocks = get(p + ChunkRecord::BlockCount), groups = get(p + ChunkRecord::GroupCount);
+            const uint64_t end = uint64_t(start) + bytes;
+            check(width > 0 && height > 0 && width <= INT32_MAX && height <= INT32_MAX
+                  && square && square <= uint32_t(1) << 30 && !(square & (square - 1)));
+            check(int64_t(west) + width <= INT32_MAX && int64_t(south) + height <= INT32_MAX && bytes
+                  && end <= value(Header::MapBytes) && first > start && first < end);
+            check(start >= previous_end && (!i || start == previous_end));
+            const uint64_t columns = (uint64_t(width) + square - 1) / square;
+            check(uint64_t(blocks) == columns * ((uint64_t(height) + square - 1) / square));
+            check(bytes < config::IndexMinChunkBytes ? groups == 0 : groups > 0 && groups <= blocks);
+            const uint64_t group_bytes = uint64_t(groups) * Group::Bytes;
+            check(uint64_t(index->pos()) + group_bytes <= map_end && group_bytes <= SIZE_MAX);
+            const auto left = std::max<int64_t>(target.x, west), bottom = std::max<int64_t>(target.y, south);
+            const auto right = std::min<int64_t>(int64_t(target.x) + target.width, int64_t(west) + width);
+            const auto top = std::min<int64_t>(int64_t(target.y) + target.height, int64_t(south) + height);
+            if (left >= right || bottom >= top) {
+                index->skipInByte(static_cast<size_t>(group_bytes));
+                previous_end = end;
+                continue;
             }
-            check(next_block == blocks && next_offset == end);
+            auto remember = [&](uint32_t number, uint32_t count, uint32_t offset, uint32_t length) {
+                if (matches++ < skip) return;
+                if (selected.count == selected.ranges.size()) { selected.more = true; return; }
+                selected.ranges[selected.count++] = {west, south, width, height, square, number, count, offset, length};
+            };
+            if (!groups) {
+                remember(first, 0, start, bytes);
+            } else {
+                const uint64_t x0 = uint64_t(left - west) / square, x1 = uint64_t(right - west - 1) / square;
+                const uint64_t y0 = uint64_t(bottom - south) / square, y1 = uint64_t(top - south - 1) / square;
+                uint64_t next_block = 0, next_offset = first;
+                for (uint32_t g = 0; g < groups; ++g) {
+                    const auto entry = readRecord<Group::Bytes>(*index);
+                    const uint32_t number = get(entry.data()), count = get(entry.data() + Group::BlockCount);
+                    const uint32_t offset = get(entry.data() + Group::DataOffset), length = get(entry.data() + Group::DataBytes);
+                    check(number == next_block && count && uint64_t(number) + count <= blocks
+                          && offset == next_offset && length && uint64_t(offset) + length <= end);
+                    next_block += count; next_offset += length;
+                    if (intersectsBlocks(number, count, columns, x0, x1, y0, y1)) remember(number, count, offset, length);
+                }
+                check(next_block == blocks && next_offset == end);
+            }
+            previous_end = end;
         }
-        previous_end = end;
-    }
-    check(index->pos() == map_end && previous_end == value(index_format::Header::MapBytes));
+        check(index->pos() == map_end && previous_end == value(Header::MapBytes));
+    });
 }
+
+template<class MakeDestination>
+[[gnu::noinline]] void decodeSelection(SourceRef map, const galuchat::Rect& target,
+                     const Selection& selected, MakeDestination make_destination) {
+    if (!selected.count) return;
+    const uint64_t base = selected.ranges[0].offset;
+    const auto& last = selected.ranges[selected.count-1];
+    const uint64_t end = uint64_t(last.offset) + last.length;
+    check(end >= base && end-base <= SIZE_MAX);
+    // References retain file order across chunks. Reuse one GLC Reader for all
+    // of them, preserving both first-nonzero composition and read-ahead.
+    map.withRange(static_cast<size_t>(base), static_cast<size_t>(end-base), [&](galuchat::ByteReader& source) {
+        auto* stream=&source;
+        for (size_t i=0; i<selected.count; ++i) {
+            const auto& r = selected.ranges[i];
+            const uint64_t position = base + stream->pos();
+            check(position <= r.offset);
+            stream->skipInByte(static_cast<size_t>(r.offset-position));
+            const auto left = std::max<int64_t>(target.x, r.west), bottom = std::max<int64_t>(target.y, r.south);
+            const auto right = std::min<int64_t>(int64_t(target.x)+target.width, int64_t(r.west)+r.width);
+            const auto top = std::min<int64_t>(int64_t(target.y)+target.height, int64_t(r.south)+r.height);
+            auto view = make_destination(int(right-left), int(top-bottom), int(left-target.x), int(bottom-target.y));
+            const int x = int(left-r.west), y = int(bottom-r.south);
+            if (!r.count) {
+                galuchat::detail::LimitedReader bytes(*stream, r.length);
+                galuchat::GaluchatImageDataChunk01Reader chunk(bytes);
+                check(chunk.width==int(r.width) && chunk.height==int(r.height) && chunk.square_unit==int(r.square)
+                      && base+stream->pos()==r.number);
+                chunk.readRectWithoutTail(x, y, view);
+            } else {
+                galuchat::GaluchatImageDataChunk01Reader::readRectFromBlockRange(
+                    *stream, {int(r.width), int(r.height), int(r.square), r.number, r.count, r.length}, x, y, view);
+            }
+        }
+    });
+}
+
+template<class MakeDestination>
+void readRectangle(const DatasetMapIndex& info, SourceRef map,
+                   SourceRef index_factory, const galuchat::Rect& target,
+                   MakeDestination make_destination) {
+    Selection selected;
+    uint64_t processed = 0;
+    do {
+        collectSelection(info, index_factory, target, processed, selected);
+        decodeSelection(map, target, selected, make_destination);
+        processed += selected.count;
+    } while (selected.more);
+}
+
 } // namespace
 
 uint32_t DiskIndexedMapReader::value(size_t offset) const { return index_format::get(info_.header.data() + offset); }
@@ -176,7 +242,7 @@ void DiskIndexedMapReader::readRect(const galuchat::Rect& target, uint32_t* pixe
         uint64_t(target.width) * target.height > SIZE_MAX / sizeof(uint32_t))
         throw std::invalid_argument("invalid map rectangle");
     std::fill_n(pixels, size_t(target.width) * target.height, 0);
-    readRectangle(info_, *map_, *index_, target, [&](int width, int height, int dx, int dy) {
+    readRectangle(info_, {map_.get(),file_map_}, {index_.get(),file_index_}, target, [&](int width, int height, int dx, int dy) {
         return Destination{width, height, dx, dy, target.width, pixels};
     });
 }
@@ -190,7 +256,7 @@ void DiskIndexedMapReader::readRectDecimated(const galuchat::Rect& target, unsig
     if (uint64_t(width) * height > SIZE_MAX / sizeof(uint32_t))
         throw std::invalid_argument("decimated map rectangle too large");
     std::fill_n(pixels, size_t(width) * height, 0);
-    readRectangle(info_, *map_, *index_, target, [&](int w, int h, int dx, int dy) {
+    readRectangle(info_, {map_.get(),file_map_}, {index_.get(),file_index_}, target, [&](int w, int h, int dx, int dy) {
         return DecimatedDestination{w, h, dx, dy, width, scale, pixels};
     });
 }

@@ -1,5 +1,6 @@
 #pragma once
 #include <algorithm>
+#include <functional>
 #include <cstdio>
 #include <limits>
 #include <memory>
@@ -15,6 +16,7 @@
 #include "../StorageActivity.h"
 #include "ReadTiming.h"
 #include "../StoragePath.h"
+#include "../ReadFile.h"
 #include "../../../Config.h"
 #include "../../../utils/FileReadBuffer.h"
 
@@ -32,8 +34,8 @@ struct FileReadOptions {
 class ObservedFileReader final : public galuchat::ByteReader {
 public:
     ObservedFileReader(const std::string& path, size_t source_size, size_t offset, StorageObserver* observer,
-                       FileIoTiming* timing = nullptr, FileReadOptions options = {}, uint8_t drive = 0, BorrowedReadBuffer* borrowed = nullptr)
-        : observer_(observer), timing_(diagnosticTiming(timing)), origin_(offset),
+                       FileIoTiming* timing = nullptr, FileReadOptions options = {}, uint8_t drive = 0, BorrowedReadBuffer* borrowed = nullptr, ReadFileSlot* file_slot = nullptr,NativePathBuffer native_path={})
+        : observer_(observer), timing_(diagnosticTiming(timing)), file_(drive,file_slot), origin_(offset),
           read_through_skip_bytes_(options.read_through_skip_bytes) {
         options.validate();
         if (offset > source_size) throw std::runtime_error("invalid reader offset");
@@ -42,16 +44,7 @@ public:
         {
             FileIoTime elapsed(timing_, &FileIoTiming::open_us);
             if (timing_) ++timing_->opens;
-#ifdef ARDUINO_ARCH_ESP32
-            // Keep the Reader object small and allocate its large read buffer
-            // before FIL. FIL includes a private sector cache on this SDK.
-            file_ = std::make_unique<FIL>();
-            opened_ = f_open(file_.get(), fatFsPath(drive, path).c_str(), FA_READ) == FR_OK;
-#else
-            (void)drive;
-            file_ = std::fopen(path.c_str(), "rb");
-            opened_ = file_ != nullptr;
-#endif
+            opened_ = file_.openRead(path,native_path);
         }
         if (!opened_) throw std::runtime_error("cannot open: " + path);
         bool sought;
@@ -119,41 +112,17 @@ protected:
         pos_ += length; buffer_pos_ = buffer_end_ = 0;
     }
 private:
-    bool seekAbsolute(size_t offset) {
-#ifdef ARDUINO_ARCH_ESP32
-        return offset <= std::numeric_limits<FSIZE_t>::max()
-            && f_lseek(file_.get(), static_cast<FSIZE_t>(offset)) == FR_OK
-            && f_tell(file_.get()) == offset; // A read-only seek can silently clip at EOF.
-#else
-        return offset <= static_cast<size_t>(std::numeric_limits<long>::max())
-            && std::fseek(file_, static_cast<long>(offset), SEEK_SET) == 0;
-#endif
-    }
-    void closeFile() {
-#ifdef ARDUINO_ARCH_ESP32
-        f_close(file_.get()); file_.reset();
-#else
-        std::fclose(file_); file_ = nullptr;
-#endif
-        opened_ = false;
-    }
+    bool seekAbsolute(size_t offset) { return file_.seek(offset); }
+    void closeFile() { file_.close(); opened_=false; }
     void refillBuffer() {
         SdAccessScope access(observer_);
         {
             FileIoTime elapsed(timing_, &FileIoTiming::read_us);
             if (timing_) ++timing_->reads;
             const auto count = std::min(buffer_.size(), length_ - pos_);
-#ifdef ARDUINO_ARCH_ESP32
-            UINT received = 0;
-            const auto result = f_read(file_.get(), buffer_.data(), static_cast<UINT>(count), &received);
-            buffer_end_ = received;
+            const bool ok=file_.read(buffer_.data(),count,buffer_end_);
             if (timing_) timing_->bytes += buffer_end_;
-            if (result != FR_OK) throw std::runtime_error("SD read failed");
-#else
-            buffer_end_ = std::fread(buffer_.data(), 1, count, file_);
-            if (timing_) timing_->bytes += buffer_end_;
-            if (std::ferror(file_)) throw std::runtime_error("SD read failed");
-#endif
+            if (!ok) throw std::runtime_error("SD read failed");
         }
         buffer_pos_ = 0;
         if (!buffer_end_) throw std::runtime_error("SD read failed");
@@ -162,11 +131,7 @@ private:
     FileIoTiming* timing_;
     // Construct/unwind in buffer -> file / file -> buffer order.
     FileReadBuffer buffer_;
-#ifdef ARDUINO_ARCH_ESP32
-    std::unique_ptr<FIL> file_;
-#else
-    std::FILE* file_ = nullptr;
-#endif
+    ReadFile file_;
     bool opened_ = false;
     size_t origin_ = 0, length_ = 0, pos_ = 0, buffer_pos_ = 0, buffer_end_ = 0;
     const size_t read_through_skip_bytes_;
@@ -174,31 +139,15 @@ private:
 class ObservedFileReaderFactory final : public galuchat::ReaderFactory {
 public:
     ObservedFileReaderFactory(std::string path, StorageObserver* observer, FileIoTiming* timing = nullptr,
-                              FileReadOptions options = {}, uint8_t drive = 0, BorrowedReadBuffer* borrowed = nullptr)
-        : path_(std::move(path)), observer_(observer), timing_(diagnosticTiming(timing)), options_(options), drive_(drive), borrowed_(borrowed) {
-        options_.validate();
-        SdAccessScope access(observer_);
-#ifdef ARDUINO_ARCH_ESP32
-        FILINFO status{};
-        FRESULT stat_result;
-        {
-            FileIoTime elapsed(timing_, &FileIoTiming::stat_us);
-            if (timing_) ++timing_->stats;
-            stat_result = f_stat(fatFsPath(drive_, path_).c_str(), &status);
-        }
-        if (stat_result != FR_OK || (status.fattrib & AM_DIR)) throw std::runtime_error("cannot stat: " + path_);
-        size_ = status.fsize;
-#else
-        struct stat status{};
-        int stat_result;
-        {
-            FileIoTime elapsed(timing_, &FileIoTiming::stat_us);
-            if (timing_) ++timing_->stats;
-            stat_result = stat(path_.c_str(), &status);
-        }
-        if (stat_result || status.st_size < 0) throw std::runtime_error("cannot stat: " + path_);
-        size_ = static_cast<size_t>(status.st_size);
-#endif
+                              FileReadOptions options = {}, uint8_t drive = 0, BorrowedReadBuffer* borrowed = nullptr, ReadFileSlot* file_slot = nullptr,NativePathBuffer native_path={})
+        : path_(std::move(path)), observer_(observer), timing_(diagnosticTiming(timing)), options_(options), drive_(drive), borrowed_(borrowed), file_slot_(file_slot),native_path_(native_path) {
+        inspectSource();
+    }
+    // Borrow only from an owner that outlives this Factory and every Reader.
+    ObservedFileReaderFactory(std::reference_wrapper<const std::string> path,StorageObserver* observer,FileIoTiming* timing=nullptr,
+                              FileReadOptions options={},uint8_t drive=0,BorrowedReadBuffer* borrowed=nullptr,ReadFileSlot* file_slot=nullptr,NativePathBuffer native_path={})
+        :borrowed_path_(&path.get()),observer_(observer),timing_(diagnosticTiming(timing)),options_(options),drive_(drive),borrowed_(borrowed),file_slot_(file_slot),native_path_(native_path) {
+        inspectSource();
     }
     // Bind only while no Reader from this factory is alive. Callers restore
     // nullptr before the borrowed workspace leaves scope.
@@ -211,22 +160,62 @@ public:
         options_ = options;
     }
     std::unique_ptr<galuchat::ByteReader> create(size_t offset = 0) const override {
-        return std::make_unique<ObservedFileReader>(path_, size_, offset, observer_, timing_, options_, drive_, borrowed_);
+        return std::make_unique<ObservedFileReader>(path(), size_, offset, observer_, timing_, options_, drive_, borrowed_, file_slot_,native_path_);
     }
     std::unique_ptr<galuchat::ByteReader> createRange(size_t offset, size_t length) const override {
         if (offset > size_ || length > size_ - offset) throw std::runtime_error("invalid reader range");
         if (!length) return std::make_unique<galuchat::BufferReader>(nullptr, 0);
         auto options = options_;
         options.buffer_bytes = std::min(options.buffer_bytes, length);
-        return std::make_unique<ObservedFileReader>(path_, offset + length, offset, observer_, timing_, options, drive_, borrowed_);
+        return std::make_unique<ObservedFileReader>(path(), offset + length, offset, observer_, timing_, options, drive_, borrowed_, file_slot_,native_path_);
+    }
+    // Scoped alternative for map reads. No owning pointer escapes this call.
+    template<class Consumer>
+    void withRange(size_t offset,size_t length,Consumer&& consume) const {
+        if(offset>size_ || length>size_-offset)throw std::runtime_error("invalid reader range");
+        if(!length) {galuchat::BufferReader empty(nullptr,0);consume(empty);return;}
+        auto options=options_;options.buffer_bytes=std::min(options.buffer_bytes,length);
+        ObservedFileReader reader(path(),offset+length,offset,observer_,timing_,options,drive_,borrowed_,file_slot_,native_path_);
+        consume(reader);
     }
 private:
+    const std::string& path()const{return borrowed_path_?*borrowed_path_:path_;}
+    void inspectSource() {
+        options_.validate();
+        SdAccessScope access(observer_);
+#ifdef ARDUINO_ARCH_ESP32
+        FILINFO status{};
+        FRESULT stat_result;
+        {
+            FileIoTime elapsed(timing_, &FileIoTiming::stat_us);
+            if (timing_) ++timing_->stats;
+            stat_result = native_path_.supplied()
+                ?f_stat(fatFsPath(drive_,path(),native_path_),&status)
+                :f_stat(fatFsPath(drive_,path()).c_str(),&status);
+        }
+        if (stat_result != FR_OK || (status.fattrib & AM_DIR)) throw std::runtime_error("cannot stat: " + path());
+        size_ = status.fsize;
+#else
+        struct stat status{};
+        int stat_result;
+        {
+            FileIoTime elapsed(timing_, &FileIoTiming::stat_us);
+            if (timing_) ++timing_->stats;
+            stat_result = stat(path().c_str(), &status);
+        }
+        if (stat_result || status.st_size < 0) throw std::runtime_error("cannot stat: " + path());
+        size_ = static_cast<size_t>(status.st_size);
+#endif
+    }
     std::string path_;
+    const std::string* borrowed_path_=nullptr;
     StorageObserver* observer_;
     FileIoTiming* timing_;
     size_t size_ = 0;
     FileReadOptions options_;
     uint8_t drive_;
     BorrowedReadBuffer* borrowed_;
+    ReadFileSlot* file_slot_;
+    NativePathBuffer native_path_;
 };
 }  // namespace geoputer
