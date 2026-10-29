@@ -1,4 +1,5 @@
 #include "UiModel.h"
+#include "../../LogReplay.h"
 #include "PlacePresentation.h"
 #include "LicenseText.h"
 #include "SettingsLayout.h"
@@ -340,8 +341,14 @@ UiKeyGuide UiModel::keyGuide() const {
         guide.down=!view.loading && (selection_+1u<view.count || view.has_older);
         guide.remove=!view.loading && canDeleteLog();
     } else if (screen_==ScreenId::LogPoint) {
-        guide.vertical=guide.horizontal=true;guide.up=guide.left=data_.browse().target>0;
-        guide.down=guide.right=uint64_t(data_.browse().target)+1<data_.browse().summary.records;
+        const auto& view=data_.browse();guide.vertical=guide.horizontal=true;
+        if(view.map_mode && view.playing) {
+            guide.up=replay::speed(view)+1<replay::SpeedCount;guide.down=replay::speed(view)>0;
+            guide.left=!view.replay_reverse;guide.right=view.replay_reverse;
+        } else {
+            guide.up=guide.left=view.summary.records && view.target>0;
+            guide.down=guide.right=uint64_t(view.target)+1<view.summary.records;
+        }
     } else if (screen_==ScreenId::Menu) list(MenuCount);
     else if (screen_==ScreenId::Settings && !screen_resources_.settings.card_info) {
         if (screen_resources_.settings.editing) {
@@ -372,6 +379,149 @@ UiKeyGuide UiModel::keyGuide() const {
     return guide;
 }
 
+// Use the same numeric destinations as direct presses; skip the current view
+// and unavailable destinations. Other means that cycling has no destination.
+UiKey UiModel::nextNumericKey() const {
+    const auto guide=keyGuide();
+    if(mode_!=DisplayMode::View || dialog_.active() || !guide.accepting || !guide.system)return UiKey::Other;
+    if(guide.root) {
+        for(unsigned i=0;i<MenuCount;++i)if(MenuScreens[i].screen==screen_)return MenuScreens[(i+1)%MenuCount].key;
+        return MenuScreens[0].key; // MENU itself is not a numeric destination.
+    }
+    if(isLogViewScreen(screen_)) {
+        constexpr unsigned count=sizeof(LogViewShortcuts)/sizeof(*LogViewShortcuts);
+        unsigned start=0;
+        for(unsigned i=0;i<count;++i)if(selectedLogView(screen_,data_,LogViewShortcuts[i].action))start=(i+1)%count;
+        for(unsigned n=0;n<count;++n) {
+            const auto& item=LogViewShortcuts[(start+n)%count];
+            if(!selectedLogView(screen_,data_,item.action) && logViewAvailable(screen_,data_,item.action))return item.key;
+        }
+    }
+    return UiKey::Other;
+}
+
+// Only advertise Enter where it selects, confirms, retries or returns.
+// Keep disabled choices visible in the same way as other local operations.
+void UiModel::appendEnterShortcut(UiShortcutGuide& row,bool accepting) const {
+    bool enabled=true;
+    if(dialog_.active()) enabled=dialog_.choiceEnabled(dialog_.choice());
+    else if(screen_==ScreenId::Boot) {
+        if(data_.boot.maintenance || !data_.boot.complete)return;
+    } else if(screen_==ScreenId::UsbStorage) {
+        switch(screen_resources_.usb.page) {
+            case UsbPage::Busy: case UsbPage::Progress:return;
+            case UsbPage::Menu:enabled=selection_ || data_.storage.usb.ready;break;
+            case UsbPage::Files: {
+                const auto& view=data_.browse();
+                enabled=!view.loading && selection_<view.count && view.error==LogReadError::None;break;
+            }
+            default:break;
+        }
+    } else if(screen_==ScreenId::Logs) enabled=!data_.browse().loading;
+    else if(screen_==ScreenId::LogProperties) {
+        const auto& view=data_.browse();
+        enabled=!view.loading && view.error==LogReadError::None && view.summary.records;
+    } else if(screen_==ScreenId::Settings) {
+        const auto& settings=screen_resources_.settings;
+        if(!settings.card_info) switch(settings.page) {
+            case SettingsPage::Licenses:return;
+            case SettingsPage::DatasetMenu:enabled=!data_.datasets().applying && datasetMenuBlock(data_,selection_)==DatasetError::None;break;
+            case SettingsPage::DatasetList: {
+                const auto& view=data_.datasets();
+                enabled=!view.loading && !view.applying && (view.error!=DatasetError::None ||
+                    (selection_<view.count && datasetRowBlock(data_,selection_)==DatasetError::None));break;
+            }
+            case SettingsPage::DatasetDetail: {
+                const auto& view=data_.datasets();
+                if(view.loading || view.applying)enabled=false;
+                else if(view.error!=DatasetError::None) {
+                    if(!datasetRecoverable(view.error))return;
+                    enabled=datasetSelectionBlock(data_,true)==DatasetError::None;
+                } else if(!settings.editing) {
+                    const auto count=selectionCount();
+                    if(count<2 || selection_<count-2)return;
+                    if(selection_==count-1)enabled=datasetSelectionBlock(data_,true)==DatasetError::None;
+                }
+                break;
+            }
+            case SettingsPage::DatasetIndex:enabled=!data_.datasets().applying && !data_.storage.busy;break;
+            case SettingsPage::System:
+                if(!settings.editing) {
+                    if(selection_!=0 && selection_!=2 && selection_!=SettingsSystemResetRow)return;
+                    enabled=!data_.storage.busy && (selection_!=2 || (settings.usb_mode && usbEntryAllowed(data_)));
+                }
+                break;
+            case SettingsPage::Operation:
+                if(!settings.editing && selection_!=static_cast<unsigned>(SettingId::Dataset)) {
+                    if(!settingEditable(selection_))return;
+                    enabled=!data_.storage.busy;
+                }
+                break;
+            case SettingsPage::Storage:case SettingsPage::Reset:enabled=!data_.storage.busy;break;
+            default:break;
+        }
+    } else if(screen_!=ScreenId::GpsLogger && screen_!=ScreenId::Menu)return;
+    row.key(UiKey::Enter,accepting && enabled);
+}
+
+UiShortcutGuide UiModel::shortcutGuide() const {
+    UiShortcutGuide row;
+    if(mode_==DisplayMode::Background)return row;
+    const auto guide=keyGuide();
+    const auto active=guide.accepting;
+    if(dialog_.active()) {
+        row.key(UiKey::Escape,active);row.group();appendEnterShortcut(row,active);
+        bool left=false,right=false;
+        for(unsigned i=0;i<dialog_.choices();++i)if(dialog_.choiceEnabled(i)) {
+            left|=i<dialog_.choice();right|=i>dialog_.choice();
+        }
+        row.key(UiKey::Left,active && left);row.key(UiKey::Right,active && right);return row;
+    }
+    if(screen_==ScreenId::Boot) {row.key(UiKey::Escape,active);row.group();appendEnterShortcut(row,active);return row;}
+    if(screen_==ScreenId::UsbStorage) {
+        const auto page=screen_resources_.usb.page;
+        if(page==UsbPage::Busy || page==UsbPage::Progress)return row;
+        row.key(UiKey::Escape,active);row.group();appendEnterShortcut(row,active);
+        if(page==UsbPage::Menu) {
+            row.key(UiKey::Up,active && selection_>0);row.key(UiKey::Down,active && selection_==0);
+        } else if(page==UsbPage::Files) {
+            const auto& view=data_.browse();const auto ready=active && !view.loading;
+            row.key(UiKey::Up,ready && (selection_>0 || view.has_newer));
+            row.key(UiKey::Down,ready && (selection_+1u<view.count || view.has_older));
+        } else if(page==UsbPage::Format) {
+            row.key(UiKey::Up,active && selection_>0);row.key(UiKey::Down,active && selection_<2);
+        }
+        return row;
+    }
+    // Global shortcuts always precede numeric destinations and local operations.
+    row.key(UiKey::Escape,guide.back);
+    if(guide.system) {row.key(UiKey::ScreenOff,active);row.key(UiKey::GpsControl,active);}
+    if(guide.root) {
+        row.group();for(const auto& item:MenuScreens)row.key(item.key,active,item.screen==screen_);
+    } else if(isLogViewScreen(screen_)) {
+        row.group();for(const auto& item:LogViewShortcuts)
+            row.key(item.key,active && logViewAvailable(screen_,data_,item.action),selectedLogView(screen_,data_,item.action));
+    }
+    row.group();
+    appendEnterShortcut(row,active);
+    const auto& view=data_.browse();
+    if(screen_==ScreenId::LogPoint) {
+        const bool points=view.summary.records!=0;
+        row.key(UiKey::FirstPoint,active && points && view.target>0);
+        row.key(UiKey::LastPoint,active && uint64_t(view.target)+1<view.summary.records);
+        if(view.map_mode) {
+            row.key(UiKey::ZoomIn,guide.zoom_in);row.key(UiKey::ZoomOut,guide.zoom_out);
+            row.key(UiKey::Playback,active && points && view.error==LogReadError::None);
+        }
+    } else if(screen_==ScreenId::LogStatistics) {
+        row.key(UiKey::Recalculate,active && !view.loading);
+    } else if(screen_==ScreenId::Logs)row.key(UiKey::DeleteLog,guide.remove);
+    else if(screen_==ScreenId::Map) {row.key(UiKey::ZoomIn,guide.zoom_in);row.key(UiKey::ZoomOut,guide.zoom_out);}
+    if(guide.horizontal) {row.key(UiKey::Left,guide.left);row.key(UiKey::Right,guide.right);}
+    if(guide.vertical) {row.key(UiKey::Up,guide.up);row.key(UiKey::Down,guide.down);}
+    return row;
+}
+
 void UiModel::keyPressed(UiKey key, uint32_t now_ms) {
     last_input_ms_ = now_ms;
     // Physical Del remains Back/Cancel, but cannot select maintenance.
@@ -394,9 +544,6 @@ void UiModel::keyPressed(UiKey key, uint32_t now_ms) {
         const auto kind = dialog_.kind();
         const auto choice = dialog_.choice();
         const auto result = dialog_.keyPressed(key);
-        if(kind==DialogKind::LogShortcut && result==DialogInput::Accepted) {
-            browseAction(choice==0?BrowseAction::Text:choice==1?BrowseAction::Map:BrowseAction::Statistics);return;
-        }
         if (kind == DialogKind::GpsControl && result == DialogInput::Accepted) {
             const auto operation = gpsControlAction(gps_dialog_state_, choice);
             if (gps_dialog_state_ == data_.recording.state && gpsControlAllowed(data_, operation)) {
@@ -421,18 +568,23 @@ void UiModel::keyPressed(UiKey key, uint32_t now_ms) {
             }
             openGpsControls(); return; }
     }
+    if(key==UiKey::Tab) {key=nextNumericKey();if(key==UiKey::Other)return;}
     if (!keyGuide().allowsKey(key)) return;
     if (!data_.boot.maintenance && isScreenRoot(screen_, screen_resources_.settings.page) && !screen_resources_.settings.editing && !screen_resources_.settings.card_info) {
         if (screen_ == ScreenId::Menu) {
             if (key == UiKey::Up) { --selection_; changed(); return; }
             if (key == UiKey::Down) { ++selection_; changed(); return; }
             if (key == UiKey::Enter) { action(ActionKind::ChangeScreen, MenuScreens[selection_].screen); return; }
-            if (key == UiKey::Escape) { action(ActionKind::ChangeScreen, ScreenId::LivePlace); return; }
+        }
+        if(key==UiKey::Escape) {
+            // Only LIVE opens the selector. Del has no Back destination on LIVE.
+            if(screen_!=ScreenId::LivePlace || maintenance_key)
+                action(ActionKind::ChangeScreen,screen_==ScreenId::LivePlace?ScreenId::Menu:ScreenId::LivePlace);
+            return;
         }
         ScreenId target;
-        // Del keeps Back semantics; physical Esc opens MENU.
-        if (!(key == UiKey::Escape && !maintenance_key) && screenShortcut(key, target)) {
-            if (target != screen_) action(ActionKind::ChangeScreen, target);
+        if(screenShortcut(key,target)) {
+            if(target!=screen_)action(ActionKind::ChangeScreen,target);
             return;
         }
     }
@@ -478,13 +630,9 @@ void UiModel::logBrowserKey(UiKey key) {
             (view.statistics_from_point?ScreenId::LogPoint:ScreenId::LogProperties):ScreenId::LogProperties);
         return;
     }
-    if(key==UiKey::LogMenu && (screen_==ScreenId::LogProperties || screen_==ScreenId::LogPoint) && !view.loading) {
-        if(viewingLogPoint(screen_) && view.playing) {data_.editBrowse().playing=false;browseAction(BrowseAction::PausePlayback);}
-        dialog_.openActions(DialogKind::LogShortcut,3,2);
-        const bool valid=view.error==LogReadError::None;
-        dialog_.setChoiceEnabled(0,valid && view.summary.records);
-        dialog_.setChoiceEnabled(1,valid && logMapAvailable(data_) && view.summary.records);
-        dialog_.setChoiceEnabled(2,valid);changed();return;
+    if(isLogViewScreen(screen_))for(const auto& item:LogViewShortcuts)if(key==item.key) {
+        if(!selectedLogView(screen_,data_,item.action) && logViewAvailable(screen_,data_,item.action))browseAction(item.action);
+        return;
     }
     if(screen_==ScreenId::LogProperties) {
         if(key==UiKey::Enter && !view.loading && view.error==LogReadError::None && view.summary.records)browseAction(BrowseAction::OpenPoint);
@@ -496,6 +644,15 @@ void UiModel::logBrowserKey(UiKey key) {
     }
     if(screen_==ScreenId::LogPoint) {
         if(!view.summary.records)return;
+        if(view.map_mode && view.playing) {
+            switch(key) {
+                case UiKey::Up:browseAction(BrowseAction::ReplayFaster);return;
+                case UiKey::Down:browseAction(BrowseAction::ReplaySlower);return;
+                case UiKey::Left:browseAction(BrowseAction::ReplayReverse);return;
+                case UiKey::Right:browseAction(BrowseAction::ReplayForward);return;
+                default:break;
+            }
+        }
         if(key==UiKey::Left) browseAction(BrowseAction::Point,view.target-1);
         if(key==UiKey::Right) browseAction(BrowseAction::Point,view.target+1);
         if(key==UiKey::Up) browseAction(BrowseAction::Point,view.target>10?view.target-10:0);
@@ -503,7 +660,6 @@ void UiModel::logBrowserKey(UiKey key) {
             static_cast<uint32_t>(std::min(uint64_t(view.target)+10,uint64_t(view.summary.records-1))));
         if(key==UiKey::FirstPoint) browseAction(BrowseAction::Point,0);
         if(key==UiKey::LastPoint) browseAction(BrowseAction::Point,view.summary.records-1);
-        if(key==UiKey::ToggleView && (!view.map_mode?logMapAvailable(data_):true)) browseAction(BrowseAction::ToggleView);
         if(key==UiKey::Playback && view.map_mode) browseAction(BrowseAction::Playback);
         return;
     }
@@ -756,7 +912,7 @@ void UiModel::acceptDialog(DialogKind kind) {
         case DialogKind::RebuildIndex:case DialogKind::VerifyIndex:
             datasetAction(kind==DialogKind::RebuildIndex?DatasetAction::RebuildIndex:DatasetAction::VerifyIndex,selection_);
             screen_resources_.settings.page=SettingsPage::DatasetIndex;changed();break;
-        case DialogKind::LogShortcut: case DialogKind::GpsControl: case DialogKind::None: return;
+        case DialogKind::GpsControl: case DialogKind::None: return;
     }
     action_.confirmed = true;
 }

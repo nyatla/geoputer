@@ -83,7 +83,7 @@ def main():
                 assert images[0].crop((4,20,236,56)).tobytes()==images[1].crop((4,20,236,56)).tobytes(),(lang,kind)
                 stem=f'dataset-{kind}-{lang}'
                 images[0].save(output/f'{stem}.png')
-                images[0].resize((960,540),Image.Resampling.NEAREST).save(output/f'{stem}-preview.png')
+                images[0].resize((960,540),getattr(Image,"Resampling",Image).NEAREST).save(output/f'{stem}-preview.png')
         print('PASS: 8 dataset errors x 2 languages x Fix/loss, native 240x135, stable two-line causes, normal controls, 4bpp == 16bpp')
 
 if __name__=='__main__':main()

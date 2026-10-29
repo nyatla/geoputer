@@ -43,7 +43,7 @@ if(bench_stage && bench_stage<10) {
                 view.summary.records=1;view.summary.session_id=1;setScreen(ScreenId::LogPoint);
             }
             if(bench_stage==7) {data_.editBrowse().point.latitude+=.02;refreshPlace();}
-            if(bench_stage==8) {UiAction toggle{};toggle.browse_action=BrowseAction::ToggleView;operateBrowser(toggle);}
+            if(bench_stage==8) {UiAction toggle{};toggle.browse_action=BrowseAction::Text;operateBrowser(toggle);}
             if(bench_stage==9)setScreen(ScreenId::LivePlace);
             if(bench_stage==10)Console.println("[SESSION-BENCH-DONE] OK");
         }

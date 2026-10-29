@@ -12,6 +12,7 @@ SCENE = r'''
 #include <cstring>
 #include <stdexcept>
 #include "task/ui/UiRenderer.h"
+#include "task/ui/EscapeIcon.h"
 #include "task/ui/DatasetPresentation.h"
 using namespace geoputer;
 int main(int argc,char** argv) {
@@ -69,10 +70,12 @@ int main(int argc,char** argv) {
             if(display.pixels.at((y+row)*240+x+col)!=(ink?color:TFT_BLACK))throw std::runtime_error(std::string(mode)+": maintenance guide pixel mismatch at "+std::to_string(x+col)+","+std::to_string(y+row));
         }
     };
-    if(!std::strcmp(mode,"missing-boot"))check_ascii(4,124,"ESC MAINT",TFT_CYAN);
-    if(!std::strcmp(mode,"boot") || !std::strcmp(mode,"boot-ready"))check_ascii(4,124,"ESC MAINT",TFT_CYAN);
+    const auto escape_color=ui.shortcutGuide()[0].tone==ShortcutTone::Disabled?TFT_DARKGREY:TFT_WHITE;
+    for(unsigned y=0;y<escape_icon::Height;++y)for(unsigned x=0;x<escape_icon::Width;++x)
+        if(display.pixels[(122+y)*240+4+x]!=(escape_icon::Rows[y]&(0x800000u>>x)?escape_color:TFT_BLACK))
+            throw std::runtime_error("ESC mark must use its native ROM pixels");
     if(!std::strcmp(mode,"maintenance")) {
-        check_ascii(4,4,"MAINTENANCE",TFT_LIGHTGREY);check_ascii(4,124,"ESC DEL",TFT_CYAN);
+        check_ascii(4,4,"MAINTENANCE",TFT_LIGHTGREY);
     }
     if(ui.snapshot().screen==ScreenId::Settings)for(int x=0;x<240;++x)
         if(display.pixels.at(16*240+x)!=TFT_DARKGREY)throw std::runtime_error("settings header height mismatch");

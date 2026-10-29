@@ -17,15 +17,15 @@ void UiRenderer::drawUsb(const UiModel& model) {
     auto centered=[&](int y,const char* value,uint16_t color=TFT_WHITE) {
         large((240-PixelFont::width(value,TextRole::Ascii8x16))/2,y,value,color);
     };
-    auto shell=[&](const char* title,const char* guide) {
+    auto shell=[&](const char* title) {
         text(4,8,title);frame_.drawFastHLine(0,22,240,TFT_DARKGREY);
-        frame_.drawFastHLine(0,118,240,TFT_DARKGREY);text(4,124,guide,TFT_LIGHTGREY);
+        frame_.drawFastHLine(0,118,240,TFT_DARKGREY);
     };
     frame_.setDimmed(model.confirming() || page==UsbPage::WaitEject);
     frame_.fillSprite(TFT_BLACK);
     char line[80];
     if(page==UsbPage::Menu || page==UsbPage::WaitEject) {
-        shell("USB","[ENTER] SELECT  [ESC] EXIT");
+        shell("USB");
         const char* state=!usb.ready?"NO SD":usb.io_error?"SD ERROR":"SD READY";
         text(sd_icon::HeaderRight-8*std::strlen(state),8,state,!usb.ready||usb.io_error?TFT_RED:TFT_GREEN);
         large(12,31,ja?(usb.ejected?"取り外し済み":usb.connected?"接続中":"未接続"):
@@ -45,12 +45,12 @@ void UiRenderer::drawUsb(const UiModel& model) {
             const char* cancel=ja?"取消":"Cancel";
             const int x=(240-PixelFont::width(cancel,TextRole::Ascii8x16))/2;
             text(x-16,88,">",TFT_CYAN);large(x,84,cancel,TFT_CYAN);
-            frame_.fillRect(0,119,240,16,TFT_BLACK);text(4,124,"[ENTER/ESC] CANCEL",TFT_LIGHTGREY);
+
         }
         return;
     }
     if(page==UsbPage::Files) {
-        shell("EXPORT","[ENTER] SELECT  [ESC] BACK");
+        shell("EXPORT");
         std::snprintf(line,sizeof(line),"%u/%u",files.count?selected+1:0,files.count);text(sd_icon::HeaderRight-8*std::strlen(line),8,line,TFT_LIGHTGREY);
         large(12,28,ja?"ログを選択":"Select a log");
         if(!files.loading && files.error!=LogReadError::None)text(4,56,logReadErrorName(files.error),TFT_RED);
@@ -61,7 +61,7 @@ void UiRenderer::drawUsb(const UiModel& model) {
             text(20,52+n*18,name,n==selected?TFT_CYAN:TFT_WHITE);
         }
     } else if(page==UsbPage::Format) {
-        shell("EXPORT","[ENTER] START  [ESC] BACK");
+        shell("EXPORT");
         std::snprintf(line,sizeof(line),"%u/3",selected+1);text(sd_icon::HeaderRight-24,8,line,TFT_LIGHTGREY);
         large(12,28,ja?"形式を選択":"Select a format");
         const char* name=model.usbFile()<files.count?files.names[model.usbFile()]:"";
@@ -72,7 +72,7 @@ void UiRenderer::drawUsb(const UiModel& model) {
             large(20,70+n*16,exportFormatName(static_cast<ExportFormat>(n)),n==selected?TFT_CYAN:TFT_WHITE);
         }
     } else if(page==UsbPage::Progress || page==UsbPage::Busy) {
-        shell("EXPORT","PLEASE WAIT");
+        shell("EXPORT");
         text(sd_icon::HeaderRight-24,8,exportFormatName(job.format),TFT_CYAN);
         large(12,31,ja?(page==UsbPage::Progress?"書き出し中":"準備中"):
                              (page==UsbPage::Progress?"Exporting":"Preparing"),TFT_YELLOW);
@@ -86,7 +86,7 @@ void UiRenderer::drawUsb(const UiModel& model) {
             frame_.drawRect(12,98,216,8,TFT_DARKGREY);frame_.fillRect(13,99,214*std::min(percent,100u)/100,6,TFT_GREEN);
         }
     } else if(page==UsbPage::Complete) {
-        shell("EXPORT","[ENTER] BACK");text(sd_icon::HeaderRight-24,8,exportFormatName(job.format),TFT_CYAN);
+        shell("EXPORT");text(sd_icon::HeaderRight-24,8,exportFormatName(job.format),TFT_CYAN);
         large(12,31,ja?"書き出し完了":"Export complete",TFT_GREEN);
         text(12,55,"/export/",TFT_LIGHTGREY);
         char name[ExportNameBytes];std::snprintf(name,sizeof(name),"%s%s",job.name,exportExtension(job.format));
@@ -95,7 +95,7 @@ void UiRenderer::drawUsb(const UiModel& model) {
         large(12,96,ja?(usb.connected?"PCへ公開しました":"USB接続待ち"):
                             (usb.connected?"Available on PC":"Waiting for USB"),usb.connected?TFT_CYAN:TFT_YELLOW);
     } else {
-        shell("EXPORT","[ENTER/ESC] BACK");
+        shell("EXPORT");
         large(12,31,job.output_created?(ja?"出力済み・公開失敗":"Saved; USB unavailable"):
                                         (ja?"書き出し失敗":"Export failed"),TFT_RED);
         text(4,57,exportErrorName(job.error),TFT_RED);

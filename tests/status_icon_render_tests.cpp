@@ -1,5 +1,9 @@
 #include "task/ui/UiRenderer.h"
 #include "task/ui/GpsControls.h"
+#include "task/ui/PlacePresentation.h"
+#include "task/ui/EscapeIcon.h"
+#include "task/ui/EnterIcon.h"
+#include "LogReplay.h"
 #include <array>
 #include <cstdio>
 #include <cstdlib>
@@ -10,7 +14,7 @@ namespace {
 void check(bool ok,const char* message) {if(!ok)throw std::runtime_error(message);}
 constexpr int X=160,Y=2,W=12,H=12;
 using Mask=std::array<bool,W*H>;
-Mask render(ScreenId screen,int page,bool active,bool japanese,int depth,bool dialog=false,bool output=false,int percent=100,bool charging=false,bool charge_known=true,bool loading=false) {
+Mask render(ScreenId screen,int page,bool active,bool japanese,int depth,bool dialog=false,bool output=false,int percent=100,bool charging=false,bool charge_known=true,bool loading=false,unsigned replay_speed=config::LogReplayDefaultSpeed,bool reverse=false,bool playing=false) {
     UiData data{};data.settings=defaultSettings();data.settings.language=japanese?UiLanguage::Japanese:UiLanguage::English;
     data.storage.sd={1,1,active};data.storage.card_state=CardState::Mounted;
     data.storage.settings_state=SettingsState::Loaded;data.storage.settings=data.settings;
@@ -21,6 +25,7 @@ Mask render(ScreenId screen,int page,bool active,bool japanese,int depth,bool di
     if(isLogBrowser(screen)||screen==ScreenId::UsbStorage) {
         auto& view=data.editBrowse();view.summary.records=3527;view.index=321;view.point=data.gps.fix;
         view.point_loaded=true;view.map_mode=page==-1;view.loading=loading;
+        view.replay_speed=replay_speed;view.replay_reverse=reverse;view.playing=playing;
         std::strcpy(view.name,"20261026_120000_0.gps.dat");
     }
     if(screen==ScreenId::Logs) {
@@ -36,6 +41,49 @@ Mask render(ScreenId screen,int page,bool active,bool japanese,int depth,bool di
     M5GFX display;UiRenderer renderer(display);
     alignas(4) uint8_t backing[240*135*2+4]{};
     check(renderer.begin(depth,backing,sizeof(backing)),"renderer begin");renderer.draw(model);
+    if(screen==ScreenId::LogPoint && page==-1) {
+        auto label=[&](unsigned x,const char* value,uint16_t color) {
+            for(unsigned n=0;value[n];++n)for(unsigned y=0;y<8;++y)for(unsigned col=0;col<8;++col) {
+                const bool ink=font8x8_c64[(value[n]-32)*8+col]&(1u<<y);
+                check(display.pixels[(4+y)*240+x+n*8+col]==(ink?color:TFT_BLACK),"replay state/direction/rate/time anchored header");
+            }
+        };
+        const auto color=playing?TFT_GREEN:TFT_YELLOW;
+        static constexpr const char* rates[]={"1/4x","1/2x","1x","2x","4x"};
+        label(4,playing?"PLAY":"PAUSE",color);label(44,reverse?"<":">",color);
+        label(52,rates[replay_speed],color);label(88,"--:--:--",TFT_WHITE);
+        for(unsigned y=0;y<16;++y)for(unsigned x=152;x<156;++x)
+            check(display.pixels[y*240+x]==TFT_BLACK,"replay header fits before SD/battery");
+    }
+    const auto shortcuts=model.shortcutGuide();
+    for(unsigned i=0;i<shortcuts.size();++i)if(shortcuts[i].key==UiKey::Escape)
+        check(shortcuts[i].tone!=ShortcutTone::Accent,"ESC is white when available, grey when disabled; never cyan");
+    static constexpr uint8_t arrows[4][8]={
+        {0x10,0x38,0x54,0x92,0x10,0x10,0x10,0}, // up
+        {0x10,0x10,0x10,0x92,0x54,0x38,0x10,0}, // down
+        {0x10,0x20,0x40,0xfe,0x40,0x20,0x10,0}, // left
+        {0x10,0x08,0x04,0xfe,0x04,0x08,0x10,0}, // right
+    };
+    for(unsigned y=121;y<135;++y)for(unsigned x=0;x<240;++x) {
+        uint16_t expected=TFT_BLACK;
+        unsigned left=4;
+        for(unsigned i=0;i<shortcuts.size();++i) {
+            const auto hint=shortcuts[i];const auto width=shortcutWidth(hint.key);
+            if(x<left || x>=left+width) {left+=width;continue;}
+            const auto col=x-left;
+            const auto c=shortcutCharacter(hint.key);bool ink=false;
+            if(hint.key==UiKey::Escape)ink=y>=122 && y<134 && (escape_icon::Rows[y-122]&(0x800000u>>col));
+            else if(hint.key==UiKey::Enter)ink=y>=122 && y<134 && (enter_icon::Rows[y-122]&(0x8000u>>col));
+            else if(c)ink=y>=124 && y<132 && (font8x8_c64[(c-32)*8+col]&(1u<<(y-124)));
+            else {
+                const int index=hint.key==UiKey::Up?0:hint.key==UiKey::Down?1:hint.key==UiKey::Left?2:3;
+                ink=y>=124 && y<132 && (arrows[index][y-124]&(0x80u>>col));
+            }
+            if(ink)expected=hint.tone==ShortcutTone::Disabled?TFT_DARKGREY:hint.tone==ShortcutTone::Accent?TFT_CYAN:TFT_WHITE;
+            break;
+        }
+        check(display.pixels[y*240+x]==expected,"common footer: ESC bitmap, groups, key colors and blank remainder");
+    }
     Mask mask{};
     const uint16_t expected=active?TFT_WHITE:TFT_DARKGREY;
     for(int y=0;y<16;++y)for(int x=156;x<176;++x) {
@@ -87,6 +135,39 @@ Mask render(ScreenId screen,int page,bool active,bool japanese,int depth,bool di
     return mask;
 }
 }
+// A completed label must remain pixel-identical across the next point's
+// Waiting/Searching states. The normal off-screen canvas is the only renderer
+// buffer; snapshots below exist solely in this host regression test.
+void replayLabelContinuity(bool map_mode,bool japanese,int depth) {
+    UiData data{};data.settings=defaultSettings();data.settings.dataset=1;
+    data.settings.language=japanese?UiLanguage::Japanese:UiLanguage::English;
+    data.storage.card_state=CardState::Mounted;data.dataset.state=PlaceState::Ready;
+    data.place_state=PlaceState::Ready;
+    std::strcpy(data.place[0],"OLD REGION");std::strcpy(data.place[1],"OLD DISTRICT");
+    auto& view=data.editBrowse();view.summary.records=2;view.point_loaded=true;view.map_mode=map_mode;
+    view.playing=map_mode;view.point={35.68,140.02,0,true};
+    UiModel model;check(model.setScreen({ScreenId::LogPoint,DisplayMode::View,1,data,0,ActionResult::None})==OperationStatus::Ok,"place continuity initial screen");
+    M5GFX display;UiRenderer renderer(display);alignas(4) uint8_t backing[240*135*2+4]{};
+    check(renderer.begin(depth,backing,sizeof(backing)),"place continuity renderer begin");renderer.draw(model);
+    constexpr unsigned First=84*240,End=116*240;
+    std::array<uint16_t,End-First> old{};
+    std::copy(display.pixels.begin()+First,display.pixels.begin()+End,old.begin());
+    check(std::any_of(old.begin(),old.end(),[](uint16_t color){return color!=TFT_BLACK;}),"continuity fixture actually draws the old label");
+    view.index=view.target=1;view.point.latitude+=.01;
+    for(auto state:{PlaceState::Waiting,PlaceState::Searching}) {
+        data.place_state=state;++data.revision;
+        check(model.updateContent({DisplayMode::View,1,data,0,ActionResult::None})==OperationStatus::Ok,"place continuity updates current point");
+        renderer.draw(model);
+        check(std::equal(old.begin(),old.end(),display.pixels.begin()+First),"place rows must not blink or disappear while the next point is searched");
+    }
+    PlaceResult result{};result.state=PlaceState::Ready;result.request.fix=view.point;
+    std::strcpy(result.lines[0],"NEW REGION");std::strcpy(result.lines[1],"NEW DISTRICT");
+    completePlacePresentation(data,result);++data.revision;
+    check(model.updateContent({DisplayMode::View,1,data,0,ActionResult::None})==OperationStatus::Ok,"place continuity accepts completed labels");
+    renderer.draw(model);
+    check(!std::equal(old.begin(),old.end(),display.pixels.begin()+First),"completed lookup replaces the label instead of freezing the old name");
+}
+
 int main(int argc,char** argv) {
     try {
         if(argc==3) {
@@ -109,6 +190,10 @@ int main(int argc,char** argv) {
             }
             check(render(ScreenId::LivePlace,0,active,ja,depth,true)==reference,"dialog changes brightness of access icon");++cases;
         }
+        for(bool ja:{false,true})for(int depth:{4,16})for(bool playing:{false,true})
+            for(bool reverse:{false,true})for(unsigned rate=0;rate<replay::SpeedCount;++rate) {
+                check(render(ScreenId::LogPoint,-1,true,ja,depth,false,false,72,false,true,false,rate,reverse,playing)==reference,"replay controls change SD icon");++cases;
+            }
         for(int percent:{-1,0,10,20,72,100})for(bool charging:{false,true})
             for(auto screen:{ScreenId::LivePlace,ScreenId::GpsLogger,ScreenId::Settings,ScreenId::UsbStorage}) {
                 check(render(screen,0,true,false,4,false,false,percent,charging)==reference,"battery state changes the SD shape");++cases;
@@ -120,6 +205,8 @@ int main(int argc,char** argv) {
             const int page=screen==ScreenId::UsbStorage?static_cast<int>(UsbPage::Files):screen==ScreenId::Settings?static_cast<int>(SettingsPage::DatasetList):0;
             check(render(screen,page,true,false,4,false,false,72,false,true,true)==reference,"loading changes common status");++cases;
         }
-        std::printf("PASS: %u renderer cases; common SD/battery header on all screens/pages, battery thresholds/charging/unknown, loading, dialogs, languages and 4/16-bit pixels\n",cases);
+        for(bool map_mode:{false,true})for(bool ja:{false,true})for(int depth:{4,16})replayLabelContinuity(map_mode,ja,depth);
+        std::puts("PASS: 8 log label continuity cases; Ready/Waiting/Searching pixel identity and completed replacement, text/map, both languages and color depths");
+        std::printf("PASS: %u renderer cases; common shortcut footer and SD/battery header on all screens/pages, battery thresholds/charging/unknown, loading, dialogs, languages and 4/16-bit pixels\n",cases);
     } catch(const std::exception& e) {std::fprintf(stderr,"FAIL: %s\n",e.what());return 1;}
 }

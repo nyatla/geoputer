@@ -19,3 +19,5 @@
 | SDエラー | [日本語](log-browser-usb-error-preview.png) / [English](log-browser-en-usb-error-preview.png) |
 
 画像は実装のUiRendererから240×135ドットで描画し、最近傍で4倍にしたものである。`python3 tools/render_log_browser.py`で生成する。
+
+最下段は[共通キー操作](../共通キー操作.md)に従い、ESCマークと、操作できるページのEnterマーク・ローカル矢印を表示する。数値とS/G、暗黙のDelは表示しない。準備中・書き出し中は操作キーを割り当てず空欄とする。

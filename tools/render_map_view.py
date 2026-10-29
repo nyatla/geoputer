@@ -33,7 +33,8 @@ int main(int argc,char** argv) {
     UiData data{};data.settings=defaultSettings();data.settings.dataset=1;data.dataset.generation=1;data.map.scale=request.scale;
     data.storage.card_state=CardState::Mounted;data.storage.rg.state=RgCacheState::Ready;
     data.recording.state=RecordingState::Paused;data.place_state=PlaceState::Ready;
-    CodeCacheBuffer lookup_pixels{};SelectedDataset lookup_dataset;PlaceLookup lookup(lookup_pixels,lookup_dataset);lookup.configure(argv[2],"ja");
+    const std::string dataset_root=std::string(argv[2]).substr(0,std::string(argv[2]).find_last_of('/'));
+    CodeCacheBuffer lookup_pixels{};SelectedDataset lookup_dataset;test_storage::Lookup lookup(lookup_pixels,lookup_dataset,1,dataset_root);lookup.configure(1,"ja");
     check(lookup.prepare().state==PlaceState::Ready);data.dataset=lookup.datasetInfo();
     request.dataset_generation=data.dataset.generation;
     data.gps.reception=GpsReception::Fix;data.gps.fix={request.latitude,request.longitude,19921000,true};
@@ -41,10 +42,10 @@ int main(int argc,char** argv) {
     check(model.setScreen({ScreenId::Map,DisplayMode::View,1,data,0,ActionResult::None})==OperationStatus::Ok);
     const bool reading=!std::strcmp(mode,"reading");
     map::FrameInfo origin{};
-    map::CodeImageBuffer session_pixels{};map::MapSession session(session_pixels);MapBuildJob job;
+    map::CodeImageBuffer session_pixels{};map::MapSession session(session_pixels);ReadFileSlot file;MapBuildJob job(file);
     if(!reading) {
         check(model.beginMapFrame(request,request.buffer)==OperationStatus::Ok);
-        check(job.start(request,session));job.loaded(readBoundaryMap(lookup_dataset,request,0,nullptr,std::move(session)));
+        check(job.start(request,session));job.loaded(readBoundaryMap(lookup_dataset,request,0,nullptr,std::move(session),job.readBuffer(),job.readFile(),dataset_root));
         for(int n=0;n<20&&!job.complete();++n)job.step();
         check(job.complete() && job.info().error==map::Error::None);
         origin=job.info();check(job.release(request));
@@ -80,7 +81,7 @@ int main(int argc,char** argv) {
             check(display.pixels[(124+y)*240+left+x]==(ink?(enabled?TFT_WHITE:TFT_DARKGREY):TFT_BLACK));
         }
     };
-    zoom_key(188,'+',data.map.scale>1);zoom_key(204,'-',data.map.scale<4);
+    zoom_key(100,'+',data.map.scale>1);zoom_key(108,'-',data.map.scale<4);
     const char* ratio=map::scaleText(request.scale);
     for(unsigned n=0;ratio[n];++n)for(int y=0;y<8;++y)for(int x=0;x<8;++x) {
         const bool ink=font8x8_c64[(ratio[n]-32)*8+x]&(1u<<y);
@@ -137,7 +138,7 @@ def main():
         'task/storage/galuchat/DiskIndexedWordBookReader.cpp','task/storage/galuchat/TextEncoding.cpp',
         'task/storage/galuchat/PlaceLookup.cpp','task/storage/galuchat/CachedMapReader.cpp']
     with tempfile.TemporaryDirectory(prefix='reversegeoputer-map-preview-') as folder:
-        work=Path(folder);data=work/'data';data.mkdir()
+        work=Path(folder);data=work/'data'/'01';data.mkdir(parents=True)
         shutil.copyfile(args.map,data/'map.glc');shutil.copyfile(args.wordbook,data/'names.giswordbook')
         (data/'dataset.ini').write_text('[dataset]\nversion=1\nmap=map.glc\ndefault_language=ja\n[ja]\ntitle=Preview\nwordbook=names.giswordbook\ndisplay_line1=%0 %1\ndisplay_line2=%2%3%4%5\n')
         (work/'M5GFX.h').write_text(ADAPTER+'\n'+'\n'.join(colors));(work/'scene.cpp').write_text(SCENE)
@@ -157,6 +158,6 @@ def main():
                     if mode=='ready':complete_frame=image.crop((0,0,240,121)).tobytes()
                     if mode=='updating' and image.crop((0,0,240,121)).tobytes()!=complete_frame:raise AssertionError('updating must preserve the displayed map; footer +/- keys follow the requested scale')
                     image.save(output/f'map-view-{suffix}{mode}.png')
-                    image.resize((960,540),Image.Resampling.NEAREST).save(output/f'map-view-{suffix}{mode}-preview.png')
+                    image.resize((960,540),getattr(Image,"Resampling",Image).NEAREST).save(output/f'map-view-{suffix}{mode}-preview.png')
                 print(f'PASS: scale=1/{scale} {mode}, indexed and RGB565 renderers match at native 240x135')
 if __name__=='__main__':main()

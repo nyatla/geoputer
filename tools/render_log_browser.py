@@ -67,13 +67,17 @@ int main(int argc,char** argv) {
     }
     const bool log_map=!std::strncmp(mode,"log-map",7);
     if(log_map) {screen=ScreenId::LogPoint;data.editBrowse().map_mode=true;}
-    if(!std::strcmp(mode,"log-map-play"))data.editBrowse().playing=true;
+    if(!std::strcmp(mode,"log-map-play") || !std::strcmp(mode,"log-map-reverse") ||
+       !std::strcmp(mode,"log-map-fast") || !std::strcmp(mode,"log-map-slow"))data.editBrowse().playing=true;
+    if(!std::strcmp(mode,"log-map-reverse"))data.editBrowse().replay_reverse=true;
+    if(!std::strcmp(mode,"log-map-fast"))data.editBrowse().replay_speed=4;
+    if(!std::strcmp(mode,"log-map-slow"))data.editBrowse().replay_speed=0;
     if(!std::strcmp(mode,"point-no-dataset")) {screen=ScreenId::LogPoint;data.settings.dataset=0;data.dataset.state=PlaceState::Unselected;}
     if(!std::strcmp(mode,"log-map-loading"))data.editBrowse().loading=true;
     if(!std::strcmp(mode,"log-map-error"))data.map.error=map::Error::ReadError;
     if(!std::strcmp(mode,"long-name"))std::strcpy(data.editBrowse().names[0],data.browse().name);
     if(!std::strcmp(mode,"point-empty")) {screen=ScreenId::LogPoint;data.editBrowse().summary.records=0;data.editBrowse().point={};}
-    const bool properties=!std::strncmp(mode,"properties",10) || !std::strcmp(mode,"log-menu");
+    const bool properties=!std::strncmp(mode,"properties",10);
     const bool stats=!std::strncmp(mode,"statistics",10);
     if(properties)screen=ScreenId::LogProperties;
     if(stats) {
@@ -86,7 +90,6 @@ int main(int argc,char** argv) {
             view.statistics.min_altitude_m=-12.3;view.statistics.max_altitude_m=123.4;view.statistics.elapsed_ms=3214;}
     }
     UiModel model;model.setScreen({screen,DisplayMode::View,1,data,0,ActionResult::None});
-    if(!std::strcmp(mode,"log-menu"))model.keyPressed(UiKey::LogMenu,1);
     if(log_map) {
         map::FrameInfo info{};info.width=240;info.height=101;info.meters_per_pixel=11.132;
         auto& request=info.request;request.token=1;request.screen_generation=1;request.dataset_generation=data.dataset.generation;
@@ -129,8 +132,14 @@ int main(int argc,char** argv) {
         const auto color=data.editBrowse().deleting || data.editBrowse().loading || !data.editBrowse().count || (data.editBrowse().active_mask&1)?TFT_DARKGREY:TFT_WHITE;
         for(int row=0;row<8;++row)for(int col=0;col<8;++col) {
             const bool ink=font8x8_c64[('D'-32)*8+col]&(1u<<row);
-            if(display.pixels[(124+row)*240+180+col]!=(ink?color:TFT_BLACK))throw std::runtime_error("D footer state differs from deletion availability");
+            if(display.pixels[(124+row)*240+116+col]!=(ink?color:TFT_BLACK))throw std::runtime_error("D footer state differs from deletion availability");
         }
+    }
+    if(screen==ScreenId::LogPoint && !log_map && data.browse().point.valid && data.place_state==PlaceState::Ready) {
+        const auto* first=shinonomeGlyph(U'千');
+        for(int y=0;y<16;++y)for(int x=0;x<16;++x)
+            if(display.pixels[(84+y)*240+4+x]!=((first[y]&(0x8000u>>x))?TFT_WHITE:TFT_BLACK))
+                throw std::runtime_error("POINT first place row must use native Shinonome 16x16 at y=84");
     }
     const int header=usb_mode?22:16;
     if(screen!=ScreenId::LivePlace && !log_map)for(int y=0;y<135;++y)for(int x=236;x<240;++x)
@@ -153,7 +162,7 @@ def main():
     for name in sorted(set(re.findall(r'\bTFT_[A-Z]+\b',SCENE+renderer))):
         value=re.search(rf'\b{name}\s*=\s*(0x[0-9A-Fa-f]+)',enums)[1]
         colors.append(f'inline constexpr uint16_t {name}={value};')
-    modes=('properties', 'log-menu', 'statistics', 'statistics-loading', 'statistics-error', 'usb', 'usb-screen', 'usb-selected', 'usb-error', 'usb-ejected', 'list', 'delete-confirm', 'delete-selected', 'delete-protected', 'delete-short', 'delete-longest', 'deleting', 'delete-error', 'point-empty', 'point', 'long-name', 'unknown', 'loading', 'crc-error', 'empty', 'sd-error', 'bounds', 'point-no-dataset', 'log-map', 'log-map-play', 'log-map-loading', 'log-map-error')
+    modes=('properties', 'statistics', 'statistics-loading', 'statistics-error', 'usb', 'usb-screen', 'usb-selected', 'usb-error', 'usb-ejected', 'list', 'delete-confirm', 'delete-selected', 'delete-protected', 'delete-short', 'delete-longest', 'deleting', 'delete-error', 'point-empty', 'point', 'long-name', 'unknown', 'loading', 'crc-error', 'empty', 'sd-error', 'bounds', 'point-no-dataset', 'log-map', 'log-map-play', 'log-map-reverse', 'log-map-fast', 'log-map-slow', 'log-map-loading', 'log-map-error')
     with tempfile.TemporaryDirectory(prefix='geoputer-browser-') as directory:
         work=Path(directory);(work/'M5GFX.h').write_text(ADAPTER+'\n'+'\n'.join(colors));(work/'scene.cpp').write_text(SCENE)
         sources=[ROOT/'application/task/ui'/f'{name}.cpp' for name in ('PixelFont','UiRenderer','UsbRenderer','UiModel','LicenseText','SettingsText','Shinonome')]
@@ -168,7 +177,7 @@ def main():
                 folder.mkdir(parents=True,exist_ok=True)
                 stem=f'log-browser-{mode}' if language=='ja' else f'log-browser-en-{mode}'
                 image.save(folder/f'{stem}.png')
-                image.resize((960,540),Image.Resampling.NEAREST).save(folder/f'{stem}-preview.png')
+                image.resize((960,540),getattr(Image,"Resampling",Image).NEAREST).save(folder/f'{stem}-preview.png')
             print(f'PASS: {language}, {len(modes)} scenes, native language fonts, 240x135 bounds and header/footer borders')
 
 if __name__=='__main__':main()

@@ -1,4 +1,6 @@
 #include "Application.h"
+#include "LogReplay.h"
+#include "task/ui/ScreenNavigation.h"
 #include "task/storage/log/LogFormat.h"
 #include "task/ui/PlacePresentation.h"
 #include <cstdio>
@@ -28,10 +30,15 @@ bool Application::showCachedPoint() {
     GpsFix fix{};
     if(!decodeLogRecord(logs.records[view.target-logs.cache_start],fix)) return false;
     view.point=fix; view.index=view.target;view.point_loaded=true;
-    logs.next_at=taskTimeMs()+1000;
+    logs.next_at=taskTimeMs()+replay::intervalMs(view);
     if(place_flow_.pending())place_flow_.refresh();
     if(!place_flow_.sameCell(fix,data_.dataset.unit_inv_x,data_.dataset.unit_inv_y)) {
-        clearPlacePresentation(data_,!data_.settings.dataset?PlaceState::Unselected:datasetInactive(data_.dataset.state)?data_.dataset.state:PlaceState::Waiting);
+        const auto state=!data_.settings.dataset?PlaceState::Unselected:
+            datasetInactive(data_.dataset.state)?data_.dataset.state:PlaceState::Waiting;
+        // A new cell invalidates the lookup, not the last completed label.
+        // Keep its coordinates/region with it until the new result is committed.
+        if(state==PlaceState::Waiting)data_.place_state=state;
+        else clearPlacePresentation(data_,state);
     }
     view.error=LogReadError::None;view.loading=false;
     logs.need=false; ++view.revision; ++data_.revision; ui_data_dirty_=true;
@@ -41,6 +48,12 @@ bool Application::operateBrowser(const UiAction& action) {
     if(!screen_resources_.hasLogs())return false;
     auto& logs=screen_resources_.logs();
     auto& view=data_.editBrowse();
+    auto setPointMode=[&](bool map_mode) {
+        if(view.map_mode==map_mode)return true;
+        view.map_mode=map_mode;view.playing=false;
+        if(map_request_.token)map_cancel_=true;
+        ++view.revision;++data_.revision;ui_data_dirty_=true;return true;
+    };
     switch(action.browse_action) {
         case BrowseAction::Delete:
             if(screen_!=ScreenId::Logs || view.loading || !action.confirmed ||
@@ -60,9 +73,9 @@ bool Application::operateBrowser(const UiAction& action) {
             std::snprintf(view.name,sizeof(view.name),"%s",view.names[view.selected]);
             return setScreen(ScreenId::LogProperties,action.action_id,ActionResult::Applied);
         case BrowseAction::OpenPoint: case BrowseAction::Text: case BrowseAction::Map:
-            if(view.loading || view.error!=LogReadError::None || !view.summary.records ||
-               (action.browse_action==BrowseAction::Map && !logMapAvailable(data_)))return false;
-            view.map_mode=action.browse_action==BrowseAction::Map;
+            if(!logViewAvailable(screen_,data_,action.browse_action))return false;
+            if(viewingLogPoint(screen_))return setPointMode(action.browse_action==BrowseAction::Map);
+            view.map_mode=action.browse_action==BrowseAction::Map;view.playing=false;
             return setScreen(ScreenId::LogPoint,action.action_id,ActionResult::Applied);
         case BrowseAction::Statistics: case BrowseAction::Recalculate: {
             if((screen_!=ScreenId::LogProperties && screen_!=ScreenId::LogPoint && screen_!=ScreenId::LogStatistics) || view.loading)return false;
@@ -77,15 +90,27 @@ bool Application::operateBrowser(const UiAction& action) {
             logs.request.session_id=view.summary.session_id;
             break;
         }
-        case BrowseAction::ToggleView:
-            if(!viewingLogPoint(screen_) || (!view.map_mode && !logMapAvailable(data_)))return false;
-            view.map_mode=!view.map_mode;view.playing=false;
-            if(map_request_.token)map_cancel_=true;
-            ++view.revision;++data_.revision;ui_data_dirty_=true;return true;
         case BrowseAction::Playback:
             if(!viewingLogPoint(screen_) || !view.map_mode || !view.summary.records || view.error!=LogReadError::None)return false;
-            view.playing=!view.playing;logs.next_at=taskTimeMs()+1000;
+            view.playing=!view.playing;logs.next_at=taskTimeMs()+replay::intervalMs(view);
             ++data_.revision;ui_data_dirty_=true;return true;
+        case BrowseAction::ReplayFaster: case BrowseAction::ReplaySlower:
+        case BrowseAction::ReplayForward: case BrowseAction::ReplayReverse: {
+            if(!viewingLogPoint(screen_) || !view.map_mode || !view.playing)return false;
+            const auto old_speed=view.replay_speed;const auto old_reverse=view.replay_reverse;
+            auto speed=replay::speed(view);
+            if(action.browse_action==BrowseAction::ReplayFaster && speed+1<replay::SpeedCount)++speed;
+            if(action.browse_action==BrowseAction::ReplaySlower && speed>0)--speed;
+            view.replay_speed=static_cast<uint8_t>(speed);
+            if(action.browse_action==BrowseAction::ReplayForward)view.replay_reverse=false;
+            if(action.browse_action==BrowseAction::ReplayReverse)view.replay_reverse=true;
+            if(old_speed!=view.replay_speed || old_reverse!=view.replay_reverse) {
+                // Keep the current point, pending reads and playback state.
+                logs.next_at=taskTimeMs()+replay::intervalMs(view);
+                ++data_.revision;ui_data_dirty_=true;
+            }
+            return true;
+        }
         case BrowseAction::PausePlayback:
             if(!viewingLogPoint(screen_))return false;
             view.playing=false;++data_.revision;ui_data_dirty_=true;return true;
@@ -220,20 +245,22 @@ void Application::processReplay() {
     if(!screen_resources_.hasLogs() || !viewingLogPoint(screen_))return;
     auto& view=data_.editBrowse();auto& logs=screen_resources_.logs();
     if(!view.playing)return;
-    if(view.loading || !view.point_loaded) {logs.next_at=taskTimeMs()+1000;return;}
-    if(mode_!=DisplayMode::View || view.error!=LogReadError::None || data_.map.error!=map::Error::None) {
+    if(view.loading || !view.point_loaded) {logs.next_at=taskTimeMs()+replay::intervalMs(view);return;}
+    if(mode_!=DisplayMode::View || !view.map_mode || view.error!=LogReadError::None || data_.map.error!=map::Error::None) {
         view.playing=false;++data_.revision;ui_data_dirty_=true;return;
     }
     if(browse_waiting_ || place_flow_.pending() || place_borrow_.token ||
        map_request_.token || data_.map.busy || data_.place_state==PlaceState::Waiting ||
        data_.place_state==PlaceState::Searching) {
-        logs.next_at=taskTimeMs()+1000;return;
+        logs.next_at=taskTimeMs()+replay::intervalMs(view);return;
     }
     if(static_cast<int32_t>(taskTimeMs()-logs.next_at)<0)return;
-    if(view.index+1>=view.summary.records) {
+    if(!replay::canAdvance(view)) {
         view.playing=false;++data_.revision;ui_data_dirty_=true;return;
     }
-    UiAction next{};next.browse_action=BrowseAction::Point;next.browse_index=view.index+1;
-    operateBrowser(next);view.playing=true;
+    UiAction next{};next.browse_action=BrowseAction::Point;
+    next.browse_index=view.replay_reverse?view.index-1:view.index+1;
+    const auto accepted=operateBrowser(next);view.playing=accepted;
+    if(!accepted) {++data_.revision;ui_data_dirty_=true;}
 }
 }

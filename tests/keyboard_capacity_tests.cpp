@@ -38,6 +38,9 @@ void advLimit() {
     check(state->ready() && keyboard.maxKeys()==3,"ADV reader initialization");
     {
         NoHeap probe;
+        Chip::fifo={event(0,1)};refresh(keyboard);
+        check(keyboard.keysState().tab && keyboard.keysState().word.empty() && keyboard.getKeyValue({0,1}).value_first==KEY_TAB,"physical Tab is a special key, not ASCII plus");
+        Chip::fifo={event(0,1,false)};refresh(keyboard);check(!keyboard.keysState().tab,"physical Tab releases its flag");
         // a + Fn + Shift fill the shared limit, including modifiers.
         Chip::fifo={event(2,2),event(0,2),event(1,2)};refresh(keyboard);
         check(keyboard.keyList().size()==3 && keyboard.keysState().fn && keyboard.keysState().shift &&

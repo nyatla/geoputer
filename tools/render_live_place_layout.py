@@ -20,10 +20,12 @@ SCENE = r'''
 #include <cstring>
 #include "task/ui/UiRenderer.h"
 #include "task/ui/LivePlaceLayout.h"
+#include "task/ui/EscapeIcon.h"
 #include "task/ui/GpsPresentation.h"
 #include "task/ui/PlacePresentation.h"
 #include "task/ui/Shinonome.h"
 #include "task/storage/galuchat/TextEncoding.h"
+#include "PlaceFormatOracle.h"
 #include <stdexcept>
 #include <limits>
 using namespace geoputer;
@@ -79,8 +81,10 @@ int main(int argc, char** argv) {
         if (!std::strcmp(mode,"long-address")) parts[2]="あいうえおかきくけこさしすせ";
         if (!std::strcmp(mode,"space-width")) parts={"日 日"};
         if (!std::strcmp(mode,"space-boundary")) parts={"日日日日日日日日日日日日日日 "};
-        if (!std::strcmp(mode,"empty-address")) formatPlaceLines(parts,place.lines,PlaceDisplayFormat{{"",""},true});
-        else formatPlaceLines(parts,place.lines);
+        char formatted[2][64];
+        if (!std::strcmp(mode,"empty-address")) formatPlaceLines(parts,formatted,PlaceDisplayFormat{{"",""},true});
+        else formatPlaceLines(parts,formatted);
+        for(unsigned row=0;row<2;++row)std::strcpy(place.lines[row],formatted[row]);
         completePlacePresentation(data,place);
     }
     model.setScreen({ScreenId::LivePlace,DisplayMode::View,1,data,0,ActionResult::None});
@@ -127,9 +131,10 @@ int main(int argc, char** argv) {
             for(int row=0;row<8;++row) for(int col=0;col<8;++col)
                 check_pixel(x+col,y+row,font8x8_c64[(*p-32)*8+col] & (1u<<row) ? color : TFT_BLACK);
     };
-    check_ascii(4,124,"ESC:MENU",TFT_CYAN);
-    check_ascii(84,124,"1",TFT_CYAN);check_ascii(92,124,"2340",TFT_LIGHTGREY);
-    check_ascii(148,124,"S");check_ascii(164,124,"G");
+    for(unsigned row=0;row<escape_icon::Height;++row)for(unsigned col=0;col<escape_icon::Width;++col)
+        check_pixel(4+col,122+row,escape_icon::Rows[row]&(0x800000u>>col)?TFT_WHITE:TFT_BLACK);
+    check_ascii(28,124,"SG");check_ascii(44,124," ");
+    check_ascii(52,124,"1",TFT_CYAN);check_ascii(60,124,"2340");
     if (!sd_error && !gps_error) {
         check_ascii(124,110,"PTS");
         char points[16];std::snprintf(points,sizeof(points),"%lu",static_cast<unsigned long>(data.storage.log.accepted));
@@ -215,7 +220,7 @@ def main():
                 continue
             stem = f"live-place-refined-{mode}"
             image.save(OUTPUT / f"{stem}.png")
-            image.resize((960, 540), Image.Resampling.NEAREST).save(OUTPUT / f"{stem}-preview.png")
+            image.resize((960, 540), getattr(Image,"Resampling",Image).NEAREST).save(OUTPUT / f"{stem}-preview.png")
             print(f"Created {stem}.png: 240x135, native pixel fonts, 4x nearest-neighbor preview")
 
 

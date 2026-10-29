@@ -84,6 +84,6 @@ def main():
                 else:
                     suffix={'details':'logger','paused':'logger-paused','recording':'logger-confirm'}[mode]
                     stem='log-browser-'+('en-' if language=='en' else '')+suffix
-                image.save(folder/f'{stem}.png');image.resize((960,540),Image.Resampling.NEAREST).save(folder/f'{stem}-preview.png')
+                image.save(folder/f'{stem}.png');image.resize((960,540),getattr(Image,"Resampling",Image).NEAREST).save(folder/f'{stem}-preview.png')
             print(f'PASS: {language}, 13 scenes, bounds/rules and 4-bit/RGB565 equality')
 if __name__=='__main__':main()

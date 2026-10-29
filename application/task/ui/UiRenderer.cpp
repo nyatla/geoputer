@@ -1,8 +1,11 @@
 #include "LogPresentation.h"
 #include "UiRenderer.h"
 #include "SdCardIcon.h"
+#include "EscapeIcon.h"
+#include "EnterIcon.h"
 #include "ScreenNavigation.h"
 #include "GpsControls.h"
+#include "../../LogReplay.h"
 #include "../../BuildInfo.h"
 #include "LicenseText.h"
 #include "SettingsLayout.h"
@@ -71,20 +74,6 @@ void UiRenderer::drawDialog(const UiModel& model, UiLanguage language) {
     const char* accept = "";
     auto detail_role = role;
     char target_detail[40]{};
-    if(dialog.kind()==DialogKind::LogShortcut) {
-        frame_.fillRect(8,34,224,70,TFT_BLACK);
-        frame_.drawFastHLine(8,34,224,TFT_WHITE);frame_.drawFastHLine(8,103,224,TFT_WHITE);
-        const char* heading=japanese?"ログの表示":"Log view";
-        font_.draw(frame_,(240-PixelFont::width(heading,role))/2,43,heading,role,TFT_YELLOW);
-        for(unsigned i=0;i<3;++i) {
-            const char* label=japanese?(i==0?"文字":i==1?"地図":"統計"):(i==0?"TEXT":i==1?"MAP":"STATS");
-            const int x=45+75*i-PixelFont::width(label,role)/2;
-            const auto color=!dialog.choiceEnabled(i)?TFT_DARKGREY:dialog.choice()==i?TFT_CYAN:TFT_WHITE;
-            font_.draw(frame_,x,78,label,role,color);
-            if(dialog.choice()==i)frame_.drawFastHLine(x,98,PixelFont::width(label,role),TFT_CYAN);
-        }
-        frame_.fillRect(0,121,240,14,TFT_BLACK);drawDialogGuide(dialog);return;
-    }
     if (dialog.kind() == DialogKind::GpsControl) {
         frame_.fillRect(8, 34, 224, 70, TFT_BLACK);
         frame_.drawFastHLine(8, 34, 224, TFT_WHITE);
@@ -103,7 +92,7 @@ void UiRenderer::drawDialog(const UiModel& model, UiLanguage language) {
             if (dialog.choice() == i) frame_.drawFastHLine(x, 99, PixelFont::width(label, role), TFT_CYAN);
         }
         frame_.fillRect(0, 121, 240, 14, TFT_BLACK);
-        drawDialogGuide(dialog);
+
         return;
     }
     switch (dialog.kind()) {
@@ -151,7 +140,7 @@ void UiRenderer::drawDialog(const UiModel& model, UiLanguage language) {
             if(dialog.actionEnabled()) {detail=target_detail;detail_role=TextRole::UI;}
             else detail=datasetErrorText(datasetRowBlock(model.data(),model.snapshot().selected_setting),japanese);
             accept=japanese?"実行":"Run";break;
-        case DialogKind::LogShortcut: case DialogKind::GpsControl: case DialogKind::None: return;
+        case DialogKind::GpsControl: case DialogKind::None: return;
     }
     // Details are either a 16-dot scope message, or an ASCII filename wrapped
     // into 27-cell rows. Two rows cover the entire supported 47-byte filename.
@@ -182,7 +171,7 @@ void UiRenderer::drawDialog(const UiModel& model, UiLanguage language) {
     font_.draw(frame_, 56, choice_y, settingsLabel(language, SettingsLabel::Cancel), role, cancel_color);
     font_.draw(frame_, 152, choice_y, accept, role, action_color);
     frame_.fillRect(0, 121, 240, 14, TFT_BLACK);
-    drawDialogGuide(dialog);
+
 }
 
 void UiRenderer::draw(const UiModel& model) {
@@ -211,9 +200,12 @@ void UiRenderer::draw(const UiModel& model) {
         drawLivePlace(model, content, settings);
     } else if(viewingLogPoint(content.screen) && data.browse().map_mode) {
         drawMap(model);
-        text(4,ViewHeaderTextY,data.browse().playing?"PLAY":"PAUSE",data.browse().playing?TFT_GREEN:TFT_YELLOW);
-        char date[24];formatLogDateTime(data.browse().point.fields&GpsTime?data.browse().point.utc_epoch_ms:UINT64_MAX,date,sizeof(date));
-        text(60,ViewHeaderTextY,std::strlen(date)>=19?date+11:"--:--:--");
+        const auto& view=data.browse();const auto color=view.playing?TFT_GREEN:TFT_YELLOW;
+        text(4,ViewHeaderTextY,view.playing?"PLAY":"PAUSE",color);
+        text(44,ViewHeaderTextY,view.replay_reverse?"<":">",color);
+        text(52,ViewHeaderTextY,replay::speedLabel(view),color);
+        char date[24];formatLogDateTime(view.point.fields&GpsTime?view.point.utc_epoch_ms:UINT64_MAX,date,sizeof(date));
+        text(88,ViewHeaderTextY,std::strlen(date)>=19?date+11:"--:--:--");
         if(!data.browse().loading && data.browse().error!=LogReadError::None)text(4,48,logReadErrorName(data.browse().error),TFT_RED);
     } else if(isLogBrowser(content.screen)) {
         drawLogBrowser(model, content, settings);
@@ -230,15 +222,6 @@ void UiRenderer::draw(const UiModel& model) {
     } else {
         drawSettings(model, content, settings);
     }
-    if (content.screen == ScreenId::Settings ||
-        (!data.boot.maintenance && (isScreenRoot(content.screen, content.page) || isLogBrowser(content.screen)))) {
-        frame_.fillRect(0, live ? 121 : 119, 240, live ? 14 : 16, TFT_BLACK);
-        drawScreenGuide(model);
-    }
-    if (content.action.kind != ActionKind::None) {
-        frame_.fillRect(0, 119, 120, 16, TFT_BLACK);
-        text(4, 124, "WAIT...", TFT_CYAN);
-    }
     present(model,language);
 }
 
@@ -246,6 +229,8 @@ void UiRenderer::draw(const UiModel& model) {
 void UiRenderer::present(const UiModel& model,UiLanguage language) {
     frame_.setDimmed(false);
     if(model.confirming())drawDialog(model,language);
+    frame_.fillRect(0,121,240,14,TFT_BLACK);
+    drawScreenGuide(model);
     drawHeaderStatus(model);
     frame_.pushSprite(0,0);
 }
@@ -294,9 +279,7 @@ void UiRenderer::drawBoot(const UiModel& model, const Settings& settings) {
     else if(settings.dataset)std::snprintf(line,sizeof(line),"GPS:MESH  DATASET:%02u",settings.dataset);
     else std::snprintf(line,sizeof(line),"GPS:MESH  DATASET:NONE");
     text(4,110,line,TFT_LIGHTGREY);
-    text(4, 124, "ESC MAINT", TFT_CYAN);
-    text(132, 124, data.boot.maintenance ? "ENTERING..." : data.boot.complete ? "ENTER START" : "CHECKING...",
-         data.boot.complete ? TFT_WHITE : TFT_CYAN);
+
 }
 
 void UiRenderer::drawLivePlace(const UiModel& model, const UiSnapshot& content, const Settings& settings) {
@@ -454,11 +437,12 @@ void UiRenderer::drawLogBrowser(const UiModel& model, const UiSnapshot& content,
             text(4,75,"HDOP");valueText(36,116,75,line);
             if(datasetInactive(data.place_state)) {
                 const auto issue=datasetIssueText(data.place_state,japanese);
-                text(4,88,issue.first,TFT_LIGHTGREY);
+                font_.draw(frame_,4,84,issue.first,TextRole::Place,TFT_LIGHTGREY);
                 font_.draw(frame_,4,100,issue.second,TextRole::Place,TFT_LIGHTGREY);
             } else {
-                text(4,88,data.place[0]);font_.draw(frame_,4,100,data.place[1],TextRole::Place,TFT_WHITE);
-                if(data.place_state==PlaceState::NotFound)text(4,88,"NO REGION",TFT_LIGHTGREY);
+                font_.draw(frame_,4,84,data.place[0],TextRole::Place,TFT_WHITE);
+                font_.draw(frame_,4,100,data.place[1],TextRole::Place,TFT_WHITE);
+                if(data.place_state==PlaceState::NotFound)font_.draw(frame_,4,84,"NO REGION",TextRole::Place,TFT_LIGHTGREY);
             }
         }
     }
@@ -724,65 +708,23 @@ void UiRenderer::drawKeyArrow(int x, int y, UiKey direction, bool enabled) {
     for(int i=1;i<4;++i){pixel(3-i,i);pixel(3+i,i);}
 }
 
-void UiRenderer::drawDialogGuide(const ChoiceDialog& dialog) {
-    text(4,124,"ESC DEL",TFT_WHITE);
-    bool left=false,right=false;
-    for(unsigned i=0;i<dialog.choices();++i)if(dialog.choiceEnabled(i)) {
-        if(i<dialog.choice())left=true;
-        if(i>dialog.choice())right=true;
-    }
-    drawKeyArrow(84,124,UiKey::Left,left);
-    drawKeyArrow(96,124,UiKey::Right,right);
-}
-
 void UiRenderer::drawScreenGuide(const UiModel& model) {
-    const auto screen=model.snapshot().screen;
-    const auto guide=model.keyGuide();
-    if(viewingLogPoint(screen)) {
-        const auto& data=model.data();const auto& view=data.browse();
-        const auto active=guide.accepting?TFT_WHITE:TFT_DARKGREY;
-        text(4,124,"ESC",guide.back?TFT_CYAN:TFT_DARKGREY);
-        text(36,124,"V",guide.accepting && (view.map_mode || logMapAvailable(data))?TFT_WHITE:TFT_DARKGREY);
-        text(52,124,"B",guide.accepting && view.target?TFT_WHITE:TFT_DARKGREY);
-        text(60,124,"E",guide.accepting && uint64_t(view.target)+1<view.summary.records?TFT_WHITE:TFT_DARKGREY);
-        text(76,124,"SG",guide.system?active:TFT_DARKGREY);
-        text(144,124,"M",guide.accepting && !view.loading?active:TFT_DARKGREY);
-        if(view.map_mode) {
-            text(100,124,"+",guide.zoom_in?TFT_WHITE:TFT_DARKGREY);
-            text(108,124,"-",guide.zoom_out?TFT_WHITE:TFT_DARKGREY);
-            text(124,124,"P",active);
-        }
-        drawKeyArrow(160,124,UiKey::Left,guide.left);drawKeyArrow(172,124,UiKey::Right,guide.right);
-        drawKeyArrow(196,124,UiKey::Up,guide.up);drawKeyArrow(208,124,UiKey::Down,guide.down);return;
-    }
-    if(screen==ScreenId::LogProperties || screen==ScreenId::LogStatistics) {
-        const auto color=guide.accepting?TFT_WHITE:TFT_DARKGREY;
-        text(4,124,"ESC DEL",guide.back?TFT_CYAN:TFT_DARKGREY);text(84,124,"SG",color);
-        text(116,124,screen==ScreenId::LogStatistics?"R":"M",guide.accepting && !model.data().browse().loading?TFT_WHITE:TFT_DARKGREY);return;
-    }
-    text(4,124,guide.root && screen!=ScreenId::Menu?"ESC:MENU":"ESC DEL",guide.back?TFT_CYAN:TFT_DARKGREY);
-    if (guide.root) {
-        for (unsigned i=0;i<MenuCount;++i) {
-            const char key[]={MenuScreens[i].shortcut,0};
-            text(84+i*8,124,key,!guide.accepting?TFT_DARKGREY:MenuScreens[i].screen==screen?TFT_CYAN:TFT_LIGHTGREY);
-        }
-    }
-    if (guide.system) {
-        const auto color=guide.accepting?TFT_WHITE:TFT_DARKGREY;
-        text(guide.root?148:84,124,"S",color);text(guide.root?164:100,124,"G",color);
-    }
-    if (screen==ScreenId::Logs) text(180,124,"D",guide.remove?TFT_WHITE:TFT_DARKGREY);
-    if(screen==ScreenId::Map) {
-        text(188,124,"+",guide.zoom_in?TFT_WHITE:TFT_DARKGREY);
-        text(204,124,"-",guide.zoom_out?TFT_WHITE:TFT_DARKGREY);
-    }
-    if (guide.vertical) {
-        const int x=screen==ScreenId::Logs?200:guide.root?188:124;
-        drawKeyArrow(x,124,UiKey::Up,guide.up);drawKeyArrow(x+12,124,UiKey::Down,guide.down);
-    }
-    if (guide.horizontal) {
-        const int x=guide.vertical?160:124;
-        drawKeyArrow(x,124,UiKey::Left,guide.left);drawKeyArrow(x+12,124,UiKey::Right,guide.right);
+    const auto row=model.shortcutGuide();
+    int x=4;
+    for(unsigned i=0;i<row.size();++i) {
+        const auto hint=row[i];
+        const auto color=hint.tone==ShortcutTone::Disabled?TFT_DARKGREY:
+                         hint.tone==ShortcutTone::Accent?TFT_CYAN:TFT_WHITE;
+        if(hint.key==UiKey::Escape) {
+            for(unsigned y=0;y<escape_icon::Height;++y)for(unsigned col=0;col<escape_icon::Width;++col)
+                if(escape_icon::Rows[y]&((1u<<(escape_icon::Width-1))>>col))frame_.drawPixel(x+col,122+y,color);
+        } else if(hint.key==UiKey::Enter) {
+            for(unsigned y=0;y<enter_icon::Height;++y)for(unsigned col=0;col<enter_icon::Width;++col)
+                if(enter_icon::Rows[y]&((1u<<(enter_icon::Width-1))>>col))frame_.drawPixel(x+col,122+y,color);
+        } else if(const auto character=shortcutCharacter(hint.key)) {
+            const char text_value[]={character,0};text(x,124,text_value,color);
+        } else drawKeyArrow(x,124,hint.key,hint.tone!=ShortcutTone::Disabled);
+        x+=shortcutWidth(hint.key);
     }
 }
 

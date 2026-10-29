@@ -111,10 +111,10 @@ void UiTask::run() {
     const bool ready = renderer.begin(config::UiColorDepth, frame_buffer_.data, sizeof(frame_buffer_.data));
     Console.println(ready ? "[UI] ready (240x135)" : "[UI] initialization failed");
     uint8_t was_viewer=0;
-    const UiKey viewer_keys[]={UiKey::ToggleView,UiKey::ZoomIn,UiKey::ZoomOut,UiKey::FirstPoint,UiKey::LastPoint,UiKey::Playback};
-    constexpr unsigned viewer_key_count=sizeof(viewer_keys)/sizeof(*viewer_keys);
+    constexpr auto& viewer_keys=LocalShortcutKeys;
+    constexpr unsigned viewer_key_count=LocalShortcutCount;
     bool was_one = false, was_gps = false, was_logs = false, was_escape = startup_escape || M5Cardputer.Keyboard.keysState().del, was_up = false, was_down = false;
-    bool was_left = false, was_right = false, was_enter = false, was_any = false;
+    bool was_left = false, was_right = false, was_enter = false, was_any = false, was_tab = false;
     bool was_delete = false, was_map = false, was_settings = false, was_off = false, was_control = false;
     uint32_t repeat_at = 0;
     bool clock_reported = false;
@@ -139,6 +139,7 @@ void UiTask::run() {
         bool delete_log = false, open_map = false, settings = false, off = false, control = false;
         for (const auto& position : M5Cardputer.Keyboard.keyList()) {
             const auto value = M5Cardputer.Keyboard.getKeyValue(position).value_first;
+            if(value==KEY_TAB)continue; // HID Tab (0x2b) is not ASCII '+'.
             const auto key = model_.viewingLicenses() ? mapLicenseKey(value, keys.fn, keys.shift) : mapPhysicalKey(value, keys.fn);
             for(unsigned i=0;i<viewer_key_count;++i)if(key==viewer_keys[i])viewer|=1u<<i;
             settings |= key == UiKey::OpenSettings;
@@ -156,7 +157,7 @@ void UiTask::run() {
             right |= key == UiKey::Right;
         }
         const uint32_t now = taskTimeMs();
-        const bool enter = keys.enter;
+        const bool enter = keys.enter, tab = keys.tab;
         const bool one = live; // Fn changes do not create another physical press edge.
         const bool any = M5Cardputer.Keyboard.isPressed() || keys.fn || keys.shift || keys.ctrl || keys.alt;
         if (ready) {
@@ -167,6 +168,7 @@ void UiTask::run() {
                 battery_sampled = true; battery_at = now;
             }
             for(unsigned i=0;i<viewer_key_count;++i)if((viewer&(1u<<i)) && !(was_viewer&(1u<<i)))model_.keyPressed(viewer_keys[i],now);
+            if(tab && !was_tab)model_.keyPressed(UiKey::Tab,now);
             if (one && !was_one) model_.keyPressed(UiKey::OpenLivePlace, now);
             if (settings && !was_settings) model_.keyPressed(UiKey::OpenSettings, now);
             if (off && !was_off) model_.keyPressed(UiKey::ScreenOff, now);
@@ -181,7 +183,7 @@ void UiTask::run() {
             if (left && !was_left) model_.keyPressed(UiKey::Left, now);
             if (right && !was_right) model_.keyPressed(UiKey::Right, now);
             if (enter && !was_enter) model_.keyPressed(UiKey::Enter, now);
-            if (any && !was_any && !viewer && !one && !settings && !off && !control && !gps && !logs && !open_map && !delete_log && !escape && !back && !up && !down && !left && !right && !enter) model_.keyPressed(UiKey::Other, now);
+            if (any && !was_any && !viewer && !one && !settings && !off && !control && !gps && !logs && !open_map && !delete_log && !escape && !back && !up && !down && !left && !right && !enter && !tab) model_.keyPressed(UiKey::Other, now);
             if ((up && !was_up) || (down && !was_down)) repeat_at = now + 400;
             else if ((up || down) && repeat_at && static_cast<int32_t>(now - repeat_at) >= 0) {
                 model_.keyPressed(up ? UiKey::Up : UiKey::Down, now);
@@ -203,7 +205,7 @@ void UiTask::run() {
         was_escape = escape || back;
         was_up = up;
         was_down = down;
-        was_left = left; was_right = right; was_enter = enter; was_any = any;
+        was_left = left; was_right = right; was_enter = enter; was_any = any; was_tab=tab;
         if (!up && !down) repeat_at = 0;
         notifyContentChanged();
         if (ready && model_.takeRedraw()) renderer.draw(model_);

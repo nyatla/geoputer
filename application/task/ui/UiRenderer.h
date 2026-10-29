@@ -19,7 +19,6 @@ private:
     void drawMap(const UiModel& model);
     void drawScreenGuide(const UiModel& model);
     void drawKeyArrow(int x, int y, UiKey direction, bool enabled);
-    void drawDialogGuide(const ChoiceDialog& dialog);
     void drawBoot(const UiModel& model, const Settings& settings);
     void drawLivePlace(const UiModel& model, const UiSnapshot& content, const Settings& settings);
     void drawLogBrowser(const UiModel& model, const UiSnapshot& content, const Settings& settings);

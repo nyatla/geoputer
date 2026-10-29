@@ -4,7 +4,7 @@
 
 namespace geoputer {
 
-enum class DialogKind : uint8_t { None, DeleteLog, FormatSd, ResetSettings, EnterUsbMode, ExitUsbMode, RestartLogger, RebuildIndex, VerifyIndex, ClearDataset, GpsControl, LogShortcut };
+enum class DialogKind : uint8_t { None, DeleteLog, FormatSd, ResetSettings, EnterUsbMode, ExitUsbMode, RestartLogger, RebuildIndex, VerifyIndex, ClearDataset, GpsControl };
 enum class DialogInput : uint8_t { Ignored, Changed, Cancelled, Accepted };
 
 // Confirmation dialogs select Cancel initially. Action menus omit that item and

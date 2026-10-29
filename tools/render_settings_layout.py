@@ -13,6 +13,7 @@ SCENE = r'''
 #include <cstring>
 #include <stdexcept>
 #include "task/ui/UiRenderer.h"
+#include "task/ui/EscapeIcon.h"
 #include "BuildInfo.h"
 #include "dialog_preview_checks.h"
 #include "task/ui/SettingsLayout.h"
@@ -191,23 +192,24 @@ int main(int argc,char** argv){
         for(int row=0;row<8;++row)for(int col=0;col<8;++col)
             pixel(4+col,27+row,font8x8_c64[(c-32)*8+col]&(1u<<row)?TFT_WHITE:TFT_BLACK);
     }
-    // The footer lists keys, while Enter remains implicit. Editing replaces
+    // The footer lists keys, including the contextual Return mark. Editing replaces
     // list navigation with horizontal arrows; licenses retain both directions.
     auto small=[&](int x,int y,const char* value,uint16_t color) {
         for(;*value;++value,x+=8)for(int row=0;row<8;++row)for(int col=0;col<8;++col)
             pixel(x+col,y+row,font8x8_c64[(*value-32)*8+col]&(1u<<row)?color:TFT_BLACK);
     };
     if(!ui.confirming()) {
-        small(4,124,ui.snapshot().page==SettingsPage::Root?"ESC:MENU":"ESC DEL",TFT_CYAN);
-        small(ui.snapshot().page==SettingsPage::Root?148:84,124,"S",TFT_WHITE);
+        for(unsigned y=0;y<escape_icon::Height;++y)for(unsigned x=0;x<escape_icon::Width;++x)
+            pixel(4+x,122+y,escape_icon::Rows[y]&(0x800000u>>x)?TFT_WHITE:TFT_BLACK);
+        small(28,124,"SG",TFT_WHITE);
     }
     if(!std::strcmp(mode,"language-edit")) {
-        pixel(124,127,TFT_WHITE);pixel(142,127,TFT_WHITE);
-        pixel(127,124,TFT_WHITE); // left arrow head reaches the top of its native cell
+        pixel(68,127,TFT_WHITE);pixel(82,127,TFT_WHITE);
+        pixel(71,124,TFT_WHITE); // left arrow head reaches the top of its native cell
     }
     if(!std::strcmp(mode,"licenses")) {
-        pixel(127,124,TFT_DARKGREY);pixel(139,130,TFT_WHITE);
-        pixel(160,127,TFT_DARKGREY);pixel(178,127,TFT_WHITE);
+        pixel(55,124,TFT_DARKGREY);pixel(63,130,TFT_WHITE);
+        pixel(71,124,TFT_DARKGREY);pixel(79,130,TFT_WHITE);
     }
     for(int x=0;x<240;++x){pixel(x,16,TFT_DARKGREY);pixel(x,118,TFT_DARKGREY);}
     std::printf("P6\n240 135\n255\n");
@@ -259,7 +261,7 @@ def main():
                     about_frames.append(stable.tobytes())
                 stem = f"settings-{language}-{mode}"
                 image.save(output / f"{stem}.png")
-                image.resize((960, 540), Image.Resampling.NEAREST).save(output / f"{stem}-preview.png")
+                image.resize((960, 540), getattr(Image,"Resampling",Image).NEAREST).save(output / f"{stem}-preview.png")
             print(f"PASS: {language}, {len(modes)} scenes, native font pixels and text bounds")
         assert all(frame == about_frames[0] for frame in about_frames), "About content outside the SD/battery overlay changed with language or storage activity"
         assert license_frames[0] == license_frames[1], "Language changes license framebuffers"

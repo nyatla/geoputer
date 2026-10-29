@@ -135,11 +135,11 @@ void navigationAndEditing() {
     check(ui.snapshot().page == SettingsPage::Root, "Escape returns from operation page to root");
     ui.keyPressed(UiKey::Escape, 170);
     auto menu = ui.snapshot().action;
-    check(menu.kind == ActionKind::ChangeScreen && menu.target==ScreenId::Menu, "Escape on Settings root opens Menu");
-    ui.setScreen({ScreenId::Menu,DisplayMode::View,ui.snapshot().screen_generation+1,ui.data(),menu.action_id,ActionResult::Applied});
-    ui.keyPressed(UiKey::OpenLivePlace, 171);
-    check(ui.snapshot().action.kind == ActionKind::ChangeScreen && ui.snapshot().action.target == ScreenId::LivePlace,
-          "1 at root requests LivePlace through App");
+    check(menu.kind == ActionKind::ChangeScreen && menu.target==ScreenId::LivePlace, "Escape on Settings root returns Live");
+    ui.setScreen({menu.target,DisplayMode::View,ui.snapshot().screen_generation+1,ui.data(),menu.action_id,ActionResult::Applied});
+    ui.keyPressed(UiKey::OpenSettings, 171);
+    check(ui.snapshot().action.kind == ActionKind::ChangeScreen && ui.snapshot().action.target == ScreenId::Settings,
+          "0 at Live requests Settings through App");
 }
 
 void destructiveConfirmationAndSleep() {

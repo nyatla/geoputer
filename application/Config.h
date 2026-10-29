@@ -14,6 +14,9 @@ inline constexpr unsigned LogStatisticsBatchRecords = 8;
 inline constexpr unsigned LogStatisticsStepsPerLoop = 32;
 inline constexpr uint32_t LogStatisticsBudgetUs = 2000;
 inline constexpr uint32_t LogStatisticsProgressMs = 200;
+// Per-point display intervals: quarter, half, normal, double and quadruple replay.
+inline constexpr uint32_t LogReplayIntervalsMs[] = {4000,2000,1000,500,250};
+inline constexpr uint8_t LogReplayDefaultSpeed = 2;
 
 
 // Cardputer ADV EXT pins reserved for disabling the unused Mesh Kit radio.

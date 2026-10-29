@@ -1,6 +1,7 @@
 #pragma once
 #include <cstddef>
 #include <cstdint>
+#include "../../../Config.h"
 #include "../../gps/GpsTypes.h"
 #include "LogStatistics.h"
 
@@ -72,5 +73,7 @@ struct LogBrowserView {
     uint8_t count, selected, active_mask;
     bool loading, has_newer, has_older, deleting;
     bool point_loaded=false, map_mode=false, playing=false;
+    uint8_t replay_speed=config::LogReplayDefaultSpeed;
+    bool replay_reverse=false;
 };
 } // namespace geoputer

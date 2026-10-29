@@ -23,6 +23,28 @@ inline const char* menuLabel(unsigned row, bool ja) {
     return row < MenuCount ? (ja ? MenuScreens[row].japanese : MenuScreens[row].english) : "";
 }
 
+// Numeric keys select local views after a log file has been opened.
+struct LogViewShortcut {UiKey key;BrowseAction action;};
+inline constexpr LogViewShortcut LogViewShortcuts[]={
+    {UiKey::OpenLivePlace,BrowseAction::Text},
+    {UiKey::OpenMap,BrowseAction::Map},
+    {UiKey::OpenGpsLogger,BrowseAction::Statistics},
+};
+inline bool isLogViewScreen(ScreenId screen) {
+    return screen==ScreenId::LogProperties || screen==ScreenId::LogPoint || screen==ScreenId::LogStatistics;
+}
+inline bool selectedLogView(ScreenId screen,const UiData& data,BrowseAction action) {
+    return action==BrowseAction::Statistics?screen==ScreenId::LogStatistics:
+        screen==ScreenId::LogPoint && data.browse().map_mode==(action==BrowseAction::Map);
+}
+inline bool logViewAvailable(ScreenId screen,const UiData& data,BrowseAction action) {
+    if(!isLogViewScreen(screen))return false;
+    const auto& view=data.browse();
+    if(view.loading || view.error!=LogReadError::None)return false;
+    if(action==BrowseAction::Statistics)return true;
+    return view.summary.records && (action!=BrowseAction::Map || logMapAvailable(data));
+}
+
 // Shared by UI dispatch and App validation. Child pages keep their own Back keys.
 inline bool isScreenRoot(ScreenId screen, SettingsPage page = SettingsPage::Root) {
     return screen == ScreenId::Menu || screen == ScreenId::Map || screen == ScreenId::LivePlace || screen == ScreenId::GpsLogger || screen == ScreenId::Logs ||
@@ -30,7 +52,6 @@ inline bool isScreenRoot(ScreenId screen, SettingsPage page = SettingsPage::Root
 }
 
 inline bool screenShortcut(UiKey key, ScreenId& target) {
-    if (key == UiKey::Escape) { target = ScreenId::Menu; return true; }
     for (const auto& item : MenuScreens)
         if (item.key == key) { target = item.screen; return true; }
     return false;

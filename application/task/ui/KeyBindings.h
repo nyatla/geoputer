@@ -11,8 +11,7 @@ inline UiKey mapPhysicalKey(char key, bool /*fn*/) {
     switch (key) {
         case 's': return UiKey::ScreenOff;
         case 'g': return UiKey::GpsControl;
-        case 'v': return UiKey::ToggleView;
-        case 'm': return UiKey::LogMenu;
+        case '\t': return UiKey::Tab;
         case 'r': return UiKey::Recalculate;
         case '=': case '+': return UiKey::ZoomIn;
         case '-': return UiKey::ZoomOut;
@@ -28,6 +27,12 @@ inline UiKey mapPhysicalKey(char key, bool /*fn*/) {
         default: return UiKey::Other;
     }
 }
+
+// UI polling and tests share the complete local-shortcut dispatch set.
+inline constexpr UiKey LocalShortcutKeys[]={UiKey::ZoomIn,UiKey::ZoomOut,
+    UiKey::FirstPoint,UiKey::LastPoint,UiKey::Playback,UiKey::Recalculate};
+inline constexpr unsigned LocalShortcutCount=sizeof(LocalShortcutKeys)/sizeof(*LocalShortcutKeys);
+static_assert(LocalShortcutCount<=8,"Local shortcut edge mask is eight bits");
 
 // The printed angle brackets (Shift+, / Shift+.) also browse software notices.
 // Use only in Licenses; plain period retains its Down binding.

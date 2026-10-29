@@ -22,6 +22,7 @@ inline void prepareScreenView(UiData& data, ScreenId target, ScreenId previous) 
         } else if (target==ScreenId::LogProperties && previous==ScreenId::Logs) {
             view.point={};view.point_loaded=false;view.index=view.target=0;
             view.map_mode=view.playing=false;view.error=LogReadError::None;
+            view.replay_speed=config::LogReplayDefaultSpeed;view.replay_reverse=false;
             view.summary={};view.summary.first_utc=view.summary.last_utc=UINT64_MAX;view.loading=true;view.statistics_ready=false;view.statistics={};
         } else if(target==ScreenId::LogProperties || target==ScreenId::LogStatistics) {
             view.loading=false;view.error=LogReadError::None;

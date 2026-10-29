@@ -71,12 +71,10 @@ void statisticsUiTests() {
     properties.keyPressed(UiKey::Enter,1);
     check(properties.snapshot().action.browse_action==BrowseAction::OpenPoint,"properties Enter opens text");
     UiModel menu;menu.setScreen({ScreenId::LogProperties,DisplayMode::View,1,data,0,ActionResult::None});
-    menu.keyPressed(mapPhysicalKey('m',false),1);check(menu.confirming() && menu.dialog().choice()==2,"M defaults to statistics");
-    menu.keyPressed(UiKey::Up,2);check(menu.dialog().choice()==2,"log menu follows horizontal dialog convention");
-    menu.keyPressed(UiKey::Left,3);check(menu.dialog().choice()==0,"unavailable map option is grey and skipped");
-    menu.keyPressed(UiKey::Back,4);check(!menu.confirming() && menu.snapshot().action.kind==ActionKind::None,"Del cancels menu without action");
-    menu.keyPressed(UiKey::LogMenu,5);menu.keyPressed(UiKey::Enter,6);
-    check(menu.snapshot().action.browse_action==BrowseAction::Statistics,"M Enter requests statistics explicitly");
+    menu.keyPressed(UiKey::OpenMap,1);
+    check(!menu.confirming() && menu.snapshot().action.kind==ActionKind::None,"unavailable map shortcut is ignored without a dialog");
+    menu.keyPressed(UiKey::OpenGpsLogger,2);
+    check(menu.snapshot().action.browse_action==BrowseAction::Statistics,"3 directly requests statistics");
     view.loading=true;view.statistics_from_point=true;
     UiModel busy;busy.setScreen({ScreenId::LogStatistics,DisplayMode::View,1,data,0,ActionResult::None});
     busy.keyPressed(UiKey::Recalculate,1);check(busy.snapshot().action.kind==ActionKind::None,"R cannot overlap a running scan");
@@ -195,7 +193,7 @@ void uiTests() {
     auto action=ui.snapshot().action;ui.updateContent({DisplayMode::View,1,data,action.action_id,ActionResult::Applied});
     ui.keyPressed(UiKey::Left,11);check(ui.snapshot().action.kind==ActionKind::None,"left/right remain limited to Settings");
     data.editBrowse().loading=true;ui.updateContent({DisplayMode::View,1,data,0,ActionResult::None});
-    ui.keyPressed(UiKey::Escape,12);check(ui.snapshot().action.target==ScreenId::Menu,"Escape opens Menu directly during a pending read");
+    ui.keyPressed(UiKey::Escape,12);check(ui.snapshot().action.target==ScreenId::LivePlace,"Escape returns to Live during a pending read");
     data.editBrowse().loading=false;data.editBrowse().summary.records=25;data.editBrowse().target=9;
     ui.setScreen({ScreenId::LogPoint,DisplayMode::View,2,data,ui.snapshot().action.action_id,ActionResult::Applied});
     ui.keyPressed(UiKey::Right,13);check(ui.snapshot().action.browse_index==10,"point navigation crosses ten-record cache boundary");
@@ -207,8 +205,8 @@ void uiTests() {
     data.settings.dataset=0;data.dataset.state=PlaceState::Unselected;
     data.editBrowse().summary.records=25;
     ui.setScreen({ScreenId::LogPoint,DisplayMode::View,3,data,action.action_id,ActionResult::Applied});
-    ui.keyPressed(UiKey::ToggleView,20);
-    check(ui.snapshot().action.kind==ActionKind::None,"V is unavailable without a dataset while text remains usable");
+    ui.keyPressed(UiKey::OpenMap,20);
+    check(ui.snapshot().action.kind==ActionKind::None,"2 is unavailable without a dataset while text remains usable");
     data.editBrowse().target=12;
     ui.setScreen({ScreenId::LogPoint,DisplayMode::View,4,data,action.action_id,ActionResult::Applied});
     ui.keyPressed(UiKey::Up,20);action=ui.snapshot().action;check(action.browse_index==2,"up skips ten points");
@@ -217,7 +215,7 @@ void uiTests() {
     ui.updateContent({DisplayMode::View,4,data,action.action_id,ActionResult::Applied});
     ui.keyPressed(UiKey::LastPoint,22);action=ui.snapshot().action;check(action.browse_index==24,"E requests last point");
     ui.updateContent({DisplayMode::View,4,data,action.action_id,ActionResult::Applied});
-    ui.keyPressed(UiKey::ToggleView,23);check(ui.snapshot().action.kind==ActionKind::None,"V cannot open unusable map");
+    ui.keyPressed(UiKey::OpenMap,23);check(ui.snapshot().action.kind==ActionKind::None,"2 cannot open unusable map");
 
 }
 struct DeleteActivity : StorageObserver {

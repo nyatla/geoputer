@@ -4,6 +4,7 @@
 #include "DisplayClock.h"
 #include "ChoiceDialog.h"
 #include "UiKeyGuide.h"
+#include "UiShortcutGuide.h"
 #include "UiScreenResources.h"
 #include "../../map/MapFrameReceiver.h"
 #include "../../map/MapTracking.h"
@@ -44,6 +45,7 @@ public:
     bool confirmChoice() const { return dialog_.selected(); }
     const ChoiceDialog& dialog() const { return dialog_; }
     UiKeyGuide keyGuide() const;
+    UiShortcutGuide shortcutGuide() const;
     uint32_t licenseOffset() const { return screen_resources_.settings.license_offset; }
     uint8_t datasetDialogNumber() const { return screen_resources_.settings.dataset.dialog_number; }
     static constexpr uint32_t DatasetNoticeMs = 5000;
@@ -69,6 +71,8 @@ public:
     }
 
 private:
+    UiKey nextNumericKey() const;
+    void appendEnterShortcut(UiShortcutGuide& row,bool accepting) const;
     void openGpsControls();
     void gpsLoggerKey(UiKey key);
     void logBrowserKey(UiKey key);

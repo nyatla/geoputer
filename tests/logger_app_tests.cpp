@@ -1,5 +1,6 @@
 // Exercise production App dispatch and logging against queued GPS/UI and a real LogWriter.
 #include "Application.h"
+#include "LogReplay.h"
 #include "task/storage/dataset/DatasetReadMemory.h"
 #include "utils/Console.h"
 #include "task/storage/log/LogFormat.h"
@@ -357,10 +358,9 @@ int main(){
     app->processBrowser();check(last_read.payload.log_read.kind==LogReadKind::Summary,"direct view first requests validated file bounds");
     LogReadReply opened{};opened.request=last_read.payload.log_read;opened.summary.session_id=91;opened.summary.records=25;
     app->completeBrowser(opened);
-    auto& v=app->data_.editBrowse();check(!v.loading && !app->screen_resources_.logs().need,"properties never trigger full scan or point reads");
-    UiAction enter{};enter.browse_action=BrowseAction::OpenPoint;check(app->operateBrowser(enter),"Enter starts point viewer");
-    UiAction choose{};choose.browse_action=BrowseAction::ToggleView;
-    check(app->operateBrowser(choose) && v.map_mode,"V switches the direct viewer to map");
+    auto& v=app->data_.editBrowse();check(v.replay_speed==config::LogReplayDefaultSpeed && !v.replay_reverse,"new file resets replay preferences");check(!v.loading && !app->screen_resources_.logs().need,"properties never trigger full scan or point reads");
+    UiAction enter{};enter.browse_action=BrowseAction::Map;check(app->operateBrowser(enter) && v.map_mode,"2 opens historical map directly from properties");
+    UiAction choose{};
     choose.browse_action=BrowseAction::Playback;
     check(app->operateBrowser(choose) && v.playing,"P starts map replay");
     app->processReplay();check(v.playing,"initial point loading must not abort replay");
@@ -401,14 +401,56 @@ int main(){
     app->processMap();check(!app->map_request_.token && app->screen_resources_.map().anchor.request.token==anchor.request.token,
           "nearby historical point moves cursor without rebuilding map");
     app->publishUiContent();check(app->ui_.model_.mapCursor().valid && std::abs(app->ui_.model_.mapCursor().y)>.01,"log cursor follows historical point");
-    auto& ui=app->ui_.model_;ui.keyPressed(UiKey::ToggleView,host_tick);app->readUiContent();
-    check(!v.map_mode && !v.playing && v.index==1,"V switches to text and pauses without losing position");
+    app->publishUiContent();
+    auto& ui=app->ui_.model_;
+    ui.keyPressed(UiKey::Up,host_tick);app->readUiContent();
+    check(v.playing && v.index==1 && v.replay_speed==3 && replay::intervalMs(v)==500,"PLAY Up accelerates without moving or pausing");
+    ui.keyPressed(UiKey::Down,host_tick);app->readUiContent();
+    check(v.playing && v.index==1 && v.replay_speed==2,"PLAY Down decelerates without moving");
+    UiAction rate{};rate.browse_action=BrowseAction::ReplayFaster;
+    for(unsigned i=0;i<10;++i)check(app->operateBrowser(rate),"rate increase handled");
+    check(v.replay_speed==replay::SpeedCount-1 && replay::intervalMs(v)==250,"rate clamps at four-times");
+    rate.browse_action=BrowseAction::ReplaySlower;
+    for(unsigned i=0;i<10;++i)check(app->operateBrowser(rate),"rate decrease handled");
+    check(!v.replay_speed && replay::intervalMs(v)==4000,"rate clamps at quarter-times");
+    rate.browse_action=BrowseAction::ReplayFaster;
+    check(app->operateBrowser(rate) && app->operateBrowser(rate),"restore default pace");
+    // Control messages do not replace an already accepted record request.
+    v.loading=true;const auto pending_read=app->screen_resources_.logs().request;
+    check(app->operateBrowser(rate) && v.loading && v.index==1 &&
+        !std::memcmp(&pending_read,&app->screen_resources_.logs().request,sizeof(pending_read)),"rate adjustment preserves in-flight read");
+    host_tick+=1000;app->processReplay();check(v.index==1 && v.playing && app->screen_resources_.logs().next_at==host_tick+500,"loading retains the new hold interval without catch-up");
+    v.loading=false;rate.browse_action=BrowseAction::ReplaySlower;check(app->operateBrowser(rate),"restore normal interval after loading");
+    app->publishUiContent();ui.keyPressed(UiKey::Left,host_tick);app->readUiContent();
+    check(v.replay_reverse && v.playing && v.index==1,"PLAY Left selects reverse without navigating");
+    host_tick+=999;app->processReplay();check(v.index==1,"reverse holds the point for the chosen interval");
+    ++host_tick;app->processReplay();check(v.index==0 && v.playing,"reverse advances to previous cached point");
+    host_tick+=1000;app->processReplay();check(v.index==0 && !v.playing,"reverse pauses at the first point without underflow");
+    check(!app->operateBrowser(rate),"rate-only request is rejected after pause");
+    app->publishUiContent();ui.keyPressed(UiKey::Playback,host_tick);app->readUiContent();
+    ui.keyPressed(UiKey::Right,host_tick);app->readUiContent();
+    check(v.playing && !v.replay_reverse && v.index==0,"PLAY Right selects forward at first point");
+    host_tick+=1000;app->processReplay();check(v.index==1 && v.playing,"forward resumes from current point");
+    const auto local_generation=app->generation_;
+    app->publishUiContent();ui.keyPressed(UiKey::OpenLivePlace,host_tick);app->readUiContent();
+    check(!v.map_mode && !v.playing && v.index==1 && app->generation_==local_generation,"1 directly selects text, pauses and preserves point/generation");
+    ui.keyPressed(UiKey::Tab,host_tick);app->readUiContent();
+    check(v.map_mode && !v.playing && v.index==1 && app->generation_==local_generation,"Tab directly selects historical map without reentering screen");
+    ui.keyPressed(UiKey::Playback,host_tick);app->readUiContent();
+    ui.keyPressed(UiKey::OpenMap,host_tick);app->readUiContent();
+    check(v.map_mode && v.playing && app->generation_==local_generation,"current view shortcut keeps replay and generation");
+    ui.keyPressed(UiKey::OpenLivePlace,host_tick);app->readUiContent();
+    check(!v.map_mode && !v.playing && v.index==1,"switching away from PLAY retains selected point");
     ui.keyPressed(UiKey::Down,host_tick);app->readUiContent();check(v.target==11 && v.loading,"down skips ten points");
     app->processBrowser();points.request=last_read.payload.log_read;points.count=10;
     for(unsigned n=0;n<10;++n) {
         GpsFix f{35.69+n*.00001,140.03,0,true};check(encodeLogRecord(f,points.data.records[n]),"second page encoding");
     }
     app->completeBrowser(points);check(v.index==11 && !v.loading,"page read fulfills current skip target");
+    check(!std::strcmp(app->data_.place[0],"HISTORICAL REGION") && app->data_.place_state==PlaceState::Waiting &&
+          app->data_.place_fix.latitude!=v.point.latitude,"new-cell read keeps the completed label and its old coordinates while lookup waits");
+    app->publishUiContent();
+    check(!std::strcmp(ui.data().place[0],"HISTORICAL REGION"),"UI snapshot never publishes a blank label between log points");
     hold_place_queries=true;app->requestPlace();StorageRequest stale_name{};
     check(app->storage_.inbox().receive(stale_name),"historical name pending");hold_place_queries=false;
     UiAction move{};move.browse_action=BrowseAction::Point;move.browse_index=12;check(app->operateBrowser(move),"move during lookup");
@@ -418,10 +460,28 @@ int main(){
     stale_result.state=PlaceState::Ready;stale_result.dataset=app->data_.dataset;
     std::strcpy(stale_result.lines[0],"STALE POINT NAME");c.place=placeCompletion(stale_result);
     app->handleNotification(name);app->processPlace();
-    check(!app->place_flow_.pending() && !app->data_.place[0][0],"old point name must not appear after navigation");
+    check(!app->place_flow_.pending() && !std::strcmp(app->data_.place[0],"HISTORICAL REGION"),
+          "late point result is rejected while the last completed label remains visible");
+    app->publishUiContent();
+    check(!std::strcmp(ui.data().place[0],"HISTORICAL REGION"),"discarding a stale lookup does not blank the UI label");
+    hold_place_queries=true;app->requestPlace();StorageRequest current_name{};
+    check(app->storage_.inbox().receive(current_name) && current_name.kind==MessageKind::SearchPlace,"retry names for the current point");
+    hold_place_queries=false;app->publishUiContent();
+    check(!std::strcmp(ui.data().place[0],"HISTORICAL REGION") && ui.data().place_state==PlaceState::Searching,
+          "in-flight lookup retains completed labels in UI");
+    auto& current_result=*placeResultMemory(current_name.payload.place_request);
+    current_result={};current_result.request=current_name.payload.place_request;
+    current_result.state=PlaceState::Ready;current_result.dataset=app->data_.dataset;current_result.region_code=22;
+    std::strcpy(current_result.lines[0],"CURRENT REGION");std::strcpy(current_result.lines[1],"CURRENT DISTRICT");
+    c.request_id=current_name.request_id;c.snapshot=app->data_.storage;c.place=placeCompletion(current_result);
+    app->handleNotification(name);app->processPlace();
+    check(!std::strcmp(app->data_.place[0],"CURRENT REGION") && !std::strcmp(app->data_.place[1],"CURRENT DISTRICT") &&
+          app->data_.place_fix.latitude==v.point.latitude && app->data_.place_region==22,"accepted completion replaces both label rows and their coordinate/region together");
+    check(!std::strcmp(ui.data().place[0],"CURRENT REGION") && !std::strcmp(ui.data().place[1],"CURRENT DISTRICT"),
+          "UI commits the new labels without publishing the rejected or blank label");
     move.browse_index=11;check(app->operateBrowser(move),"restore point for return test");
-    choose.browse_action=BrowseAction::ToggleView;
-    check(app->operateBrowser(choose) && v.index==11 && !v.loading && !v.playing,"V retains the selected point without an intermediate screen");
+    choose.browse_action=BrowseAction::Map;
+    check(app->operateBrowser(choose) && v.index==11 && !v.loading && !v.playing,"2 retains the selected point without an intermediate screen");
     app->publishUiContent();ui.keyPressed(mapPhysicalKey('-',false),host_tick);app->readUiContent();
     check(app->data_.map.scale==2 && v.index==11,"minus changes historical map scale without navigating");
     ui.keyPressed(mapPhysicalKey('+',false),host_tick);app->readUiContent();
@@ -434,13 +494,22 @@ int main(){
     v.point_loaded=true;v.loading=false;v.point.valid=true;v.index=v.target=24;v.playing=true;
     app->data_.map.error=map::Error::None;app->data_.map.busy=false;app->data_.place_state=PlaceState::Ready;
     app->screen_resources_.logs().next_at=host_tick;app->processReplay();check(!v.playing && v.index==24,"EOF pauses without wrapping");
+    // Reverse traversal crosses the ten-record cache boundary through normal IO.
+    v.replay_reverse=true;v.index=v.target=10;v.playing=true;
+    app->screen_resources_.logs().next_at=host_tick;app->processReplay();
+    check(v.target==9 && v.loading && v.playing && app->screen_resources_.logs().need,"reverse crosses cache boundary without skipping points");
+    app->processBrowser();check(last_read.payload.log_read.start==0 && last_read.payload.log_read.count==10,"reverse uses the previous aligned record batch");
+    points.request=last_read.payload.log_read;points.count=10;
+    for(unsigned n=0;n<10;++n) {GpsFix fix{35.68+n*.00001,140.02,0,true};check(encodeLogRecord(fix,points.data.records[n]),"reverse batch fixture");}
+    app->completeBrowser(points);check(v.index==9 && !v.loading && v.playing,"reverse IO publishes the requested point and retains play");
     v.playing=true;v.error=LogReadError::Corrupt;app->processReplay();check(!v.playing,"bad record pauses replay");
-    app->data_.settings.dataset=0;app->publishUiContent();ui.keyPressed(UiKey::ToggleView,host_tick);app->readUiContent();
+    app->data_.settings.dataset=0;v.error=LogReadError::None;app->publishUiContent();ui.keyPressed(UiKey::OpenLivePlace,host_tick);app->readUiContent();
     check(!v.map_mode,"text remains available without dataset");
-    ui.keyPressed(UiKey::ToggleView,host_tick);app->readUiContent();check(!v.map_mode,"map toggle rejected without dataset");
+    ui.keyPressed(UiKey::OpenMap,host_tick);app->readUiContent();check(!v.map_mode,"2 map rejected without dataset");
     v.error=LogReadError::None;v.loading=false;
     UiAction stats_action{};stats_action.browse_action=BrowseAction::Statistics;
-    check(app->operateBrowser(stats_action) && app->screen_==ScreenId::LogStatistics,"M statistics enters dedicated screen");
+    app->publishUiContent();ui.keyPressed(UiKey::Tab,host_tick);app->readUiContent();
+    check(app->screen_==ScreenId::LogStatistics,"Tab skips unavailable map and selects log statistics instead of live GPS");
     app->processBrowser();check(last_read.kind==MessageKind::ReadLogStatistics && app->browse_waiting_,"statistics accepted without waiting for complete file scan");
     const auto stats_request=last_read.payload.log_read;
     AppNotification progress{};progress.source=TaskId::Storage;progress.kind=MessageKind::LogStatisticsProgress;
@@ -449,7 +518,10 @@ int main(){
     LogReadReply stats_done{};stats_done.request=stats_request;stats_done.summary=v.summary;
     stats_done.data.statistics.processed=25;stats_done.data.statistics.distance_m=12.5;
     app->completeBrowser(stats_done);check(v.statistics_ready && !v.loading && v.statistics.distance_m==12.5,"complete statistics held as one cached result");
-    check(app->setScreen(ScreenId::LogPoint),"return to historical point after statistics");
+    app->publishUiContent();ui.keyPressed(UiKey::Tab,host_tick);app->readUiContent();
+    check(app->screen_==ScreenId::LogPoint && !v.map_mode && v.index==9 && v.point_loaded,"1 returns from statistics to retained text point");
+    app->data_.settings.dataset=1;app->publishUiContent();ui.keyPressed(UiKey::OpenMap,host_tick);app->readUiContent();
+    check(app->screen_==ScreenId::LogPoint && v.map_mode && v.index==9,"2 returns to historical map with retained point");
     check(app->operateBrowser(stats_action) && !app->screen_resources_.logs().need && v.statistics_ready,"reentry uses cached statistics without SD scan");
     stats_action.browse_action=BrowseAction::Recalculate;check(app->operateBrowser(stats_action) && !v.statistics_ready && v.loading,"R explicitly requests fresh statistics");
     app->processBrowser();const auto cancelled_stats=last_read.payload.log_read;

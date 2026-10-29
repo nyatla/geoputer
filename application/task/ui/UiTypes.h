@@ -20,9 +20,9 @@ struct BatteryStatus { int8_t percent = -1; bool charging = false; bool charge_k
 enum class ActionKind : uint8_t { None, ChangeScreen, SaveSettings, ResetSettings, Storage, Sleep, Wake, Logging, Browse, Dataset, UsbExport, Maintenance, RestartLogger, MapScale };
 enum class UsbPage : uint8_t { Menu, WaitEject, Files, Format, Progress, Complete, Error, Busy };
 enum class UsbAction : uint8_t { Begin, Start, Publish, Older, Newer };
-enum class BrowseAction : uint8_t { OpenFile, Older, Newer, Reload, Point, Delete, ToggleView, Playback, PausePlayback, OpenPoint, Text, Map, Statistics, Recalculate };
+enum class BrowseAction : uint8_t { OpenFile, Older, Newer, Reload, Point, Delete, Playback, PausePlayback, OpenPoint, Text, Map, Statistics, Recalculate, ReplayFaster, ReplaySlower, ReplayForward, ReplayReverse };
 enum class ActionResult : uint8_t { None, Applied, Rejected };
-enum class UiKey : uint8_t { OpenGpsLogger, OpenSettings, OpenLogs, DeleteLog, Escape, Up, Down, Left, Right, Enter, Other, Back, OpenLivePlace, OpenMap, ScreenOff, GpsControl, ToggleView, ZoomIn, FirstPoint, LastPoint, Playback, ZoomOut, LogMenu, Recalculate };
+enum class UiKey : uint8_t { OpenGpsLogger, OpenSettings, OpenLogs, DeleteLog, Escape, Up, Down, Left, Right, Enter, Other, Back, OpenLivePlace, OpenMap, ScreenOff, GpsControl, Tab, ZoomIn, FirstPoint, LastPoint, Playback, ZoomOut, Recalculate };
 enum class SettingsPage : uint8_t { Root, Operation, Storage, Reset, Licenses, DatasetList, DatasetDetail, About, DatasetIndex, DatasetMenu, System };
 // Menu commands are separate from persisted settings and page identifiers.
 enum class SettingsRootItem : uint8_t { Operation, System, Storage, About, Licenses, Count };
