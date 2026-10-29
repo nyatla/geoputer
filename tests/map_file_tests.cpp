@@ -1,3 +1,4 @@
+#include "support/StorageFixture.h"
 #include "support/MapIndexFixture.h"
 #include "map/MapFrameReceiver.h"
 #include "map/DecimatedViewport.h"
@@ -21,11 +22,11 @@ struct Observer:StorageObserver {
 int main(int argc,char** argv) {
     try {
         if(argc!=4)return 2;
-        namespace fs=std::filesystem;const fs::path dir=argv[1];fs::create_directories(dir);
+        namespace fs=std::filesystem;const std::string dataset_root=argv[1];const fs::path dir=fs::path(dataset_root)/"01";fs::create_directories(dir);
         fs::copy_file(argv[2],dir/"map.glc");fs::copy_file(argv[3],dir/"names.giswordbook");
         std::ofstream(dir/"dataset.ini")<<"[dataset]\nversion=1\nmap=map.glc\ndefault_language=ja\n[ja]\ntitle=Test\nwordbook=names.giswordbook\n";
         test_index::generate(dir.string(),"map.glc","names.giswordbook");
-        map::CodeImageBuffer source_pixels{},sample_pixels{};Observer observer;CodeCacheBuffer lookup_pixels{};SelectedDataset lookup_dataset;PlaceLookup lookup(lookup_pixels,lookup_dataset);lookup.setObserver(&observer);lookup.configure(dir.string(),"ja");
+        map::CodeImageBuffer source_pixels{},sample_pixels{};Observer observer;CodeCacheBuffer lookup_pixels{};SelectedDataset lookup_dataset;test_storage::Lookup lookup(lookup_pixels,lookup_dataset,0,dataset_root);lookup.setObserver(&observer);lookup.configure(1,"ja");
         check(lookup.prepare().state==PlaceState::Ready,"existing lookup opens normally");
         PlaceRequest point{1,1,{35.681641,140.027194,1000,true}};
         const auto place=lookup.search(point);check(place.state==PlaceState::Ready,"existing 128 cache populated");
@@ -34,7 +35,7 @@ int main(int argc,char** argv) {
         request.latitude=point.fix.latitude;request.longitude=point.fix.longitude;
         map::MapFrameReceiver receiver;check(receiver.begin(request,request.buffer),"fixed UI output lent before source read");
         const auto started=std::chrono::steady_clock::now();
-        auto result=readBoundaryMap(lookup_dataset,request,0,&observer,map::MapSession(source_pixels));
+        auto result=test_storage::boundary(lookup_dataset,request,0,&observer,map::MapSession(source_pixels),nullptr,nullptr,dataset_root);
         const auto elapsed=std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()-started).count();
         check(result.info.error==map::Error::None && result.pixels,"independent map source succeeds");
         check(result.info.region==place.region_code,"map center matches the shared point lookup");
@@ -45,7 +46,7 @@ int main(int argc,char** argv) {
               lookup.datasetInfo().generation==generation && observer.rg==rg,"map never invalidates, reuses or changes the 128 cache or RG state");
         const auto raw_bytes=result.view().count*4;const auto name=std::string(place.lines[0])+" / "+place.lines[1];
         const auto plan=result.plan;
-        map::CodeImageBuffer session_pixels{};map::MapSession session(session_pixels);MapBuildJob job;job.start(request,session);job.loaded(std::move(result));
+        map::CodeImageBuffer session_pixels{};map::MapSession session(session_pixels);ReadFileSlot job_file;MapBuildJob job(job_file);job.start(request,session);job.loaded(std::move(result));
         unsigned steps=0;while(!job.complete() && ++steps<20)job.step();
         check(job.complete() && job.info().error==map::Error::None,"map renders in bounded steps");
         const auto completed=job.info();
@@ -58,7 +59,7 @@ int main(int argc,char** argv) {
         check(session.pixels==retained && observer.sd==before_highlight && job.info().region==0,"highlight reuses pixels without SD IO");
         check(job.release(highlight) && receiver.discard(highlight),"return recolor output");
         auto shifted=request;++shifted.token;shifted.longitude+=.0001;
-        auto refilled=readBoundaryMap(lookup_dataset,shifted,0,&observer,std::move(session));
+        auto refilled=test_storage::boundary(lookup_dataset,shifted,0,&observer,std::move(session),nullptr,nullptr,dataset_root);
         check(refilled.info.error==map::Error::None && refilled.pixels==retained && refilled.bytes()==retained_bytes,"next viewport overwrites the same allocation");
         refilled.clear();
         const auto accesses=observer.sd;
@@ -68,14 +69,15 @@ int main(int argc,char** argv) {
         for(unsigned scale:{2u,4u}) {
             auto scaled=request;scaled.buffer={};scaled.scale=scale;++scaled.token;
             map::MapFrameReceiver sampled_frame;check(sampled_frame.begin(scaled,scaled.buffer),"sampled fixed output loan");
-            auto small=readBoundaryMap(lookup_dataset,scaled,0,&observer,map::MapSession(sample_pixels));
+            auto small=test_storage::boundary(lookup_dataset,scaled,0,&observer,map::MapSession(sample_pixels),nullptr,nullptr,dataset_root);
             check(small.info.error==map::Error::None && small.pixels,"sampled map source succeeds");
             check(small.info.region==place.region_code,"sampled map retains its generation-center code");
             check(small.view().count*4==raw_bytes && small.info.meters_per_pixel==plan.meters_per_pixel*scale,
                   "sampled map uses constant code memory and a correctly scaled distance bar");
-            const auto info=DatasetIndex{}.loadMap((dir/"_mapindex.dat").string(),(dir/"map.glc").string());
-            DiskIndexedMapReader reader(info,std::make_shared<ObservedFileReaderFactory>((dir/"map.glc").string(),nullptr),
-                                       std::make_shared<ObservedFileReaderFactory>((dir/"_mapindex.dat").string(),nullptr));
+            const auto info=test_storage::Index{}.loadMap((dir/"_mapindex.dat").string(),(dir/"map.glc").string());
+            const auto mp=(dir/"map.glc").string(),ip=(dir/"_mapindex.dat").string();ReadFileSlot slot;
+            FileReadSource map_source(mp,nullptr,nullptr,{},0,&slot),index_source(ip,nullptr,nullptr,{},0,&slot);
+            test_storage::MapReader reader(info,map_source,index_source);
             map::DecimatedViewport viewport;
             check(map::planDecimatedViewport(scaled.latitude,scaled.longitude,reader.unitInvX(),reader.unitInvY(),SIZE_MAX,
                                              scale,viewport)==map::Error::None,"reference input plan succeeds");
@@ -88,7 +90,7 @@ int main(int argc,char** argv) {
             map::BoundaryImage edges;edges.resize(240,101);
             check(map::buildBoundaryRows({expected.data(),small.plan.source,expected.size()},small.plan,place.region_code,0,101,edges)==map::Error::None,
                   "reference decimated image uses the ordinary edge detector");
-            map::CodeImageBuffer sampled_session_pixels{};map::MapSession sampled_session(sampled_session_pixels);MapBuildJob sampled_job;sampled_job.start(scaled,sampled_session);sampled_job.loaded(std::move(small));
+            map::CodeImageBuffer sampled_session_pixels{};map::MapSession sampled_session(sampled_session_pixels);ReadFileSlot sampled_job_file;MapBuildJob sampled_job(sampled_job_file);sampled_job.start(scaled,sampled_session);sampled_job.loaded(std::move(small));
             while(!sampled_job.complete())sampled_job.step();
             const auto sampled_info=sampled_job.info();
             check(sampled_job.release(scaled) && sampled_frame.commit(sampled_info) &&
@@ -99,24 +101,24 @@ int main(int argc,char** argv) {
             std::cout<<"PASS: decimate first scale="<<scale<<", raw_input="<<b.width<<'x'<<b.height<<", work_bytes="<<expected.size()*4<<", name="<<place.lines[0]<<" / "<<place.lines[1]<<'\n';
         }
         std::ofstream(dir/"dataset.ini",std::ios::app)<<"display_line1=AREA %0 %%\ndisplay_line2=%1%2%3%4%5\n";
-        lookup.configure(dir.string(),"ja");check(lookup.prepare().state==PlaceState::Ready,"formatted point lookup prepares");
-        const auto formatted=lookup.search(point);request.dataset_generation=lookup_dataset.info.generation;auto formatted_map=readBoundaryMap(lookup_dataset,request,0,&observer,map::MapSession(source_pixels));
+        lookup.configure(1,"ja");check(lookup.prepare().state==PlaceState::Ready,"formatted point lookup prepares");
+        const auto formatted=lookup.search(point);request.dataset_generation=lookup_dataset.info.generation;auto formatted_map=test_storage::boundary(lookup_dataset,request,0,&observer,map::MapSession(source_pixels),nullptr,nullptr,dataset_root);
         check(formatted_map.info.error==map::Error::None && std::string(formatted.lines[0]).find("AREA ")==0,"shared lookup honours formatting independently of map generation");
         std::ofstream(dir/"dataset.ini")<<"[dataset]\nversion=1\nmap=map.glc\ndefault_language=ja\n[ja]\ntitle=Test\nwordbook=names.giswordbook\ndisplay_line1=\ndisplay_line2=\n";
-        auto blank=readBoundaryMap(lookup_dataset,request,0,&observer,map::MapSession(source_pixels));
+        auto blank=test_storage::boundary(lookup_dataset,request,0,&observer,map::MapSession(source_pixels),nullptr,nullptr,dataset_root);
         check(blank.info.error==map::Error::None,"map generation is independent of place row formatting");
         fs::rename(dir/"dataset.ini",dir/"dataset.hidden");
-        check(readBoundaryMap(lookup_dataset,request,0,&observer,map::MapSession(source_pixels)).info.error==map::Error::None,
+        check(test_storage::boundary(lookup_dataset,request,0,&observer,map::MapSession(source_pixels),nullptr,nullptr,dataset_root).info.error==map::Error::None,
               "initialized map must not reopen INI");
         fs::rename(dir/"dataset.hidden",dir/"dataset.ini");
         fs::rename(dir/"names.giswordbook",dir/"names.hidden");
-        check(readBoundaryMap(lookup_dataset,request,0,&observer,map::MapSession(source_pixels)).info.error==map::Error::None,
+        check(test_storage::boundary(lookup_dataset,request,0,&observer,map::MapSession(source_pixels),nullptr,nullptr,dataset_root).info.error==map::Error::None,
               "boundary generation must not open or search the Wordbook");
         fs::rename(dir/"names.hidden",dir/"names.giswordbook");
         const auto configured_generation=lookup.datasetInfo().generation;
         const auto configured_stats=lookup.cacheStats();
         fs::remove(dir/"_mapindex.dat");
-        check(readBoundaryMap(lookup_dataset,request,0,&observer,map::MapSession(source_pixels)).info.error==map::Error::ReadError,"missing index becomes a map error");
+        check(test_storage::boundary(lookup_dataset,request,0,&observer,map::MapSession(source_pixels),nullptr,nullptr,dataset_root).info.error==map::Error::ReadError,"missing index becomes a map error");
         check(lookup.datasetInfo().generation==configured_generation && lookup.cacheStats().fills==configured_stats.fills && lookup.search(point).state==PlaceState::Ready,
               "independent map errors do not mutate the existing cache or selection");
         std::cout<<"PASS: independent map source, center/name="<<name<<", work_bytes="<<raw_bytes<<", image_bytes=6060, source_host_ms="<<elapsed<<"; 128 cache preserved\n";

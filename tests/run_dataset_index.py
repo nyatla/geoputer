@@ -188,6 +188,7 @@ with tempfile.TemporaryDirectory(prefix='reversegeoputer-index-') as tmp:
                     '-I',str(root/'application'),'-I',str(root/'third_party/galuchat/include'),
                     str(root/'tests/dataset_index_tests.cpp'),
                     str(root/'tests/wordbook_index_tests.cpp'),
+                    str(root/'tests/wordbook_header_tests.cpp'),
                     str(root/'application/task/storage/galuchat/DiskIndexedWordBookReader.cpp'),
                     str(root/'application/task/storage/dataset/DatasetIndex.cpp'),
                     str(root/'application/task/storage/dataset/DatasetMetadata.cpp'),
@@ -233,7 +234,10 @@ with tempfile.TemporaryDirectory(prefix='reversegeoputer-index-') as tmp:
         image = mb(width)+mb(height)+bytes([1])+b''.join(blocks)
         source_map = directory/(label+'.glc')
         source_map.write_bytes(chunk('GLCH',glch)+chunk('LAYO',b'abc')+chunk('GI01',image))
-        gw_meta = b'{"token_encoding":"utf-8"}'
+        # Opaque GW00 metadata: absent, contradictory, long and non-JSON payloads.
+        gw_meta = {'deep': b'', 'tm-same': b'{"token_encoding":"sjis"}',
+                   'below16k': b'{"notes":"'+b'x'*65536+b'"}',
+                   'exact16k': b'opaque UTF-8 metadata', 'above16k': b'{}'}.get(label,b'{"token_encoding":"utf-8"}')
         gw = b'GisWordBook/0'.ljust(16,b'\0')+mb(len(gw_meta))+gw_meta
         tm = (bytes([2,2,0,1,1,1])+b'A'+bytes([0,1,1,1])+b'B' if label=='tm-same'
               else bytes([1,1,0,1,1,1])+b'A')

@@ -1,3 +1,4 @@
+#include "support/LogReaderFixture.h"
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
@@ -32,7 +33,7 @@ LogReadReply run(LogReader& reader,LogReadRequest request,LogWriter* writer=null
 void statisticsTests(const std::string& dir) {
     std::filesystem::create_directory(dir);
     const char* name="20261027_000000_0.gps.dat";const auto path=dir+"/"+name;
-    LogReader reader(dir);LogReadRequest req{};req.kind=LogReadKind::Statistics;req.token=87;req.screen_generation=19;
+    test_storage::LogReader reader(dir);LogReadRequest req{};req.kind=LogReadKind::Statistics;req.token=87;req.screen_generation=19;
     std::strcpy(req.name,name);
     file(path,0);auto result=run(reader,req);
     check(result.error==LogReadError::None && result.data.statistics.processed==0 && result.data.statistics.distance_m==0 && !result.data.statistics.has_speed,"empty statistics completes without invented measurements");
@@ -58,7 +59,7 @@ void statisticsTests(const std::string& dir) {
     LogWriter writer(dir);check(writer.open(654,UINT64_MAX)==LogError::None,"statistics active writer");
     for(unsigned n=0;n<25;++n) {LogCommand command{};command.session_id=654;command.sample_seq=n+1;command.fix=fix(n);check(writer.append(command)==LogError::None,"stats writer append");}
     check(writer.requestFlush(654,25,false)==LogError::None && writer.flush(1),"save statistics input");
-    const auto active_name=std::filesystem::path(writer.path()).filename().string();std::strcpy(req.name,active_name.c_str());req.session_id=654;
+    const auto active_name=std::filesystem::path(std::string(writer.path().view())).filename().string();std::strcpy(req.name,active_name.c_str());req.session_id=654;
     check(reader.begin(req) && !reader.step(&writer) && reader.progress().processed==8,"active writer statistics first batch");
     check(writer.requestFlush(654,25,true)==LogError::None && writer.flush(2),"close writer between statistics batches");
     while(!reader.done())reader.step(&writer);
@@ -92,7 +93,7 @@ void listTests(const std::string& dir) {
     file(dir+"/undated_0000000000000064_0.gps.dat",1);
     std::ofstream(dir+"/ignored.txt").put('x');
     std::filesystem::create_directory(dir+"/directory.gps.dat");
-    LogReader reader(dir); LogReadRequest req{}; req.kind=LogReadKind::List;
+    test_storage::LogReader reader(dir); LogReadRequest req{}; req.kind=LogReadKind::List;
     auto first=run(reader,req);
     check(first.count==6 && !first.has_newer && first.has_older && std::strcmp(first.data.list.names[0],"20261016_010016_0.gps.dat")==0,"newest six names, skipping other files and directories");
     check(first.data.list.total_files==18 && first.data.list.first_index==0 && first.data.list.records[0]==17 && first.data.list.records[5]==12,"list carries size-derived records and total without growing its payload");
@@ -122,14 +123,15 @@ void listTests(const std::string& dir) {
     req.direction=LogListDirection::Newest; req.anchor[0]=0;
     check(reader.begin(req) && !reader.step(),"directory scanning yields after ten entries"); reader.cancel();
     check(reader.done() && reader.result().error==LogReadError::Cancelled,"cancel closes unfinished scan");
-    LogReader missing(dir+"/missing"); check(run(missing,req).count==0 && missing.result().error==LogReadError::None,"no logs directory is an empty list");
+    const std::string missing_directory=dir+"/missing";
+    test_storage::LogReader missing(missing_directory); check(run(missing,req).count==0 && missing.result().error==LogReadError::None,"no logs directory is an empty list");
 }
 void sizeOnlyTests(const std::string& dir) {
     std::filesystem::create_directory(dir);
     auto bytes=[&](const char* name,size_t count) {std::ofstream f(dir+"/"+name,std::ios::binary);for(size_t n=0;n<count;++n)f.put('x');};
     bytes("c.gps.dat",512+5*32+31);bytes("b.gps.dat",100);bytes("a.gps.dat",512);
     bytes("d.gps.dat",0);std::filesystem::resize_file(dir+"/d.gps.dat",UINT32_MAX); // Sparse FAT32-limit fixture, no content read.
-    LogReader reader(dir);LogReadRequest request{};request.kind=LogReadKind::List;
+    test_storage::LogReader reader(dir);LogReadRequest request{};request.kind=LogReadKind::List;
     const auto reply=run(reader,request);
     check(reply.error==LogReadError::None && reply.count==4 && reply.data.list.total_files==4,"listing does not validate deliberately corrupt headers/records");
     check(reply.data.list.records[0]==LogMaxRecords && reply.data.list.records[1]==5 && reply.data.list.records[2]==0 && reply.data.list.records[3]==0,"size-only counts floor tails and guard short files");
@@ -142,7 +144,7 @@ void sizeOnlyTests(const std::string& dir) {
 void readTests(const std::string& dir) {
     std::filesystem::create_directory(dir); const std::string name="20261016_093012_0.gps.dat",path=dir+"/"+name;
     file(path,25,100,5);
-    LogReader reader(dir); LogReadRequest req{};req.kind=LogReadKind::Summary;std::strcpy(req.name,name.c_str());
+    test_storage::LogReader reader(dir); LogReadRequest req{};req.kind=LogReadKind::Summary;std::strcpy(req.name,name.c_str());
     auto summary=run(reader,req);
     check(summary.error==LogReadError::None && summary.summary.records==25 && summary.summary.tail==5 && summary.summary.first_utc==fix(0).utc_epoch_ms && summary.summary.last_utc==fix(24).utc_epoch_ms,"summary validates endpoints and reports partial tail without truncation");
     check(std::filesystem::file_size(path)==512+25*32+5,"read leaves source file unchanged");
@@ -173,8 +175,8 @@ void activeTests(const std::string& dir) {
     LogWriter writer(dir);check(writer.open(100,0)==LogError::None,"active log opens");
     for(unsigned n=0;n<25;++n) { LogCommand p{};p.session_id=100;p.sample_seq=n+1;p.fix=fix(n);check(writer.append(p)==LogError::None,"active append"); }
     check(writer.flush(1000),"commit first active prefix");
-    LogReader reader(dir);LogReadRequest req{};req.kind=LogReadKind::Summary;
-    std::strcpy(req.name,std::filesystem::path(writer.path()).filename().string().c_str());
+    test_storage::LogReader reader(dir);LogReadRequest req{};req.kind=LogReadKind::Summary;
+    std::strcpy(req.name,std::filesystem::path(std::string(writer.path().view())).filename().string().c_str());
     auto summary=run(reader,req,&writer);check(summary.summary.records==25,"active summary uses committed prefix");
     for(unsigned n=25;n<30;++n) { LogCommand p{};p.session_id=100;p.sample_seq=n+1;p.fix=fix(n);check(writer.append(p)==LogError::None,"new active points remain in RAM"); }
     check(run(reader,req,&writer).summary.records==25,"active RAM is excluded from viewer");
@@ -229,7 +231,7 @@ void deleteTests(const std::string& dir) {
     fs::create_directory(dir);
     const std::string name="20261016_093012_0.gps.dat",path=dir+"/"+name;
     file(path,1);
-    DeleteActivity activity;LogReader reader(dir,&activity);
+    DeleteActivity activity;test_storage::LogReader reader(dir,&activity);
     LogReadRequest req{};req.kind=LogReadKind::Delete;req.token=71;req.screen_generation=9;
     std::strcpy(req.name,name.c_str());
     check(run(reader,req).error==LogReadError::Unconfirmed && fs::exists(path) && !activity.accesses,
@@ -255,9 +257,9 @@ void deleteTests(const std::string& dir) {
     LogCommand initial{};initial.session_id=900;initial.sample_seq=1;initial.fix=fix(0);
     initial.fix.fields&=~GpsTime;initial.fix.utc_epoch_ms=UINT64_MAX;
     check(writer.append(initial)==LogError::None && writer.flush(500),"create and save an undated active log");
-    const auto active_name=fs::path(writer.path()).filename().string();
+    const auto active_name=fs::path(std::string(writer.path().view())).filename().string();
     std::strcpy(req.name,active_name.c_str());const auto before=activity.accesses;
-    check(run(reader,req,&writer).error==LogReadError::Active && fs::exists(writer.path()) && activity.accesses==before,
+    check(run(reader,req,&writer).error==LogReadError::Active && fs::exists(std::string(writer.path().view())) && activity.accesses==before,
           "open recording cannot be deleted and protection performs no SD access");
     for(size_t n=0;n<std::strlen(req.name)-8;++n) if(req.name[n]>='a'&&req.name[n]<='z')req.name[n]-=32;
     check(run(reader,req,&writer).error==LogReadError::Active,"FAT32 case aliases cannot bypass active-file protection");
@@ -266,7 +268,7 @@ void deleteTests(const std::string& dir) {
     check(writer.append(sample)==LogError::None && writer.requestFlush(900,2,true)==LogError::None,"create closing session with unsaved data");
     check(run(reader,req,&writer).error==LogReadError::Active && writer.snapshot().buffered==1,"closing buffered log remains protected");
     std::strcpy(req.name,name.c_str());
-    check(run(reader,req,&writer).error==LogReadError::None && writer.snapshot().buffered==1 && fs::exists(writer.path()),
+    check(run(reader,req,&writer).error==LogReadError::None && writer.snapshot().buffered==1 && fs::exists(std::string(writer.path().view())),
           "deleting another log leaves the active writer and RAM queue intact");
     check(writer.flush(1000),"close protected log after saving retained records");
     std::strcpy(req.name,active_name.c_str());
@@ -322,6 +324,11 @@ void deleteUiTests() {
 }
 }
 void testLogReader() {
+    const std::string oversized_directory(config::TemporaryPathBytes,'x');
+    test_storage::LogReader oversized(oversized_directory);LogReadRequest oversized_request{};
+    oversized_request.kind=LogReadKind::List;
+    check(oversized.begin(oversized_request) && oversized.done() && oversized.result().error==LogReadError::Range,
+          "oversized log directory fails as a bounded request");
     char root[]="/tmp/geoputer-reader-XXXXXX";check(mkdtemp(root)!=nullptr,"temporary read fixtures");
     try {statisticsUiTests();statisticsTests(std::string(root)+"/statistics");listTests(std::string(root)+"/pages"); sizeOnlyTests(std::string(root)+"/pages"+"-size-only");readTests(std::string(root)+"/read");activeTests(std::string(root)+"/active");deleteTests(std::string(root)+"/delete");uiTests();deleteUiTests();}
     catch(...) {std::filesystem::remove_all(root);throw;}

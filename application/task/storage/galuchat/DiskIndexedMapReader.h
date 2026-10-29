@@ -1,32 +1,22 @@
 #pragma once
-#include <memory>
 #include <galuchat/wgsmap3_reader.hpp>
 #include "../dataset/DatasetIndex.h"
+#include "ScopedReaderSource.h"
 namespace geoputer {
-class ObservedFileReaderFactory;
-// Holds one validated metadata summary, never an array of chunk entries.
+// Owns validated metadata; both input descriptions are borrowed from the caller.
 class DiskIndexedMapReader {
 public:
-    DiskIndexedMapReader(DatasetMapIndex info,std::shared_ptr<const galuchat::ReaderFactory> map,
-                         std::shared_ptr<const galuchat::ReaderFactory> index)
-        : info_(info),map_(std::move(map)),index_(std::move(index)) {}
-    // Borrow lvalue factories for this synchronous Reader session.
-    DiskIndexedMapReader(DatasetMapIndex info,ObservedFileReaderFactory& map,
-                         ObservedFileReaderFactory& index)
-        :info_(info),file_map_(&map),file_index_(&index){}
-    void readRect(const galuchat::Rect& target,uint32_t* pixels) const;
-    // Nearest-neighbor decimation anchored at target.x/y, before edge extraction.
-    // Caller supplies ceil(width/scale)*ceil(height/scale) uint32 pixels.
-    // Supports 1, 2, 4; preserves first-nonzero composition at sampled positions.
-    void readRectDecimated(const galuchat::Rect& target,unsigned scale,uint32_t* pixels) const;
+    DiskIndexedMapReader(DatasetMapIndex info,ScopedReaderSource map,ScopedReaderSource index)
+        :info_(info),map_(map),index_(index){}
+    void readRect(const galuchat::Rect& target,uint32_t* pixels,BorrowedReadBuffer* work=nullptr) const;
+    // Nearest-neighbor decimation before edge extraction. Supports 1, 2, 4.
+    void readRectDecimated(const galuchat::Rect& target,unsigned scale,uint32_t* pixels,BorrowedReadBuffer* work=nullptr) const;
     uint32_t chunkCount() const { return value(index_format::Header::ChunkCount); }
     int unitInvX() const { return static_cast<int>(value(index_format::Header::UnitInvX)); }
     int unitInvY() const { return static_cast<int>(value(index_format::Header::UnitInvY)); }
 private:
     uint32_t value(size_t offset) const;
     DatasetMapIndex info_;
-    std::shared_ptr<const galuchat::ReaderFactory> map_,index_;
-    const ObservedFileReaderFactory* file_map_=nullptr;
-    const ObservedFileReaderFactory* file_index_=nullptr;
+    ScopedReaderSource map_,index_;
 };
 }

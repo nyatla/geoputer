@@ -128,6 +128,76 @@ public:
         return result;
     }
 
+    // Caller-owned variant; the existing vector API remains available.
+    static size_t readCodeSetFromRootInto(ByteReader& source,const IndexRootRange& range,
+                                         size_t target,uint32_t* output,size_t capacity) {
+        if (!output || capacity<range.depth) throw std::length_error("TI00 output capacity exceeded");
+        if (source.bitOffset() || range.start_bit>7 || !range.bit_count || !range.depth || range.depth>range.bit_count)
+            throw std::runtime_error("invalid indexed TI00 root range");
+        const size_t end_bits=detail::addSize(range.start_bit,range.bit_count,"TI00 root bits");
+        detail::LimitedReader bytes(source,detail::addSize(end_bits,7,"TI00 root bytes")/8);
+        bytes.skipBits(range.start_bit);
+        HierarchicalIndexReader root(bytes,range);
+        root.readIndexedRootInto(target,end_bits,range.final_root,output);
+        if (bitPosition(bytes)>end_bits) throw std::runtime_error("TI00 root range exceeded");
+        return range.depth;
+    }
+
+    // Decode a single TT00 record into a bounded caller-owned token array.
+    // Capacity applies to this component, not the dataset or the entire path.
+    static size_t readTokenIdsFromPageInto(ByteReader& source,size_t page_bytes,
+        size_t first_code,size_t record_count,int token_bits,size_t target,
+        uint16_t* output,size_t capacity) {
+        if (source.bitOffset() || token_bits<1 || token_bits>16 || !record_count || !output)
+            throw std::runtime_error("invalid indexed TT00 page");
+        const auto end=detail::addSize(first_code,record_count,"TT00 page end");
+        if (target<first_code || target>=end) throw std::runtime_error("TT00 target outside page");
+        detail::LimitedReader page(source,page_bytes);
+        if (page.readByte()!=0) throw std::runtime_error("unsupported TT00 page header");
+        const auto tokens=detail::toSize(page.readMbUInt(),"TT00 record tokens");
+        const auto records=detail::toSize(page.readMbUInt(),"TT00 page records");
+        const auto stream_bytes=detail::toSize(page.readMbUInt(),"TT00 stream size");
+        if (records!=record_count || !stream_bytes || stream_bytes!=page.remaining())
+            throw std::runtime_error("TT00 indexed page length/count mismatch");
+        if (tokens>capacity) throw std::length_error("Wordbook token capacity exceeded");
+        detail::LimitedReader stream(page,stream_bytes);
+        const auto packets=detail::toSize(stream.readMbUInt(),"TT00 packet count");
+        std::array<int64_t,PALETTE_SIZE+1> palette{};palette.fill(-1);
+        size_t record=0,used=0;target-=first_code;
+        for (size_t packet=0;packet<packets;++packet) {
+            const int type=static_cast<int>(stream.readBitsAsInt32(2));
+            const auto bits=detail::toSize(stream.readMbUInt(),"TT00 packet bits");
+            if (type==0) {
+                const auto start=bitPosition(stream);const auto slots=stream.readBitsAsInt32(PALETTE_SIZE);
+                palette.fill(-1);
+                for (int bit=0;bit<PALETTE_SIZE;++bit)
+                    if (slots&(1<<bit)) palette[bit+1]=stream.readBitsAsInt32(token_bits);
+                assertConsumed(stream,start,bits);
+            } else if (type==1) {
+                const auto start=bitPosition(stream);const auto slot=stream.readBitsAsInt32(4);
+                if (!slot) throw std::runtime_error("TT00 palette slot zero is reserved");
+                palette[slot]=stream.readBitsAsInt32(token_bits);assertConsumed(stream,start,bits);
+            } else if (type==2) {
+                if (bits%4) throw std::runtime_error("invalid TT00 payload size");
+                for (size_t i=0;i<bits/4;++i) {
+                    const auto local=stream.readBitsAsInt32(4);
+                    if (!local) {
+                        if (record==target) {
+                            if (used!=tokens) throw std::runtime_error("TT00 record token count mismatch");
+                            return used;
+                        }
+                        ++record;
+                    } else if (record==target) {
+                        if (palette[local]<0) throw std::runtime_error("TT00 empty palette slot");
+                        if (used>=tokens) throw std::runtime_error("TT00 record token count mismatch");
+                        output[used++]=static_cast<uint16_t>(palette[local]);
+                    }
+                }
+            } else stream.skipBits(bits);
+        }
+        throw std::runtime_error("TT00 target record terminator not found");
+    }
+
     // source starts at PageHeader; only the selected page is visible to decoding.
     static std::vector<std::pair<size_t, std::vector<size_t>>> readTokenIdSetsFromPage(
         ByteReader& source, size_t page_bytes, size_t first_code, size_t record_count,
@@ -382,6 +452,13 @@ private:
         std::vector<size_t> readIndexedRoot(size_t target, size_t end_bits, bool final_root) {
             if (target >= header_.record_count) throw std::runtime_error("TI00 index out of range");
             std::vector<size_t> result(header_.max_depth, 0);
+            readIndexedRootInto(target,end_bits,final_root,result);
+            return result;
+        }
+
+        template<class Output>
+        void readIndexedRootInto(size_t target,size_t end_bits,bool final_root,Output& result) {
+            if (target>=header_.record_count) throw std::runtime_error("TI00 index out of range");
             if (header_.max_depth == 1) {
                 const size_t leaves = detail::toSize(reader_.readMbUInt(), "TI00 root leaves");
                 if (leaves != header_.record_count) throw std::runtime_error("TI00 indexed root count mismatch");
@@ -401,7 +478,6 @@ private:
                     throw std::runtime_error("TI00 indexed root length/count mismatch");
                 readChildren(1, leaves, target, result);
             }
-            return result;
         }
 
         size_t recordCount() const { return header_.record_count; }
@@ -417,8 +493,9 @@ private:
         }
 
     private:
+        template<class Output>
         void readPrefixesByCount(
-            size_t depth, size_t count, size_t target, std::vector<size_t>& out) {
+            size_t depth, size_t count, size_t target, Output& out) {
             for (size_t i = 0; i < count; i++) {
                 size_t code = reader_.readBitsAsInt32(header_.code_bits);
                 size_t leaves = detail::toSize(reader_.readMbUInt(), "TI00 leaves");
@@ -434,8 +511,9 @@ private:
             throw std::runtime_error("TI00 index not found");
         }
 
+        template<class Output>
         void readChildren(
-            size_t depth, size_t leaves, size_t target, std::vector<size_t>& out) {
+            size_t depth, size_t leaves, size_t target, Output& out) {
             if (depth == header_.max_depth - 1) {
                 readLeafBlocksByLeafCount(leaves, target, out);
                 return;
@@ -457,8 +535,9 @@ private:
             throw std::runtime_error("TI00 child index not found");
         }
 
+        template<class Output>
         void readLeafBlocksByCount(
-            size_t blocks, size_t target, std::vector<size_t>& out) {
+            size_t blocks, size_t target, Output& out) {
             for (size_t block = 0; block < blocks; block++) {
                 size_t leaves = detail::toSize(reader_.readMbUInt(), "TI00 block leaves");
                 if (target < leaves) {
@@ -474,8 +553,9 @@ private:
             throw std::runtime_error("TI00 leaf index not found");
         }
 
+        template<class Output>
         void readLeafBlocksByLeafCount(
-            size_t leaves, size_t target, std::vector<size_t>& out) {
+            size_t leaves, size_t target, Output& out) {
             size_t consumed = 0;
             while (consumed < leaves) {
                 size_t block_leaves = detail::toSize(reader_.readMbUInt(), "TI00 block leaves");

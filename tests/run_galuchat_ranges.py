@@ -20,6 +20,8 @@ with tempfile.TemporaryDirectory(prefix="reversegeoputer-block-index-") as direc
     subprocess.run([
         'g++', '-O2', '-std=c++17', '-Wall', '-Wextra', '-Werror', '-pedantic',
         '-fsanitize=undefined', '-fno-sanitize-recover=all', '-D_GLIBCXX_ASSERTIONS',
+        '-DARDUINO_ARCH_ESP32','-DGEOPUTER_TEST_FATFS',
+        '-I', str(root / 'tests/support/reader'),'-I',str(root / 'tests'),
         '-I', str(root / 'application'), '-I', str(root / 'third_party/galuchat/include'),
         str(root / 'tests/disk_block_index_test.cpp'),
         str(root / 'application/task/storage/galuchat/DiskIndexedMapReader.cpp'),

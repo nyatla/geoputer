@@ -70,7 +70,7 @@ void concurrentAndRetry(const std::string& path) {
     auto merged=first;
     check(!applyLogSnapshot(merged,old) && merged.saved==40 && merged.accepted==64,
           "older Storage notification cannot undo App acceptance or persistence");
-    check(read(writer.path()).size()==512+40*32,"first I/O does not accidentally include records appended during it");
+    check(read(std::string(writer.path().view())).size()==512+40*32,"first I/O does not accidentally include records appended during it");
 
     // Head=40, 50 records: this batch wraps into two spans (24 + 26 records).
     for(unsigned n=65;n<=90;++n) check(writer.append(point(n),n*10)==LogError::None,"ring tail wraps without copying");

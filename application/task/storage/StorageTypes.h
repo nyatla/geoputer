@@ -64,7 +64,7 @@ struct StorageCompletion {
     uint32_t operation_id;
     StorageSnapshot snapshot;
     StorageReadKind read_kind;
-    union { PlaceCompletion place; LogReadReply logs; DatasetView dataset_view; };
+    union { PlaceCompletion place; LogReadReply logs; DatasetCompletion dataset; };
 };
 
 inline const char* cardStateName(CardState state) {

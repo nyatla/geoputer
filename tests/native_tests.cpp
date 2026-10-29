@@ -13,6 +13,7 @@ void testSettings();
 void testPlace();
 void testBoot();
 void testDatasets();
+void testDatasetBorrowing();
 void testDatasetSelection();
 void testClock();
 void testFonts();
@@ -399,6 +400,7 @@ int main() {
         testKeyBindings();
         testBoot();
         testDatasets();
+        testDatasetBorrowing();
         testDatasetSelection();
         testClock();
         testFonts();

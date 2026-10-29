@@ -1,3 +1,4 @@
+#include "support/TracedSdFile.h"
 #include <algorithm>
 #include <array>
 #include <iostream>
@@ -56,47 +57,15 @@ struct Fixture {
         }
     }
 };
-struct Trace {
-    std::vector<size_t> opens, reads;
-    Trace* peer=nullptr;
-    unsigned live=0, peak=0;
-    size_t fail_at=SIZE_MAX;
-};
-class Factory final : public galuchat::ReaderFactory {
-public:
-    Factory(const Bytes& bytes, Trace& trace):bytes_(bytes),trace_(trace) {}
-    std::unique_ptr<galuchat::ByteReader> create(size_t offset=0) const override {return createRange(offset,bytes_.size()-offset);}
-    std::unique_ptr<galuchat::ByteReader> createRange(size_t offset,size_t length) const override {
-        check(!trace_.peer || !trace_.peer->live,"index and GLC Readers overlap");
-        trace_.opens.push_back(offset);
-        class Reader final : public galuchat::ByteReader {
-        public:
-            Reader(std::unique_ptr<galuchat::ByteReader> input,size_t base,Trace& trace):input_(std::move(input)),base_(base),trace_(trace) {
-                trace_.peak=std::max(trace_.peak,++trace_.live);
-            }
-            ~Reader() override {--trace_.live;}
-            size_t pos() const override {return input_->pos();}
-            bool atEnd() const override {return input_->atEnd();}
-        protected:
-            uint8_t nextByte() override {
-                if(base_+pos()==trace_.fail_at)throw std::runtime_error("injected read failure");
-                trace_.reads.push_back(base_+pos());return input_->readByte();
-            }
-            void skipByte(size_t n) override {input_->skipInByte(n);}
-        private:
-            std::unique_ptr<galuchat::ByteReader> input_;size_t base_;Trace& trace_;
-        };
-        return std::make_unique<Reader>(galuchat::BufferReaderFactory(bytes_).createRange(offset,length),offset,trace_);
-    }
-private:const Bytes& bytes_;Trace& trace_;
-};
+using Trace=traced_sd::Trace;
+using SdFile=traced_sd::File;
 void rectangles() {
     Fixture f;
     for (const galuchat::Rect target : {galuchat::Rect{256,0,1,256},{520,390,128,128},{0,128,768,256},
                                        {125,125,260,260},{-20,-20,128,128},{760,500,128,128},{800,600,1,1}}) {
         Trace map_trace,index_trace;map_trace.peer=&index_trace;index_trace.peer=&map_trace;
-        auto map=std::make_shared<Factory>(f.map,map_trace),index=std::make_shared<Factory>(f.index,index_trace);
-        geoputer::DiskIndexedMapReader reader(f.info,map,index);
+        auto map=std::make_shared<SdFile>(f.map,map_trace),index=std::make_shared<SdFile>(f.index,index_trace);
+        test_storage::MapReader reader(f.info,*map,*index);
         std::vector<uint32_t> pixels(size_t(target.width)*target.height,999);
         reader.readRect(target,pixels.data());
         std::array<bool,6> needed{};
@@ -125,7 +94,8 @@ void decimation() {
     for (const galuchat::Rect rect : {galuchat::Rect{0,0,768,512},{1,3,259,133},{-7,-5,137,139},
                                      {123,127,267,261},{757,503,17,13},{800,600,1,1},{0,0,1,1}}) {
         Trace mt,it;mt.peer=&it;it.peer=&mt;
-        geoputer::DiskIndexedMapReader reader(f.info,std::make_shared<Factory>(f.map,mt),std::make_shared<Factory>(f.index,it));
+        SdFile map_source(f.map,mt),index_source(f.index,it);
+        test_storage::MapReader reader(f.info,map_source,index_source);
         const unsigned width=1+(unsigned(rect.width)-1)/scale,height=1+(unsigned(rect.height)-1)/scale;
         std::vector<uint32_t> pixels(size_t(width)*height+2,0xdeadbeef);
         reader.readRectDecimated(rect,scale,pixels.data()+1);
@@ -140,7 +110,8 @@ void decimation() {
         check(it.opens.size()==1 && mt.opens.size()<=1,"decimation repeats index/map sessions");
     }
     Trace mt,it;mt.peer=&it;it.peer=&mt;
-    geoputer::DiskIndexedMapReader reader(f.info,std::make_shared<Factory>(f.map,mt),std::make_shared<Factory>(f.index,it));
+    SdFile map_source(f.map,mt),index_source(f.index,it);
+    test_storage::MapReader reader(f.info,map_source,index_source);
     for(unsigned scale:{0u,3u,8u}) {
         uint32_t pixel=123;bool rejected=false;
         try {reader.readRectDecimated({0,0,1,1},scale,&pixel);}catch(const std::invalid_argument&){rejected=true;}
@@ -156,8 +127,8 @@ void decimationBeforeEdges() {
     Fixture f;
     for(unsigned y=0;y<8;++y)for(unsigned x=0;x<8;++x)f.map[f.first+2+y*128+x]=7;
     f.map[f.first+2+128+1]=99; // One-cell island between the scale-2 samples.
-    auto mf=std::make_shared<galuchat::BufferReaderFactory>(f.map),ix=std::make_shared<galuchat::BufferReaderFactory>(f.index);
-    geoputer::DiskIndexedMapReader reader(f.info,mf,ix);
+    auto mf=std::make_shared<traced_sd::File>(f.map),ix=std::make_shared<traced_sd::File>(f.index);
+    test_storage::MapReader reader(f.info,*mf,*ix);
     uint32_t full[64]{},small[16]{};reader.readRect({0,0,8,8},full);
     check(full[9]==99 && full[0]==7,"fine-island fixture has no island");
     reader.readRectDecimated({0,0,8,8},2,small);
@@ -173,8 +144,8 @@ void failuresAndBypass() {
     Fixture f;
     // A corrupt skipped prefix proves that decoding actually restarts at group 2.
     f.map[f.first]=0x30;
-    Trace mt,it;mt.peer=&it;it.peer=&mt;auto map=std::make_shared<Factory>(f.map,mt),index=std::make_shared<Factory>(f.index,it);
-    geoputer::DiskIndexedMapReader reader(f.info,map,index);uint32_t pixel=0;
+    Trace mt,it;mt.peer=&it;it.peer=&mt;auto map=std::make_shared<SdFile>(f.map,mt),index=std::make_shared<SdFile>(f.index,it);
+    test_storage::MapReader reader(f.info,*map,*index);uint32_t pixel=0;
     reader.readRect({256,128,1,1},&pixel);check(pixel==9,"indexed group could not bypass an unused corrupt prefix");
     check(mt.opens==std::vector<size_t>{f.first+8*Fixture::BlockBytes},"incorrect restarted file offset");
     const auto good=f.index;
@@ -193,8 +164,8 @@ void boundedSelection() {
     Fixture f(false,1,256);
     for(const galuchat::Rect rect:{galuchat::Rect{255,255,957,329}, {0,0,1536,1024}}) {
         Trace mt,it;mt.peer=&it;it.peer=&mt;
-        auto mf=std::make_shared<Factory>(f.map,mt),ix=std::make_shared<Factory>(f.index,it);
-        geoputer::DiskIndexedMapReader reader(f.info,mf,ix);
+        auto mf=std::make_shared<SdFile>(f.map,mt),ix=std::make_shared<SdFile>(f.index,it);
+        test_storage::MapReader reader(f.info,*mf,*ix);
         const unsigned width=1+(unsigned(rect.width)-1)/4,height=1+(unsigned(rect.height)-1)/4;
         std::vector<uint32_t> pixels(size_t(width)*height+2,0xdeadbeef);
         reader.readRectDecimated(rect,4,pixels.data()+1);
@@ -211,7 +182,8 @@ void boundedSelection() {
     for(bool source_failure:{false,true}) {
         Trace mt,it;mt.peer=&it;it.peer=&mt;
         if(source_failure)mt.fail_at=f.first+2;else it.fail_at=104+16*16;
-        geoputer::DiskIndexedMapReader reader(f.info,std::make_shared<Factory>(f.map,mt),std::make_shared<Factory>(f.index,it));
+        SdFile map_source(f.map,mt),index_source(f.index,it);
+        test_storage::MapReader reader(f.info,map_source,index_source);
         std::vector<uint32_t> pixels(size_t(1536)*1024);
         bool failed=false;
         try{reader.readRect({0,0,1536,1024},pixels.data());}catch(const std::runtime_error&){failed=true;}
@@ -248,7 +220,8 @@ void wholeRequestSelection() {
     put(info.header.data()+36,3);put(info.header.data()+60,records.size());
     Bytes index(info.header.begin(),info.header.end());rle_fixture::append(index,records);
     Trace mt,it;mt.peer=&it;it.peer=&mt;
-    geoputer::DiskIndexedMapReader reader(info,std::make_shared<Factory>(map,mt),std::make_shared<Factory>(index,it));
+    SdFile map_source(map,mt),index_source(index,it);
+    test_storage::MapReader reader(info,map_source,index_source);
     constexpr unsigned width=240,height=83;
     std::vector<uint32_t> pixels(width*height);
     reader.readRectDecimated({255,255,957,329},4,pixels.data());
@@ -304,9 +277,9 @@ void rleComposition() {
             put(info.header.data()+16,64+records.size());put(info.header.data()+20,map.size());
             put(info.header.data()+36,2);put(info.header.data()+40,1);put(info.header.data()+44,1);put(info.header.data()+60,records.size());
             Bytes index(info.header.begin(),info.header.end());rle_fixture::append(index,records);
-            auto mf=std::make_shared<galuchat::BufferReaderFactory>(map);
-            auto ix=std::make_shared<galuchat::BufferReaderFactory>(index);
-            geoputer::DiskIndexedMapReader actual(info,mf,ix);
+            auto mf=std::make_shared<traced_sd::File>(map);
+            auto ix=std::make_shared<traced_sd::File>(index);
+            test_storage::MapReader actual(info,*mf,*ix);
             std::vector<galuchat::RawRaster> layers;
             if(!invalid)for(const auto& bytes:images) {
                 galuchat::BufferReader source(bytes);galuchat::GaluchatImageDataChunk01Reader chunk(source);

@@ -12,6 +12,7 @@
 #include "../../TaskMessages.h"
 #include "StorageScreenResources.h"
 #include "StorageCodeImages.h"
+#include "StorageIndexLease.h"
 #include "StorageReplies.h"
 #include "../../utils/Task.h"
 
@@ -20,7 +21,7 @@ namespace geoputer {
 class StorageTask final : public Task<StorageRequest, 1>, private StorageObserver {
 public:
     StorageTask(Queue<AppNotification, 8>& notifications, Queue<ReturnMessage, 1>& results)
-        : notifications_(notifications), results_(results), place_lookup_(code_images_.point,selected_dataset_), log_writer_("/sd/logs", this), screen_resources_(code_images_.map,this) { place_lookup_.setObserver(this); }
+        : notifications_(notifications), results_(results), screen_resources_(code_images_.map.image(),this), place_lookup_(code_images_.point,selected_dataset_), log_writer_(config::LogDirectory, this) { place_lookup_.setObserver(this); place_lookup_.setFiles(&screen_resources_.work.files()); }
     // Runs in the App caller; touches only the shared RAM ring, never SD or task queues.
     LogError tryAppendLog(const LogCommand& command, LogSnapshot& snapshot);
     void setUsbMode(bool enabled) { usb_mode_ = enabled; } // Before starting the task.
@@ -67,10 +68,10 @@ private:
     bool export_started_ = false;
     uint32_t export_progress_at_ = 0;
     StorageCodeImages code_images_;
-    SelectedDataset selected_dataset_;
+    SelectedDataset selected_dataset_; // Storage owns it; outlives lookup and all borrowed file descriptions.
+    StorageScreenResources screen_resources_; // Owns FIL slots; outlives lookup file descriptions.
     PlaceLookup place_lookup_;
     LogWriter log_writer_;
-    StorageScreenResources screen_resources_;
     uint64_t read_barrier_session_=0;
     uint32_t read_barrier_=0, read_request_id_=0, statistics_progress_at_=0;
     uint32_t browse_release_generation_=0;

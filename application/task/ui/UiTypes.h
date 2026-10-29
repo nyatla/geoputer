@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <cstring>
 #include <new>
 #include <type_traits>
 #include "../gps/GpsTypes.h"
@@ -43,6 +44,7 @@ struct UiAction {
     BrowseAction browse_action;
     DatasetAction dataset_action;
     DatasetPurpose dataset_purpose;
+    uint8_t dataset_number=0;
     uint32_t browse_index, browse_revision;
     UsbAction usb_action;
     ExportFormat export_format;
@@ -68,6 +70,13 @@ struct UiData {
 
     // Only one page payload is retained. Readers never activate a different
     // member; an unused page reads as empty. Owners explicitly select on write.
+    void copyFrom(const UiData& other,bool keep_datasets) {
+        if(!keep_datasets || !hasDatasets()) {*this=other;return;}
+        revision=other.revision;map=other.map;boot=other.boot;
+        std::memcpy(place,other.place,sizeof(place));place_state=other.place_state;dataset=other.dataset;
+        place_fix=other.place_fix;place_region=other.place_region;gps=other.gps;settings=other.settings;
+        storage=other.storage;recording=other.recording;std::memcpy(message,other.message,sizeof(message));message_at_ms=other.message_at_ms;
+    }
     void clearPage() { page_kind_ = PageKind::None; }
     bool hasBrowse() const { return page_kind_ == PageKind::Browse; }
     bool hasDatasets() const { return page_kind_ == PageKind::Datasets; }

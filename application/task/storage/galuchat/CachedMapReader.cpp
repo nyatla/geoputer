@@ -10,7 +10,7 @@ bool CachedMapReader::contains(int x, int y) const {
     return stats_.valid && dx >= 0 && dy >= 0 && dx < side_ && dy < side_;
 }
 
-void CachedMapReader::rebuild(int x, int y) {
+void CachedMapReader::rebuild(int x, int y,BorrowedReadBuffer* work) {
     ++stats_.misses;
     stats_.bytes=size_t(side_)*side_*sizeof(uint32_t);
     stats_.last_rect_us = 0;
@@ -22,7 +22,7 @@ void CachedMapReader::rebuild(int x, int y) {
             galuchat::detail::subtractInt(y, side_ / 2, "cache south"), int(side_), int(side_)};
         {
             ElapsedTime elapsed(stats_.last_rect_us);
-            reader_.readRect(target, pixels_.data());
+            reader_.readRect(target, pixels_.data(),work);
         }
         stats_.bounds = target;
         stats_.valid = true;
@@ -35,11 +35,11 @@ void CachedMapReader::rebuild(int x, int y) {
     }
 }
 
-uint32_t CachedMapReader::readWgsPoint(double longitude, double latitude) {
+uint32_t CachedMapReader::readWgsPoint(double longitude, double latitude,BorrowedReadBuffer* work) {
     const int x = galuchat::detail::roundedInt(longitude * reader_.unitInvX(), "cache longitude");
     const int y = galuchat::detail::roundedInt(latitude * reader_.unitInvY(), "cache latitude");
     if (contains(x, y)) ++stats_.hits;
-    else rebuild(x, y);
+    else rebuild(x, y,work);
     const size_t offset = static_cast<size_t>(y - stats_.bounds.y) * side_ + (x - stats_.bounds.x);
     return pixels_[offset];
 }

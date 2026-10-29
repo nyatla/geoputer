@@ -46,8 +46,10 @@ int main(int argc,char** argv) {
         namespace fs=std::filesystem;fs::path dir=argv[1];fs::create_directories(dir);fs::copy_file(argv[2],dir/"map.glc");fs::copy_file(argv[3],dir/"names.giswordbook");
         test_index::generate(dir.string(),"map.glc","names.giswordbook");
         FileIoTiming map_io,index_io;
-        const auto info=DatasetIndex{}.loadMap((dir/"_mapindex.dat").string(),(dir/"map.glc").string());
-        DiskIndexedMapReader reader(info,std::make_shared<ObservedFileReaderFactory>((dir/"map.glc").string(),nullptr,&map_io,FileReadOptions{16384,4096}),std::make_shared<ObservedFileReaderFactory>((dir/"_mapindex.dat").string(),nullptr,&index_io,FileReadOptions{4096,0}));
+        const auto info=test_storage::Index{}.loadMap((dir/"_mapindex.dat").string(),(dir/"map.glc").string());
+        const auto mp=(dir/"map.glc").string(),ip=(dir/"_mapindex.dat").string();ReadFileSlot slot;
+        FileReadSource map_source(mp,nullptr,&map_io,{4096,4096},0,&slot),index_source(ip,nullptr,&index_io,{4096,0},0,&slot);
+        test_storage::MapReader reader(info,map_source,index_source);
         for(unsigned scale:{1u,2u,4u}) {
         const auto p=scalePlan(35.681641,140.027194,reader.unitInvX(),reader.unitInvY(),scale);
         std::vector<uint32_t> full(size_t(p.source.width)*p.source.height);reader.readRect({p.source.x,p.source.y,p.source.width,p.source.height},full.data());

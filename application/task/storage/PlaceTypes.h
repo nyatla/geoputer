@@ -6,6 +6,7 @@
 #include "../../Config.h"
 #include "../gps/GpsTypes.h"
 #include "ReadWorkspace.h"
+#include "galuchat/WordBookWorkspace.h"
 
 namespace geoputer {
 
@@ -53,16 +54,17 @@ struct PlaceResult {
     PlaceRequest request;
     PlaceState state;
     int64_t region_code;
-    char lines[2][64];  // Final UTF-8 display rows, bounded by pixel width.
+    char lines[2][config::PlaceResultLineBytes]; // Direct output, still clipped to display width.
     char detail[80];   // Diagnostic copy, never a pointer into the SDK.
     DatasetInfo dataset;
 };
 
-// Active for one UI -> Storage -> App search. The reader array is left
-// untouched; only the result is initialized. UI ends this lifetime on return.
+// The reply is first; only it is initialized. Scratch lives after the reply,
+// and is returned with the same UI loan after App consumes the completion.
 struct PlaceReadWorkspace {
-    ReaderWorkspaceBytes reader;
     PlaceResult result{};
+    ReaderWorkspaceBytes reader;
+    WordBookWorkspace wordbook;
 };
 inline bool validPlaceMemory(const PlaceRequest& request) {
     return request.token && map::validBuffer(request.buffer) && request.work_bytes==sizeof(ReaderWorkspaceBytes) &&
@@ -80,7 +82,11 @@ inline PlaceResult* placeResultMemory(const PlaceRequest& request) {
 inline ReaderWorkspaceBytes& placeReaderMemory(const PlaceRequest& request) {
     return BorrowedLayout<PlaceReadWorkspace>::get(request.buffer.data,request.buffer.capacity)->reader;
 }
-static_assert(offsetof(PlaceReadWorkspace,result)>=sizeof(ReaderWorkspaceBytes),"Reader scratch must not overlap the place result");
+inline WordBookWorkspace& placeWordBookMemory(const PlaceRequest& request) {
+    return BorrowedLayout<PlaceReadWorkspace>::get(request.buffer.data,request.buffer.capacity)->wordbook;
+}
+static_assert(offsetof(PlaceReadWorkspace,result)==0,"Reply must start at the UI loan address");
+static_assert(offsetof(PlaceReadWorkspace,reader)>=sizeof(PlaceResult),"Scratch follows the reply");
 static_assert(sizeof(PlaceReadWorkspace)<=map::BoundaryBytes,"Place scratch and result must fit the UI back image");
 inline bool samePlaceRequest(const PlaceRequest& a,const PlaceRequest& b) {
     return a.token==b.token && a.screen_generation==b.screen_generation && a.sample_seq==b.sample_seq &&

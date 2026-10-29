@@ -15,16 +15,7 @@ using namespace index_format;
 void check(bool value) {
     if (!value) throw std::runtime_error("Map index changed or invalid; revalidate dataset");
 }
-// Generic factories retain SDK ownership semantics. File-backed map rendering
-// uses a scoped Reader instead, without changing the SDK ReaderFactory API.
-struct SourceRef {
-    const galuchat::ReaderFactory* factory;
-    const ObservedFileReaderFactory* file;
-    template<class Consumer>void withRange(size_t offset,size_t length,Consumer&& consume)const {
-        if(file)file->withRange(offset,length,std::forward<Consumer>(consume));
-        else {auto reader=factory->createRange(offset,length);consume(*reader);}
-    }
-};
+using SourceRef=ScopedReaderSource;
 struct Destination {
     int width, height, dx, dy, pitch;
     uint32_t* pixels;
@@ -237,18 +228,18 @@ void readRectangle(const DatasetMapIndex& info, SourceRef map,
 
 uint32_t DiskIndexedMapReader::value(size_t offset) const { return index_format::get(info_.header.data() + offset); }
 
-void DiskIndexedMapReader::readRect(const galuchat::Rect& target, uint32_t* pixels) const {
+void DiskIndexedMapReader::readRect(const galuchat::Rect& target, uint32_t* pixels, BorrowedReadBuffer* work) const {
     if (target.width <= 0 || target.height <= 0 || !pixels ||
         uint64_t(target.width) * target.height > SIZE_MAX / sizeof(uint32_t))
         throw std::invalid_argument("invalid map rectangle");
     std::fill_n(pixels, size_t(target.width) * target.height, 0);
-    readRectangle(info_, {map_.get(),file_map_}, {index_.get(),file_index_}, target, [&](int width, int height, int dx, int dy) {
+    readRectangle(info_, map_.borrow(work), index_.borrow(work), target, [&](int width, int height, int dx, int dy) {
         return Destination{width, height, dx, dy, target.width, pixels};
     });
 }
 
-void DiskIndexedMapReader::readRectDecimated(const galuchat::Rect& target, unsigned scale, uint32_t* pixels) const {
-    if (scale == 1) { readRect(target, pixels); return; }
+void DiskIndexedMapReader::readRectDecimated(const galuchat::Rect& target, unsigned scale, uint32_t* pixels, BorrowedReadBuffer* work) const {
+    if (scale == 1) { readRect(target, pixels, work); return; }
     if ((scale != 2 && scale != 4) || target.width <= 0 || target.height <= 0 || !pixels)
         throw std::invalid_argument("invalid decimated map rectangle");
     const int width = 1 + (target.width - 1) / int(scale);
@@ -256,7 +247,7 @@ void DiskIndexedMapReader::readRectDecimated(const galuchat::Rect& target, unsig
     if (uint64_t(width) * height > SIZE_MAX / sizeof(uint32_t))
         throw std::invalid_argument("decimated map rectangle too large");
     std::fill_n(pixels, size_t(width) * height, 0);
-    readRectangle(info_, {map_.get(),file_map_}, {index_.get(),file_index_}, target, [&](int w, int h, int dx, int dy) {
+    readRectangle(info_, map_.borrow(work), index_.borrow(work), target, [&](int w, int h, int dx, int dy) {
         return DecimatedDestination{w, h, dx, dy, width, scale, pixels};
     });
 }

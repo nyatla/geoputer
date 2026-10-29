@@ -1,0 +1,37 @@
+{
+  "ff.c": {
+    "url": "https://raw.githubusercontent.com/espressif/esp-idf/v4.4.7/components/fatfs/src/ff.c",
+    "sha256": "a1d3a33542c84e6ca7568960ed1e6dee50d3c5e017fe361cfb0946239d0b5e57",
+    "bytes": 228317
+  },
+  "ff.h": {
+    "url": "https://raw.githubusercontent.com/espressif/esp-idf/v4.4.7/components/fatfs/src/ff.h",
+    "sha256": "8bbebbbbfcfaa19f2998702364e65e4c96ec542a67682ca92b9ef6f7ed441cab",
+    "bytes": 15201
+  },
+  "ffconf.h": {
+    "url": "https://raw.githubusercontent.com/espressif/esp-idf/v4.4.7/components/fatfs/src/ffconf.h",
+    "sha256": "27baba4e03aa58ff13fcdb2c053c7d52ae823f76820dd5d332a19b353ab23fbd",
+    "bytes": 12843
+  },
+  "diskio.h": {
+    "url": "https://raw.githubusercontent.com/espressif/esp-idf/v4.4.7/components/fatfs/src/diskio.h",
+    "sha256": "996a01f5c00c30e9744a9733eaabec501e73cd497d7e2e64f314ab52cb2d4c39",
+    "bytes": 2616
+  },
+  "ffunicode.c": {
+    "url": "https://raw.githubusercontent.com/espressif/esp-idf/v4.4.7/components/fatfs/src/ffunicode.c",
+    "sha256": "061fccd0f7c230df9fe7543408a149777e0c6091492ce4ac28fabd8cfdc5ea70",
+    "bytes": 1959443
+  },
+  "vfs_fat.c": {
+    "url": "https://raw.githubusercontent.com/espressif/esp-idf/v4.4.7/components/fatfs/vfs/vfs_fat.c",
+    "sha256": "20f427f4e0b8dfb1c17911b2c00cb3fc05089e5491b15128f32c38c4450e778c",
+    "bytes": 32532
+  },
+  "esp_vfs_fat.h": {
+    "url": "https://raw.githubusercontent.com/espressif/esp-idf/v4.4.7/components/fatfs/vfs/esp_vfs_fat.h",
+    "sha256": "54c916aecebc04e293f46b10869a3150fee4922221aa54e503df2fe6251f97ad",
+    "bytes": 13727
+  }
+}

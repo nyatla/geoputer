@@ -1,14 +1,11 @@
 #pragma once
 #include <algorithm>
-#include <functional>
 #include <cstdio>
 #include <limits>
-#include <memory>
 #include <stdexcept>
 #include <string>
-#include <vector>
 #ifdef ARDUINO_ARCH_ESP32
-#include <ff.h>
+#include "../StorageFs.h"
 #else
 #include <sys/stat.h>
 #endif
@@ -29,12 +26,12 @@ struct FileReadOptions {
     }
 };
 
-// SDK-compatible ReaderFactory. ESP32 accesses the already mounted FatFs volume
-// directly; host tests retain stdio. Observe buffered operations, not each byte.
+// ESP32 accesses the already mounted FatFs volume directly; host tests retain
+// stdio. Observe buffered operations, not each byte.
 class ObservedFileReader final : public galuchat::ByteReader {
 public:
-    ObservedFileReader(const std::string& path, size_t source_size, size_t offset, StorageObserver* observer,
-                       FileIoTiming* timing = nullptr, FileReadOptions options = {}, uint8_t drive = 0, BorrowedReadBuffer* borrowed = nullptr, ReadFileSlot* file_slot = nullptr,NativePathBuffer native_path={})
+    ObservedFileReader(FileReadPath path, size_t source_size, size_t offset, StorageObserver* observer,
+                       FileIoTiming* timing = nullptr, FileReadOptions options = {}, uint8_t drive = 0, BorrowedReadBuffer* borrowed = nullptr, ReadFileSlot* file_slot = nullptr)
         : observer_(observer), timing_(diagnosticTiming(timing)), file_(drive,file_slot), origin_(offset),
           read_through_skip_bytes_(options.read_through_skip_bytes) {
         options.validate();
@@ -44,9 +41,9 @@ public:
         {
             FileIoTime elapsed(timing_, &FileIoTiming::open_us);
             if (timing_) ++timing_->opens;
-            opened_ = file_.openRead(path,native_path);
+            opened_ = file_.openRead(path);
         }
-        if (!opened_) throw std::runtime_error("cannot open: " + path);
+        if (!opened_) throw std::runtime_error("cannot open: " + std::string(path.resolve().view()));
         bool sought;
         {
             FileIoTime elapsed(timing_, &FileIoTiming::seek_us);
@@ -57,7 +54,7 @@ public:
             FileIoTime elapsed(timing_, &FileIoTiming::close_us);
             if (timing_) ++timing_->closes;
             closeFile();
-            throw std::runtime_error("cannot seek: " + path);
+            throw std::runtime_error("cannot seek: " + std::string(path.resolve().view()));
         }
         length_ = source_size - offset;
     }
@@ -136,50 +133,25 @@ private:
     size_t origin_ = 0, length_ = 0, pos_ = 0, buffer_pos_ = 0, buffer_end_ = 0;
     const size_t read_through_skip_bytes_;
 };
-class ObservedFileReaderFactory final : public galuchat::ReaderFactory {
+// Storage-owned file description. It owns no path, FIL, read buffer or Reader.
+// The path and native slot must outlive every scoped read using this description.
+class FileReadSource {
 public:
-    ObservedFileReaderFactory(std::string path, StorageObserver* observer, FileIoTiming* timing = nullptr,
-                              FileReadOptions options = {}, uint8_t drive = 0, BorrowedReadBuffer* borrowed = nullptr, ReadFileSlot* file_slot = nullptr,NativePathBuffer native_path={})
-        : path_(std::move(path)), observer_(observer), timing_(diagnosticTiming(timing)), options_(options), drive_(drive), borrowed_(borrowed), file_slot_(file_slot),native_path_(native_path) {
-        inspectSource();
-    }
-    // Borrow only from an owner that outlives this Factory and every Reader.
-    ObservedFileReaderFactory(std::reference_wrapper<const std::string> path,StorageObserver* observer,FileIoTiming* timing=nullptr,
-                              FileReadOptions options={},uint8_t drive=0,BorrowedReadBuffer* borrowed=nullptr,ReadFileSlot* file_slot=nullptr,NativePathBuffer native_path={})
-        :borrowed_path_(&path.get()),observer_(observer),timing_(diagnosticTiming(timing)),options_(options),drive_(drive),borrowed_(borrowed),file_slot_(file_slot),native_path_(native_path) {
-        inspectSource();
-    }
-    // Bind only while no Reader from this factory is alive. Callers restore
-    // nullptr before the borrowed workspace leaves scope.
-    void setBorrowedBuffer(BorrowedReadBuffer* buffer) {
-        assert(!borrowed_ || !borrowed_->inUse());borrowed_=buffer;
-    }
-    // Storage task only. Existing Readers retain their creation-time options.
-    void setReadOptions(FileReadOptions options) {
-        options.validate();
-        options_ = options;
-    }
-    std::unique_ptr<galuchat::ByteReader> create(size_t offset = 0) const override {
-        return std::make_unique<ObservedFileReader>(path(), size_, offset, observer_, timing_, options_, drive_, borrowed_, file_slot_,native_path_);
-    }
-    std::unique_ptr<galuchat::ByteReader> createRange(size_t offset, size_t length) const override {
-        if (offset > size_ || length > size_ - offset) throw std::runtime_error("invalid reader range");
-        if (!length) return std::make_unique<galuchat::BufferReader>(nullptr, 0);
-        auto options = options_;
-        options.buffer_bytes = std::min(options.buffer_bytes, length);
-        return std::make_unique<ObservedFileReader>(path(), offset + length, offset, observer_, timing_, options, drive_, borrowed_, file_slot_,native_path_);
-    }
-    // Scoped alternative for map reads. No owning pointer escapes this call.
+    FileReadSource(FileReadPath path,StorageObserver* observer,FileIoTiming* timing=nullptr,
+                   FileReadOptions options={},uint8_t drive=0,ReadFileSlot* file_slot=nullptr)
+        :path_(path),observer_(observer),timing_(diagnosticTiming(timing)),options_(options),
+         drive_(drive),file_slot_(file_slot) {inspectSource();}
+    FileReadSource(std::string&&,StorageObserver*,FileIoTiming* =nullptr,FileReadOptions ={},
+                   uint8_t =0,ReadFileSlot* =nullptr)=delete;
     template<class Consumer>
-    void withRange(size_t offset,size_t length,Consumer&& consume) const {
+    void withRange(size_t offset,size_t length,Consumer&& consume,BorrowedReadBuffer* work) const {
         if(offset>size_ || length>size_-offset)throw std::runtime_error("invalid reader range");
         if(!length) {galuchat::BufferReader empty(nullptr,0);consume(empty);return;}
         auto options=options_;options.buffer_bytes=std::min(options.buffer_bytes,length);
-        ObservedFileReader reader(path(),offset+length,offset,observer_,timing_,options,drive_,borrowed_,file_slot_,native_path_);
+        ObservedFileReader reader(path_,offset+length,offset,observer_,timing_,options,drive_,work,file_slot_);
         consume(reader);
     }
 private:
-    const std::string& path()const{return borrowed_path_?*borrowed_path_:path_;}
     void inspectSource() {
         options_.validate();
         SdAccessScope access(observer_);
@@ -189,11 +161,9 @@ private:
         {
             FileIoTime elapsed(timing_, &FileIoTiming::stat_us);
             if (timing_) ++timing_->stats;
-            stat_result = native_path_.supplied()
-                ?f_stat(fatFsPath(drive_,path(),native_path_),&status)
-                :f_stat(fatFsPath(drive_,path()).c_str(),&status);
+            stat_result=f_stat(fatFsPath(drive_,path_).c_str(),&status);
         }
-        if (stat_result != FR_OK || (status.fattrib & AM_DIR)) throw std::runtime_error("cannot stat: " + path());
+        if (stat_result != FR_OK || (status.fattrib & AM_DIR)) throw std::runtime_error("cannot stat: " + std::string(path_.resolve().view()));
         size_ = status.fsize;
 #else
         struct stat status{};
@@ -201,21 +171,19 @@ private:
         {
             FileIoTime elapsed(timing_, &FileIoTiming::stat_us);
             if (timing_) ++timing_->stats;
-            stat_result = stat(path().c_str(), &status);
+            stat_result = stat(path_.resolve().c_str(), &status);
         }
-        if (stat_result || status.st_size < 0) throw std::runtime_error("cannot stat: " + path());
+        if (stat_result || status.st_size < 0) throw std::runtime_error("cannot stat: " + std::string(path_.resolve().view()));
         size_ = static_cast<size_t>(status.st_size);
 #endif
     }
-    std::string path_;
-    const std::string* borrowed_path_=nullptr;
+    FileReadPath path_;
     StorageObserver* observer_;
     FileIoTiming* timing_;
-    size_t size_ = 0;
+    size_t size_=0;
     FileReadOptions options_;
     uint8_t drive_;
-    BorrowedReadBuffer* borrowed_;
     ReadFileSlot* file_slot_;
-    NativePathBuffer native_path_;
 };
-}  // namespace geoputer
+
+} // namespace geoputer

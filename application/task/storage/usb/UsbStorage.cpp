@@ -1,8 +1,8 @@
 #include "UsbStorage.h"
 #include "UsbBlockIo.h"
 #include "../../../BootMode.h"
-#include <sd_diskio.h>
-#include <ff.h>
+#include "../StorageCard.h"
+#include "../StorageFs.h"
 #include <diskio.h>
 #include <USB.h>
 #include <tusb.h>
@@ -23,7 +23,7 @@ bool UsbStorage::begin(SPIClass& spi) {
     msc_ = &registerInterface();
     msc_->vendorID("GeoPuter"); msc_->productID("SD Card"); msc_->productRevision("1.0");
     msc_->onRead(read); msc_->onWrite(write); msc_->onStartStop(startStop);
-    drive_ = sdcard_init(12, &spi, config::SdSpiHz);
+    drive_ = initStorageCard(12, &spi, config::SdSpiHz);
     if (drive_ == 0xff || disk_initialize(drive_) != 0 || !(sectors_ = sdcard_num_sectors(drive_))) {
         error_ = true; return false;
     }
@@ -45,7 +45,7 @@ bool UsbStorage::takeLocal() {
     tud_disconnect();
     vTaskDelay(pdMS_TO_TICKS(150));
     // Raw callbacks are now gated; only this Storage task can access FatFs.
-    mounted_=sdcard_mount(drive_,"/sd",config::SdMaxOpenFiles,false);
+    mounted_=mountStorageCard(drive_,"/sd",config::SdMaxOpenFiles,false);
     char volume[]={static_cast<char>('0'+drive_),':',0};
     FATFS* fs=nullptr;DWORD free=0;
     const bool ok=mounted_ && f_getfree(volume,&free,&fs)==FR_OK && fs && fs->fs_type==FS_FAT32;
@@ -60,13 +60,13 @@ bool UsbStorage::publish() {
     if(mounted_) {
         char volume[]={static_cast<char>('0'+drive_),':',0};
         ok=disk_ioctl(drive_,CTRL_SYNC,nullptr)==RES_OK && f_mount(nullptr,volume,0)==FR_OK;
-        if(ok) {ok=sdcard_unmount(drive_)==0;mounted_=false;}
+        if(ok) {ok=unmountStorageCard(drive_)==0;mounted_=false;}
     }
     // sdcard_unmount does not unregister the VFS. Releasing the raw driver
     // also releases that registration, so another export can mount /sd again.
     if(ok) {
-        if(drive_!=0xff)sdcard_uninit(drive_);
-        drive_=sdcard_init(12,spi_,config::SdSpiHz);
+        if(drive_!=0xff)releaseStorageCard(drive_);
+        drive_=initStorageCard(12,spi_,config::SdSpiHz);
         ok=drive_!=0xff && disk_initialize(drive_)==0 && disk_ioctl(drive_,CTRL_SYNC,nullptr)==RES_OK;
     }
     if(ok) {
@@ -126,7 +126,7 @@ bool UsbStorage::exitToLogger() {
     if (ok) {
         if (msc_) msc_->mediaPresent(false);
         ready_ = false;
-        if (drive_ != 0xff) { sdcard_uninit(drive_); drive_ = 0xff; }
+        if (drive_ != 0xff) { releaseStorageCard(drive_); drive_ = 0xff; }
     }
     if (!ok) stopping_ = false; // Preserve the current mode and allow retry.
     xSemaphoreGive(mutex_);

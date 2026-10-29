@@ -76,7 +76,8 @@ inline void completePlacePresentation(UiData& data, const PlaceResult& result) {
     if (datasetInactive(result.state)) {
         std::memset(data.place, 0, sizeof(data.place)); data.place_fix = {};data.place_region=0; data.place_state = result.state; return;
     }
-    std::memcpy(data.place, result.lines, sizeof(data.place));
+    for(unsigned row=0;row<2;++row)
+        std::memcpy(data.place[row],result.lines[row],sizeof(data.place[row]));
     for (auto& line : data.place) line[sizeof(line) - 1] = '\0';
     data.place_fix = result.request.fix;
     data.place_region=result.region_code>=0 && uint64_t(result.region_code)<=UINT32_MAX?map::RegionCode(result.region_code):0;

@@ -6,6 +6,7 @@
 #include "task/storage/dataset/DatasetMetadata.h"
 #include "task/storage/SettingsStore.h"
 #include "task/ui/UiModel.h"
+#include "task/storage/dataset/SelectedDataset.h"
 #include "task/ui/DatasetPresentation.h"
 using namespace geoputer;
 namespace {
@@ -19,25 +20,59 @@ struct Observer : StorageObserver {
     void sdEnd() override {check(depth>0,"SD access scopes balance");--depth;}
     void cacheState(RgCacheState,bool) override {}
 };
+// The test snapshot deliberately uses owning strings, outside the parser.
+struct MetadataSnapshot {
+    std::string map,wordbook,title,description,language;
+    DatasetLanguages languages;
+    PlaceDisplayFormat display;
+    DatasetError error;
+};
+MetadataSnapshot readMetadata(std::string_view directory,UiLanguage ui,const char* language="",StorageObserver* observer=nullptr) {
+    DatasetMetadata fixed;MetadataSnapshot snapshot;char title[256]{},description[256]{};
+    readDatasetMetadataInto(directory,ui,language,fixed,observer,{title,sizeof(title),description,sizeof(description)},0,&snapshot.languages);
+    snapshot.map=fixed.map;snapshot.wordbook=fixed.wordbook;snapshot.language=fixed.language;
+    snapshot.title=title;snapshot.description=description;snapshot.display=fixed.display;snapshot.error=fixed.error;
+    return snapshot;
+}
 void metadata() {
     char pattern[]="/tmp/geoputer-metadata-XXXXXX";
     const auto directory=::mkdtemp(pattern);check(directory,"temp directory");
     struct Cleanup {std::filesystem::path path;~Cleanup(){std::filesystem::remove_all(path);}} cleanup{directory};
     auto write=[&](const std::string& text){std::ofstream file(std::string(directory)+"/dataset.ini",std::ios::binary);file<<text;};
-    auto read=[&](const std::string& text){write(text);return readDatasetMetadata(directory,UiLanguage::Japanese);};
-    check(readDatasetMetadata(directory,UiLanguage::Japanese).error==DatasetError::Missing,"missing metadata detected without file guessing");
+    auto read=[&](const std::string& text){write(text);return readMetadata(directory,UiLanguage::Japanese);};
+    check(readMetadata(directory,UiLanguage::Japanese).error==DatasetError::Missing,"missing metadata detected without file guessing");
+    const std::string map127=std::string(123,'m')+".glc",book127=std::string(115,'w')+".giswordbook";
+    auto named=[&](const std::string& map,const std::string& book) {
+        return read("[dataset]\nversion=1\nmap="+map+"\ndefault_language=ja\n[ja]\ntitle=Test\nwordbook="+book+"\n");
+    };
+    check(named(map127,book127).error==DatasetError::None,"127-byte filenames accepted including extension");
+    check(named("x"+map127,book127).error==DatasetError::Metadata && named(map127,"x"+book127).error==DatasetError::Metadata,
+          "128-byte map/book filenames rejected without truncation");
+    const auto unicode127=std::string(120,'m')+"日.glc";
+    check(named(unicode127,book127).error==DatasetError::None && named("x"+unicode127,book127).error==DatasetError::Metadata,
+          "filename limit counts UTF-8 bytes without splitting characters");
+    check(read(common+ja+"[en]\ntitle=Test\nwordbook=x"+book127+"\n").error==DatasetError::Metadata,
+          "unselected language filenames obey the same capacity");
+    SelectedDataset session;session.number=1;
+    check(session.setNames(map127,book127) && !std::strcmp(session.map_name,map127.c_str()) && !std::strcmp(session.wordbook_name,book127.c_str()),
+          "Storage session owns two terminated fixed filenames");
+    check(!session.setNames("x"+map127,book127) && !std::strcmp(session.map_name,map127.c_str()),"rejected names leave the session unchanged");
+    check(session.file(DatasetFile::Map).resolve().view()=="/sd/dataset/01/"+map127 &&
+          session.file(DatasetFile::Index).resolve().view()=="/sd/dataset/01/_mapindex.dat","paths derive from integer ID and immutable root");
+    session.number=99;check(session.file(DatasetFile::Wordbook).resolve().view()=="/sd/dataset/99/"+book127,"last supported ID retains two digits");
+    session.clearPrepared();check(!session.map_name[0] && !session.wordbook_name[0] && session.number==99,"reset clears files while preserving selection ID");
     write(ja+common+en);
-    auto result=readDatasetMetadata(directory,UiLanguage::English,"ja");
+    auto result=readMetadata(directory,UiLanguage::English,"ja");
     check(result.error==DatasetError::None && result.title=="Japan" && result.language=="ja" && result.wordbook=="ja.giswordbook", "UI translation and Wordbook language are independent, regardless of section order");
     check(result.languages.size()==2,"language choices retained without expanding translations");
-    check(readDatasetMetadata(directory,UiLanguage::English,"fr").error==DatasetError::Missing,"a saved language must never silently fall back");
+    check(readMetadata(directory,UiLanguage::English,"fr").error==DatasetError::Missing,"a saved language must never silently fall back");
     result=read(common+ja);
     check(result.error==DatasetError::None && result.language=="ja", "empty language resolves dataset default");
-    check(readDatasetMetadata(directory,UiLanguage::English).title=="日本","missing UI translation falls back to dataset default");
+    check(readMetadata(directory,UiLanguage::English).title=="日本","missing UI translation falls back to dataset default");
     const std::string long_language(31,'a');
     write("[dataset]\nversion=1\nmap=area.glc\ndefault_language="+long_language+
           "\n["+long_language+"]\ntitle=Long language\nwordbook=names.giswordbook\n");
-    const auto long_metadata=readDatasetMetadata(directory,UiLanguage::English);
+    const auto long_metadata=readMetadata(directory,UiLanguage::English);
     check(long_metadata.error==DatasetError::None && long_metadata.title=="Long language" &&
           long_metadata.language==long_language, "display-language view retains a long fallback across all parsed lines");
     check(read("[dataset]\nversion=1\nmap=area.glc\ndefault_language=ja\n["+std::string(32,'a')+"]\ntitle=Invalid\nwordbook=bad.giswordbook\n"+ja).error==DatasetError::Metadata,
@@ -47,25 +82,47 @@ void metadata() {
     check(!result.display.specified, "omitted display formats retain the compatibility layout");
     write(common+ja+"display_line1=%0 %1%2%3\ndisplay_line2=%4%5\n"+en+
           "display_line1=%2, %0 %%\ndisplay_line2=\n");
-    result=readDatasetMetadata(directory,UiLanguage::English,"ja");
+    result=readMetadata(directory,UiLanguage::English,"ja");
     check(result.error==DatasetError::None && result.title=="Japan" && result.display.specified &&
-          result.display.lines[0]=="%0 %1%2%3" && result.display.lines[1]=="%4%5",
+          result.display.line(0)=="%0 %1%2%3" && result.display.line(1)=="%4%5",
           "format follows Wordbook language independently of the translated UI title");
-    result=readDatasetMetadata(directory,UiLanguage::Japanese,"en");
-    check(result.display.lines[0]=="%2, %0 %%" && result.display.lines[1].empty(), "selected language supplies its own format");
+    result=readMetadata(directory,UiLanguage::Japanese,"en");
+    check(result.display.line(0)=="%2, %0 %%" && result.display.line(1).empty(), "selected language supplies its own format");
     result=read(common+ja+"display_line2=%0\n");
-    check(result.error==DatasetError::None && result.display.specified && result.display.lines[0].empty() && result.display.lines[1]=="%0",
+    check(result.error==DatasetError::None && result.display.specified && result.display.line(0).empty() && result.display.line(1)=="%0",
           "an omitted row is empty when the other format is explicit");
     check(read(common+ja+"display_line1=\ndisplay_line2=\n").display.specified, "two explicit empty rows do not request the default layout");
+    static_assert(sizeof(PlaceDisplayFormat::lines[0])==128,"format includes its terminator");
+    const std::string format127=std::string(125,'x')+"%0";
+    result=read(common+ja+"display_line1="+format127+"\ndisplay_line2="+format127+"\n");
+    check(result.error==DatasetError::None && result.display.line(0)==format127 && result.display.line(1)==format127 &&
+          result.display.lines[0][127]=='\0' && result.display.lines[1][127]=='\0',"both 127-byte formats fit with separate terminators");
+    for(const char* key:{"display_line1=","display_line2="}) {
+        check(read(common+ja+key+"x"+format127+"\n").error==DatasetError::Metadata,"128-byte format rejected instead of truncated");
+        check(read(common+ja+en+key+"x"+format127+"\n").error==DatasetError::Metadata,"unselected language also obeys format capacity");
+    }
+    const std::string utf127=std::string(124,'x')+"日";
+    check(read(common+ja+"display_line1="+utf127+"\n").error==DatasetError::None &&
+          read(common+ja+"display_line1=x"+utf127+"\n").error==DatasetError::Metadata,"UTF-8 format limit counts bytes without truncation");
+    PlaceDisplayFormat fixed;
+    check(fixed.setLine(0,format127) && !fixed.setLine(0,"x"+format127) && fixed.line(0)==format127 &&
+          !fixed.setLine(2,"") && !fixed.setLine(1,std::string_view("a\0b",3)),"fixed output rejects invalid assignments without overwriting retained contents");
+    session.display=fixed;
+    session.clearPrepared();
+    check(session.display.line(0).empty() && session.display.line(1).empty() && !session.display.specified,
+          "reset removes prior fixed formats and explicit-layout flag");
+    check(session.setLanguage(long_language) && std::string_view(session.language)==long_language && session.language[31]=='\0' &&
+          !session.setLanguage(std::string(32,'a')) && std::string_view(session.language)==long_language,
+          "selected language is fixed, terminated and never silently truncated");
     check(read(common+ja+"display_line1=%A\n").error==DatasetError::Metadata, "unsupported placeholder rejected during dataset validation");
     check(read(common+ja+en+"display_line2=end%\n").error==DatasetError::Metadata, "malformed unselected language format also rejected");
     check(read(common+ja+"display_line1=%0\ndisplay_line1=%1\n").error==DatasetError::Metadata, "duplicate format key rejected");
     write(common+ja);
     Observer observer;
-    check(readDatasetMetadata(directory,UiLanguage::Japanese,"",&observer).error==DatasetError::None && observer.accesses && !observer.depth,"metadata observes file I/O and closes every access scope");
+    check(readMetadata(directory,UiLanguage::Japanese,"",&observer).error==DatasetError::None && observer.accesses && !observer.depth,"metadata observes file I/O and closes every access scope");
     check(read(common+ja+ja).error==DatasetError::Metadata,"duplicate section rejected");
     check(read(common+ja+"title=duplicate\n").error==DatasetError::Metadata,"duplicate known key rejected");
-    check(readDatasetMetadata(directory,UiLanguage::Japanese,"",&observer).error==DatasetError::Metadata && !observer.depth,"invalid metadata also closes SD access scopes");
+    check(readMetadata(directory,UiLanguage::Japanese,"",&observer).error==DatasetError::Metadata && !observer.depth,"invalid metadata also closes SD access scopes");
     check(read(common+"[ja]\ntitle=Name\n").error==DatasetError::Metadata,"missing Wordbook rejected");
     check(read("[dataset]\nversion=2\nmap=a.glc\ndefault_language=ja\n"+ja).error==DatasetError::Version,"unsupported version distinguished");
     check(read("[dataset]\nversion=1\nmap=../area.glc\ndefault_language=ja\n"+ja).error==DatasetError::Metadata,"directory traversal rejected");
@@ -76,7 +133,7 @@ void metadata() {
                 " \t\n wordbook = ja.giswordbook \t\n display_line1 = %0 %1 \t\n display_line2 = %2 \t\n" + en);
     check(result.error==DatasetError::None && result.title=="日本" && result.map=="area.glc" &&
           result.description==std::string(200,'x') && result.wordbook=="ja.giswordbook" &&
-          result.display.lines[0]=="%0 %1" && result.display.lines[1]=="%2",
+          result.display.line(0)=="%0 %1" && result.display.line(1)=="%2",
           "trimmed line views are copied before the shared buffer is reused or the parser returns");
     check(validDatasetLanguage(std::string_view("ja=ignored",2)) &&
           !validDatasetLanguage(std::string_view("ja\0en",5)),

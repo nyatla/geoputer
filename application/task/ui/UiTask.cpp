@@ -28,6 +28,12 @@ void UiTask::handle(const UiRequest& request, bool ready) {
             case MessageKind::UpdateUiContent:
                 result.status = model_.updateContent(request.payload.update);
                 break;
+            case MessageKind::BeginDatasetRead:
+                result.status=model_.beginDatasetRead(request.payload.dataset.request,result.map_buffer);break;
+            case MessageKind::CommitDatasetRead:result.status=model_.commitDatasetRead(request.payload.dataset);break;
+            case MessageKind::DiscardDatasetRead:result.status=model_.discardDatasetRead(request.payload.dataset);break;
+            case MessageKind::DatasetReadError:result.status=model_.datasetReadError(request.payload.dataset);break;
+            case MessageKind::UpdateDatasetProgress:result.status=model_.updateDatasetProgress(request.payload.dataset_progress);break;
             case MessageKind::BeginPlaceSearch:
                 result.status=model_.beginPlaceSearch(request.payload.place,result.map_buffer);break;
             case MessageKind::CommitPlaceSearch:

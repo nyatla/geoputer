@@ -5,6 +5,7 @@
 #include "ScreenNavigation.h"
 #include "GpsControls.h"
 #include "DatasetPresentation.h"
+#include "../storage/dataset/DatasetReadMemory.h"
 #include <cstring>
 #include <cmath>
 #include <algorithm>
@@ -29,6 +30,7 @@ OperationStatus UiModel::setScreen(const SetUiScreen& command) {
     }
     acknowledge(command.processed_action_id, command.action_result);
     if (screen_ == ScreenId::Boot || command.screen == ScreenId::Boot) last_input_ms_ = 0;
+    dataset_owned_=dataset_publishable_=false;
     screen_resources_.enter(screenGroup(command.screen));
     screen_ = command.screen;
     mode_ = command.mode;
@@ -53,6 +55,67 @@ OperationStatus UiModel::updateContent(const UpdateUiContent& command) {
     acknowledge(command.processed_action_id, command.action_result);
     redraw_ = true;
     return OperationStatus::Ok;
+}
+
+OperationStatus UiModel::beginDatasetRead(const DatasetRequest& request,map::BufferLease& buffer) {
+    if(!request.token || request.screen_generation!=generation_ || screen_!=ScreenId::Settings || mode_!=DisplayMode::View)
+        return OperationStatus::StaleContent;
+    if(request.number>99 || request.purpose>DatasetPurpose::Verify || request.action>DatasetAction::Clear ||
+       request.buffer.data || request.buffer.capacity || request.buffer.id)return OperationStatus::InvalidRequest;
+    if(dataset_borrow_.token || !screen_resources_.map.frame.beginWork(request.token,buffer))return OperationStatus::Unavailable;
+    dataset_borrow_=request;dataset_borrow_.buffer=buffer;
+    if(!validDatasetMemory(dataset_borrow_)) {
+        screen_resources_.map.frame.returnWork(request.token,buffer);dataset_borrow_={};return OperationStatus::Unavailable;
+    }
+    *beginDatasetMemory(dataset_borrow_)={};dataset_owned_=dataset_publishable_=true;
+    auto& view=data_.editDatasets();
+    const bool maintenance=request.action==DatasetAction::RebuildIndex || request.action==DatasetAction::VerifyIndex;
+    const bool listing=request.action==DatasetAction::Open || request.action==DatasetAction::Older || request.action==DatasetAction::Newer;
+    const bool detail=!maintenance && request.action!=DatasetAction::Clear && !listing;
+    if(detail && !view.detail)view.info={};
+    view.detail=detail;view.purpose=request.purpose;
+    if(maintenance)view.number=request.number;
+    view.loading=true;view.applying=datasetMutation(request.action);view.error=DatasetError::None;
+    if(view.applying){view.progress={};view.progress.verifying=request.action==DatasetAction::VerifyIndex;}
+    ++view.revision;redraw_=true;return OperationStatus::Ok;
+}
+OperationStatus UiModel::discardDatasetRead(const DatasetCompletion& completion) {
+    const auto& request=completion.request;
+    if(!dataset_borrow_.token || !sameDatasetRequest(dataset_borrow_,request))return OperationStatus::StaleContent;
+    // Storage has completed (or rejected submission). A changed screen still returns the loan.
+    endDatasetMemory(dataset_borrow_);
+    if(!screen_resources_.map.frame.returnWork(request.token,request.buffer))return OperationStatus::InvalidRequest;
+    dataset_borrow_={};dataset_publishable_=false;
+    if(request.screen_generation==generation_ && screen_==ScreenId::Settings && dataset_owned_) {
+        auto& view=data_.editDatasets();view.loading=view.applying=false;
+        if(completion.error!=DatasetError::None)view.error=completion.error;
+        redraw_=true;updateDialogState();
+    }
+    return OperationStatus::Ok;
+}
+OperationStatus UiModel::commitDatasetRead(const DatasetCompletion& completion) {
+    const auto& request=completion.request;
+    if(!dataset_borrow_.token || !sameDatasetRequest(dataset_borrow_,request))return OperationStatus::StaleContent;
+    if(!dataset_publishable_ || request.screen_generation!=generation_ || screen_!=ScreenId::Settings ||
+       !dataset_owned_)return OperationStatus::StaleContent;
+    const auto& incoming=*datasetResultMemory(dataset_borrow_);
+    if(incoming.revision!=request.token || incoming.error!=completion.error)return OperationStatus::InvalidRequest;
+    auto& view=data_.editDatasets();const auto revision=view.revision+1;
+    if(datasetMutation(request.action)) {
+        view.error=incoming.error;view.progress=incoming.progress;view.loading=view.applying=false;
+    } else view=incoming;
+    view.revision=revision;datasetChanged();updateDialogState();redraw_=true;
+    return discardDatasetRead(completion);
+}
+OperationStatus UiModel::datasetReadError(const DatasetCompletion& completion) {
+    if(completion.request.screen_generation!=generation_ || screen_!=ScreenId::Settings)return OperationStatus::StaleContent;
+    dataset_owned_=true;auto& view=data_.editDatasets();view.error=completion.error;view.loading=view.applying=false;
+    ++view.revision;redraw_=true;updateDialogState();return OperationStatus::Ok;
+}
+OperationStatus UiModel::updateDatasetProgress(const IndexProgress& progress) {
+    if(!dataset_borrow_.token || !dataset_publishable_ || progress.token!=dataset_borrow_.token ||
+       dataset_borrow_.screen_generation!=generation_ || !dataset_owned_)return OperationStatus::StaleContent;
+    auto& view=data_.editDatasets();view.progress=progress;redraw_=true;return OperationStatus::Ok;
 }
 
 OperationStatus UiModel::beginPlaceSearch(const PlaceRequest& request,map::BufferLease& buffer) {
@@ -141,7 +204,7 @@ void UiModel::copyData(const UiData& data) {
     // are no longer visible; reject late commits but retain any outstanding loan.
     if(data.dataset.generation!=data_.dataset.generation ||
        (showingMap(screen_,data_) && !showingMap(screen_,data)))screen_resources_.map.clear();
-    data_ = data;updateMapCursor();
+    data_.copyFrom(data,dataset_owned_ && screen_==ScreenId::Settings);updateMapCursor();
     // Activity is global; an older job snapshot cannot roll it back.
     if (newerRevision(previous_sd.revision, data_.storage.sd.revision)) data_.storage.sd = previous_sd;
     if (newerRevision(previous_rg.revision, data_.storage.rg.revision)) data_.storage.rg = previous_rg;
@@ -174,9 +237,14 @@ void UiModel::copyData(const UiData& data) {
         selection_=data_.browse().selected;
         dialog_.close(); // A refreshed list invalidates the previously shown target.
     }
+    if(old_dataset_revision!=data_.datasets().revision && !data_.datasets().loading)datasetChanged();
+    updateDialogState();
+    data_.message[sizeof(data_.message) - 1] = '\0';
+}
+
+void UiModel::datasetChanged() {
     if (screen_ == ScreenId::Settings &&
-        (screen_resources_.settings.page == SettingsPage::DatasetList || screen_resources_.settings.page == SettingsPage::DatasetDetail) &&
-        old_dataset_revision != data_.datasets().revision && !data_.datasets().loading) {
+        (screen_resources_.settings.page == SettingsPage::DatasetList || screen_resources_.settings.page == SettingsPage::DatasetDetail)) {
         if (data_.datasets().detail) {
             if (screen_resources_.settings.page != SettingsPage::DatasetDetail) { selection_ = 0; screen_resources_.settings.editing = false; }
             screen_resources_.settings.page = SettingsPage::DatasetDetail;
@@ -187,8 +255,6 @@ void UiModel::copyData(const UiData& data) {
             if (data_.datasets().count) screen_resources_.settings.dataset.list_start = data_.datasets().rows[0].number;
         }
     }
-    updateDialogState();
-    data_.message[sizeof(data_.message) - 1] = '\0';
 }
 
 bool UiModel::canDeleteLog() const {
@@ -464,6 +530,7 @@ void UiModel::settingsKey(UiKey key) {
         const auto& view = data_.datasets();
         if (view.applying) return;
         if (key == UiKey::Escape) {
+            if(dataset_borrow_.token)dataset_publishable_=false;
             if (screen_resources_.settings.editing) {
                 screen_resources_.settings.editing = false; datasetAction(DatasetAction::CancelLanguage);
                 std::strcpy(action_.settings.wordbook_language,screen_resources_.settings.dataset.edit_original);
@@ -697,6 +764,23 @@ void UiModel::acceptDialog(DialogKind kind) {
 void UiModel::datasetAction(DatasetAction kind,uint32_t index) {
     action(ActionKind::Dataset);action_.dataset_action=kind;action_.browse_index=index;
     action_.dataset_purpose=screen_resources_.settings.dataset.purpose;action_.browse_revision=data_.datasets().revision;
+    const auto& view=data_.datasets();
+    switch(kind) {
+        case DatasetAction::Open:action_.dataset_number=static_cast<uint8_t>(index);break;
+        case DatasetAction::Older:case DatasetAction::Newer:
+            if(view.count)action_.dataset_number=view.rows[kind==DatasetAction::Older?0:view.count-1].number;
+            break;
+        case DatasetAction::Detail:case DatasetAction::RebuildIndex:case DatasetAction::VerifyIndex:
+            if(index<view.count)action_.dataset_number=view.rows[index].number;
+            break;
+        case DatasetAction::Clear:break;
+        default:action_.dataset_number=view.number;break;
+    }
+    if(kind==DatasetAction::Language || kind==DatasetAction::Apply)
+        std::snprintf(action_.settings.wordbook_language,sizeof(action_.settings.wordbook_language),"%s",view.info.language);
+    else if(kind==DatasetAction::Detail && action_.dataset_number==data_.settings.dataset)
+        std::memcpy(action_.settings.wordbook_language,data_.settings.wordbook_language,sizeof(action_.settings.wordbook_language));
+    if(dataset_borrow_.token)dataset_publishable_=false;
 }
 
 void UiModel::browseAction(BrowseAction kind,uint32_t index) {

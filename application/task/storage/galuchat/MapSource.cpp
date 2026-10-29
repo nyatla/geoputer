@@ -8,17 +8,17 @@
 
 namespace geoputer {
 MapSourceResult readBoundaryMap(const SelectedDataset& selected,
-                                const map::Request& request,uint8_t drive,StorageObserver* observer,MapSourceResult reusable,BorrowedReadBuffer* work_buffer,ReadFileSlot* file_slot,NativePathBuffer native_path) {
+                                const map::Request& request,uint8_t drive,StorageObserver* observer,MapSourceResult reusable,BorrowedReadBuffer* work_buffer,ReadFileSlot* file_slot,std::string_view root) {
     MapSourceResult result=std::move(reusable);result.invalidate(request);
     try {
         if(!selected.ready()) {result.info.error=map::Error::NoDataset;return result;}
         if(request.dataset_generation!=selected.info.generation) {result.info.error=map::Error::Stale;return result;}
-        ObservedFileReaderFactory index_factory(std::cref(selected.index_path),observer,nullptr,
-            FileReadOptions{config::IndexReadBufferBytes,0},drive,work_buffer,file_slot,native_path);
+        FileReadSource index_source(selected.file(DatasetFile::Index,root),observer,nullptr,
+            FileReadOptions{config::IndexReadBufferBytes,0},drive,file_slot);
         {
-            ObservedFileReaderFactory map_factory(std::cref(selected.map_path),observer,nullptr,
-                FileReadOptions{config::MapRectReadBufferBytes,config::FileReadThroughSkipBytes},drive,work_buffer,file_slot,native_path);
-            DiskIndexedMapReader reader(selected.map_index,map_factory,index_factory);
+            FileReadSource map_source(selected.file(DatasetFile::Map,root),observer,nullptr,
+                FileReadOptions{config::MapRectReadBufferBytes,config::FileReadThroughSkipBytes},drive,file_slot);
+            DiskIndexedMapReader reader(selected.map_index,map_source,index_source);
             map::DecimatedViewport viewport;
             result.info.error=map::planDecimatedViewport(request.latitude,request.longitude,reader.unitInvX(),reader.unitInvY(),
                 config::MapViewCodeMaxBytes,request.scale,viewport);
@@ -28,7 +28,7 @@ MapSourceResult readBoundaryMap(const SelectedDataset& selected,
             result.reserve(size_t(bounds.width)*bounds.height);
             reportMapHeap("source-fixed",request.token,result.view().count*sizeof(map::RegionCode));
             const auto& input=viewport.input;
-            reader.readRectDecimated({input.x,input.y,input.width,input.height},request.scale,result.pixels);
+            reader.readRectDecimated({input.x,input.y,input.width,input.height},request.scale,result.pixels,work_buffer);
             reportMapHeap("source-read",request.token,result.view().count*sizeof(map::RegionCode));
         }
         reportMapHeap("map-reader-closed",request.token,result.view().count*sizeof(map::RegionCode));

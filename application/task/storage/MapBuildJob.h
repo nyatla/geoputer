@@ -12,6 +12,7 @@ namespace geoputer {
 // The same bytes serve index and GLC Readers in turn, then the boundary image.
 class MapBuildJob {
 public:
+    explicit MapBuildJob(ReadFileSlot& file):file_(file) {}
     ~MapBuildJob() {assert(!file_.inUse() && (!read_buffer_ || !read_buffer_->inUse()));finishReadMemory();}
     bool start(const map::Request& request,map::MapSession& session) {
         if(occupied() || file_.inUse() || !request.token || !map::validBuffer(request.buffer) || !session.pixels || !session.capacity)return false;
@@ -31,7 +32,6 @@ public:
     }
     BorrowedReadBuffer* readBuffer() {return reading()?&*read_buffer_:nullptr;}
     ReadFileSlot* readFile() {return reading()?&file_:nullptr;}
-    NativePathBuffer pathBuffer()const {return reading() && workspace_?workspace_->nativePath():NativePathBuffer{};}
     bool occupied() const {return phase_!=Phase::Idle;}
     bool reading() const {return phase_==Phase::Reading;}
     bool complete() const {return phase_==Phase::Complete;}
@@ -82,8 +82,8 @@ private:
         std::fill_n(image_.data(),image_.bytes(),0);return true;
     }
     enum class Phase {Idle,Reading,Rendering,Complete};
-    // This FIL occupies the same fixed StorageWorkArea bytes as LogReader.
-    ReadFileSlot file_;
+    // The Storage owner keeps the native slot outside this job.
+    ReadFileSlot& file_;
     Phase phase_=Phase::Idle;
     map::FrameInfo info_{};
     map::MapSession* session_=nullptr;

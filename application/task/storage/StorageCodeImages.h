@@ -1,15 +1,15 @@
 #pragma once
 #include "galuchat/CachedMapReader.h"
-#include "../../map/MapSession.h"
+#include "StorageMapMemory.h"
 namespace geoputer {
 // Lifetime of StorageTask (the global Application). No array lives on a task
-// stack, and no reader/session owns or frees either array.
+// stack. A scoped lease controls the inner map/index union lifetime.
 struct StorageCodeImages {
     CodeCacheBuffer point{};
-    map::CodeImageBuffer map{};
+    StorageMapMemory map;
     StorageCodeImages()=default;
     StorageCodeImages(const StorageCodeImages&)=delete;
     StorageCodeImages& operator=(const StorageCodeImages&)=delete;
 };
-static_assert(sizeof(StorageCodeImages)==sizeof(CodeCacheBuffer)+config::MapViewCodeMaxBytes,"Two independent static code images");
+static_assert(sizeof(StorageCodeImages)==sizeof(CodeCacheBuffer)+sizeof(StorageMapMemory),"Point cache plus exclusive map/index reservation");
 } // namespace geoputer

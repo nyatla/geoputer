@@ -6,107 +6,101 @@ namespace geoputer {
 bool Application::datasetChangeReady() const {
     return datasetLogStopped(data_.recording,data_.storage.log) && !log_pending_ && !log_control_.action_id && !log_accepting_;
 }
-bool Application::requestDataset(DatasetRequest request) {
-    const bool applying=request.action==DatasetAction::Clear || request.action==DatasetAction::Apply || request.action==DatasetAction::RebuildIndex || request.action==DatasetAction::VerifyIndex;
-    // A new read/cancel may queue behind our current read. Its token supersedes
-    // the old reply; the existing sync wait continues to drain notifications.
-    if(dataset_applying_ || storage_operation_id_ || (applying && dataset_waiting_) ||
-       (data_.storage.busy && !dataset_waiting_)) {
-        message("STORAGE BUSY");return false;
-    }
-    auto& view=data_.editDatasets();
-    if(applying && !datasetChangeReady()) {
-        view.error=DatasetError::NotStopped;
-        ++view.revision; ++data_.revision;ui_data_dirty_=true;
-        message("STOP LOGGER FIRST");return false;
-    }
-    const bool maintenance=request.action==DatasetAction::RebuildIndex || request.action==DatasetAction::VerifyIndex;
-    const bool detail=!maintenance && request.action!=DatasetAction::Clear && request.action!=DatasetAction::Open && request.action!=DatasetAction::Older && request.action!=DatasetAction::Newer;
-    if(detail && !view.detail) view.info={};
-    view.detail=detail;view.purpose=request.purpose;
-    if(maintenance)view.number=request.number;
-    if(++dataset_token_==0) ++dataset_token_;
-    request.token=dataset_token_;dataset_waiting_=request.token;
-    dataset_applying_=applying;dataset_operation_=request.action;
-    if(applying) {view.progress={};view.progress.verifying=request.action==DatasetAction::VerifyIndex;}
-    view.loading=true;view.applying=applying;view.error=DatasetError::None;
-    ++view.revision;++data_.revision;ui_data_dirty_=true;
-    StorageRequest command{};command.kind=MessageKind::DatasetOperation;command.payload.dataset=request;
+bool Application::datasetUiCommand(MessageKind kind,const DatasetCompletion& completion,map::BufferLease* buffer,const IndexProgress* progress) {
+    UiRequest command{};command.kind=kind;
+    if(progress)command.payload.dataset_progress=*progress;else command.payload.dataset=completion;
     SyncReturn result{};
-    if(!callTask(TaskId::Storage,storage_.inbox(),command,result) || result.status!=OperationStatus::Ok) {
-        dataset_waiting_=0;dataset_applying_=false;
-        view.loading=view.applying=false;view.error=DatasetError::Busy;
-        ++view.revision;++data_.revision;ui_data_dirty_=true;return false;
-    }
-    applyStorage(result.storage);
+    if(!callUi(command,result) || result.status!=OperationStatus::Ok)return false;
+    if(buffer)*buffer=result.map_buffer;
     return true;
+}
+bool Application::requestDataset(DatasetRequest request) {
+    if(screen_!=ScreenId::Settings || request.purpose>DatasetPurpose::Verify || request.action>DatasetAction::Clear || request.number>99)return false;
+    if(dataset_applying_ || storage_operation_id_) {message("STORAGE BUSY");return false;}
+    request.screen_generation=generation_;request.token=0;request.buffer={};
+    if(datasetMutation(request.action) && !datasetChangeReady()) {
+        datasetUiCommand(MessageKind::DatasetReadError,{request,DatasetError::NotStopped});message("STOP LOGGER FIRST");return false;
+    }
+    // Only control information is queued. A newer read supersedes the old
+    // publication, but cannot revoke Storage's outstanding write loan.
+    dataset_next_=request;dataset_pending_=true;
+    if(dataset_borrow_.token)dataset_discard_=true;
+    else dataset_applying_=datasetMutation(request.action);
+    processDataset();return true;
 }
 bool Application::operateDataset(const UiAction& action) {
     DatasetRequest request{};request.action=action.dataset_action;request.purpose=action.dataset_purpose;
-    if(request.purpose>DatasetPurpose::Verify)return false;
-    const auto& view=data_.datasets();
-    switch(action.dataset_action) {
-        case DatasetAction::Open:
-            if(action.browse_index>99)return false;
-            request.number=action.browse_index;break;
-        case DatasetAction::Older:case DatasetAction::Newer:
-            if(view.detail || !view.count) return false;
-            request.number=view.rows[action.dataset_action==DatasetAction::Older?0:view.count-1].number;break;
-        case DatasetAction::Detail:
-            if(view.detail || view.purpose!=DatasetPurpose::Select || action.browse_index>=view.count ||
-               !view.rows[action.browse_index].number || view.rows[action.browse_index].error!=DatasetError::None) return false;
-            request.number=view.rows[action.browse_index].number;
-            if(request.number==data_.settings.dataset) std::snprintf(request.language,sizeof(request.language),"%s",data_.settings.wordbook_language);
-            break;
+    request.number=action.dataset_number;
+    if(request.purpose>DatasetPurpose::Verify || request.number>99)return false;
+    switch(request.action) {
+        case DatasetAction::Open:case DatasetAction::Older:case DatasetAction::Newer:break;
+        case DatasetAction::Detail:if(!request.number)return false;break;
         case DatasetAction::CancelLanguage:
-            if(!view.detail || !validDatasetLanguage(action.settings.wordbook_language)) return false;
-            request.action=DatasetAction::Detail;request.number=view.number;
-            std::strcpy(request.language,action.settings.wordbook_language);break;
-        case DatasetAction::Clear:
-            if(!action.confirmed || !data_.settings.dataset || view.detail || view.purpose!=DatasetPurpose::Select ||
-               view.revision!=action.browse_revision || !view.count || view.rows[0].number) return false;
-            return requestDataset(request);
-        case DatasetAction::RebuildIndex:case DatasetAction::VerifyIndex:
-            if(!action.confirmed || view.detail || view.revision!=action.browse_revision || action.browse_index>=view.count ||
-               view.purpose!=request.purpose || request.purpose!=(action.dataset_action==DatasetAction::RebuildIndex?DatasetPurpose::Rebuild:DatasetPurpose::Verify)) return false;
-            request.number=view.rows[action.browse_index].number;request.index_target=IndexTarget::All;
-            if(!request.number || request.number>99 || view.rows[action.browse_index].error!=DatasetError::None)return false;
-            return requestDataset(request);
-        case DatasetAction::Language:case DatasetAction::Apply:
-            if(!view.detail || !datasetRecoverable(view.error)) return false;
-            request.number=view.number;
-            std::snprintf(request.language,sizeof(request.language),"%s",view.info.language);
-            if(!request.language[0]) return false;
-            request.direction=action.browse_index?1:-1;
+            request.action=DatasetAction::Detail;
+            if(!request.number || !validDatasetLanguage(action.settings.wordbook_language))return false;
             break;
+        case DatasetAction::Clear:
+            if(!action.confirmed || !data_.settings.dataset || request.purpose!=DatasetPurpose::Select)return false;
+            break;
+        case DatasetAction::RebuildIndex:case DatasetAction::VerifyIndex:
+            if(!action.confirmed || !request.number || request.purpose!=(request.action==DatasetAction::RebuildIndex?DatasetPurpose::Rebuild:DatasetPurpose::Verify))return false;
+            break;
+        case DatasetAction::Language:case DatasetAction::Apply:
+            if(!request.number || !validDatasetLanguage(action.settings.wordbook_language))return false;
+            request.direction=action.browse_index?1:-1;break;
+        default:return false;
     }
+    std::memcpy(request.language,action.settings.wordbook_language,sizeof(request.language));
+    request.language[sizeof(request.language)-1]=0;
     return requestDataset(request);
 }
-void Application::completeDataset(const DatasetView& incoming) {
-    if(!dataset_waiting_ || incoming.revision!=dataset_waiting_) return;
-    dataset_waiting_=0;
-    // A catalog read may finish after a root shortcut opened Logs/USB files.
-    // It still releases its token, but cannot replace the newer page payload.
-    if (!data_.hasDatasets()) { dataset_applying_=false; return; }
-    auto& view=data_.editDatasets();
-    const bool applying=dataset_applying_;
-    if(applying && (dataset_operation_==DatasetAction::RebuildIndex || dataset_operation_==DatasetAction::VerifyIndex)) {
-        view.loading=view.applying=false;view.error=incoming.error;
-        view.progress=incoming.progress;dataset_applying_=false;
-        if(incoming.number && incoming.number==data_.settings.dataset) {
-            if(incoming.error==DatasetError::None)dataset_check_needed_=true;
-        }
-        ++view.revision;
-    } else if(applying) {
-        view.progress=incoming.progress;
-        view.loading=false;view.applying=false;view.error=incoming.error;
-        if(incoming.error==DatasetError::None) {dataset_applying_=false;dataset_check_needed_=true;refreshPlace();message("SETTINGS SAVED");}
-        else {dataset_applying_=false;message(incoming.error==DatasetError::NotStopped?"STOP LOGGER FIRST":"DATASET CHANGE FAILED");}
-        ++view.revision;
-    } else {
-        const auto revision=view.revision+1;
-        view=incoming;view.revision=revision;
+void Application::completeDataset(const DatasetCompletion& completion) {
+    if(!dataset_queued_ || !sameDatasetRequest(dataset_borrow_,completion.request))return;
+    // No UI synchronous call here: notifications are also drained inside a sync wait.
+    dataset_error_=completion.error;dataset_ready_=true;
+}
+void Application::processDataset() {
+    if(dataset_progress_dirty_) {
+        if(dataset_borrow_.token && dataset_borrow_.screen_generation==generation_ && screen_==ScreenId::Settings)
+            datasetUiCommand(MessageKind::UpdateDatasetProgress,{},nullptr,&dataset_progress_);
+        dataset_progress_dirty_=false;
     }
-    ++data_.revision;ui_data_dirty_=true;
+    if(dataset_borrow_.token && dataset_ready_) {
+        const DatasetCompletion completion{dataset_borrow_,dataset_error_};
+        bool published=false;
+        if(!dataset_discard_ && dataset_queued_ && dataset_borrow_.screen_generation==generation_ && screen_==ScreenId::Settings)
+            published=datasetUiCommand(MessageKind::CommitDatasetRead,completion);
+        if(!published && !datasetUiCommand(MessageKind::DiscardDatasetRead,completion)) {dataset_discard_=true;return;}
+        if(dataset_queued_ && datasetMutation(dataset_borrow_.action)) {
+            if(dataset_error_==DatasetError::None) {
+                if(dataset_borrow_.action==DatasetAction::Apply || dataset_borrow_.action==DatasetAction::Clear) {
+                    dataset_check_needed_=true;refreshPlace();message("SETTINGS SAVED");
+                } else if(dataset_borrow_.number==data_.settings.dataset)dataset_check_needed_=true;
+            } else message(dataset_error_==DatasetError::NotStopped?"STOP LOGGER FIRST":"DATASET CHANGE FAILED");
+        }
+        dataset_borrow_={};dataset_waiting_=0;dataset_ready_=dataset_queued_=dataset_discard_=false;
+        dataset_applying_=dataset_pending_ && datasetMutation(dataset_next_.action);
+    }
+    if(dataset_borrow_.token || !dataset_pending_)return;
+    if(screen_!=ScreenId::Settings || dataset_next_.screen_generation!=generation_) {dataset_pending_=dataset_applying_=false;return;}
+    if(mode_!=DisplayMode::View || data_.storage.busy || map_request_.token || place_borrow_.token || browse_waiting_)return;
+    DatasetRequest request=dataset_next_;
+    if(datasetMutation(request.action) && !datasetChangeReady()) {
+        dataset_pending_=dataset_applying_=false;datasetUiCommand(MessageKind::DatasetReadError,{request,DatasetError::NotStopped});return;
+    }
+    if(++dataset_token_==0)++dataset_token_;
+    request.token=dataset_token_;
+    if(!datasetUiCommand(MessageKind::BeginDatasetRead,{request,DatasetError::None},&request.buffer))return;
+    dataset_pending_=false;dataset_borrow_=request;dataset_waiting_=request.token;
+    dataset_applying_=datasetMutation(request.action);
+    dataset_ready_=dataset_discard_=false;dataset_queued_=true;dataset_error_=DatasetError::None;
+    StorageRequest command{};command.kind=MessageKind::DatasetOperation;command.payload.dataset=request;
+    SyncReturn result{};
+    if(!callTask(TaskId::Storage,storage_.inbox(),command,result) || result.status!=OperationStatus::Ok) {
+        // Rejected before writing: return the loan, then retry the same control request.
+        dataset_queued_=false;dataset_ready_=dataset_discard_=true;dataset_next_=request;
+        dataset_next_.buffer={};dataset_next_.token=0;dataset_pending_=true;return;
+    }
+    applyStorage(result.storage);
 }
 } // namespace geoputer

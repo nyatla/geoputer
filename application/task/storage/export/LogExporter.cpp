@@ -34,12 +34,14 @@ bool LogExporter::begin(const char* name, ExportFormat format) {
     buffered_=0;written_=0;started_=false;owns_partial_=false;target_.clear();partial_.clear();
     if(!validLogName(name) || !validExportFormat(format)) {fail(ExportError::InvalidName);return true;}
     std::strcpy(state_.name,name);
-    target_=root_+"/export/"+name+exportExtension(format);
-    partial_=root_+"/export/."+name+exportExtension(format)+".part";
+    if(!TemporaryPath::fits({root_,"/logs/",name}) ||
+       !TemporaryPath::fits({root_,"/export/.",name,exportExtension(format),".part"})) {fail(ExportError::InvalidName);return true;}
+    target_=TemporaryPath({root_,"/export/",name,exportExtension(format)}).view();
+    partial_=TemporaryPath({root_,"/export/.",name,exportExtension(format),".part"}).view();
     return true;
 }
 bool LogExporter::open() {
-    if(!input_.openRead(root_+"/logs/"+state_.name)) {fail(ExportError::Read);return false;}
+    if(!input_.openRead(TemporaryPath({root_,"/logs/",state_.name}).view())) {fail(ExportError::Read);return false;}
     uint64_t size=0;
     if(!input_.size(size) || size<512 || size>UINT32_MAX || !input_.read(read_buffer_,512)) {
         fail(ExportError::Header);return false;
@@ -49,7 +51,7 @@ bool LogExporter::open() {
     if((size-512)%32) {fail(ExportError::Tail);return false;}
     state_.total=(size-512)/32;
     if(!state_.total) {fail(ExportError::Empty);return false;}
-    const auto directory=root_+"/export";
+    const auto directory=TemporaryPath({root_,"/export"});
     struct stat info{};
     if(::stat(directory.c_str(),&info)) {
         if(errno!=ENOENT || ::mkdir(directory.c_str(),0775)) {fail(ExportError::Directory);return false;}
@@ -125,7 +127,8 @@ bool LogExporter::record(const uint8_t* b) {
 }
 bool LogExporter::moveComplete() {
 #ifdef ARDUINO_ARCH_ESP32
-    return f_rename(fatFsPath(drive_,partial_).c_str(),fatFsPath(drive_,target_).c_str())==FR_OK;
+    try {return f_rename(fatFsPath(drive_,partial_).c_str(),fatFsPath(drive_,target_).c_str())==FR_OK;}
+    catch(const std::length_error&) {errno=ENAMETOOLONG;return false;}
 #else
     // link does not replace an existing target, unlike POSIX rename.
     if(::link(partial_.c_str(),target_.c_str()))return false;

@@ -10,13 +10,18 @@ using BYTE=uint8_t;
 using UINT=unsigned;
 using FSIZE_t=uint32_t;
 enum FRESULT {FR_OK,FR_DISK_ERR,FR_NO_FILE,FR_INVALID_DRIVE,FR_DENIED};
-constexpr BYTE FA_READ=1, AM_DIR=0x10;
-struct FIL {std::FILE* handle=nullptr;FSIZE_t fptr=0,size=0;};
+constexpr BYTE FA_READ=1, FA_WRITE=2, FA_CREATE_NEW=4, AM_DIR=0x10;
+struct FIL {std::FILE* handle=nullptr;FSIZE_t fptr=0,size=0;void* context=nullptr;bool first_seek=true;};
 struct FILINFO {FSIZE_t fsize=0;BYTE fattrib=0;};
 namespace fatfs_test {
-inline bool fail_open=false,fail_stat=false,fail_seek=false,fail_read=false;
+inline bool fail_open=false,fail_stat=false,fail_seek=false,fail_read=false,fail_close=false;
 inline unsigned live=0,opens=0,closes=0,seeks=0,reads=0;
 inline unsigned drive=0;
+inline void (*before_open)(const char*)=nullptr;
+inline void (*on_open)(FIL*,const char*)=nullptr;
+inline void (*on_close)(FIL*)=nullptr;
+inline void (*on_seek)(FIL*,size_t)=nullptr;
+inline bool (*before_read)(FIL*,unsigned)=nullptr;
 inline std::string last_open,last_stat;
 inline const char* native(const char* path) {
     // Match a decimal drive prefix without adding fake-backend C++ allocations.
@@ -40,14 +45,18 @@ inline FRESULT f_open(FIL* file,const char* path,BYTE mode) {
     const auto native=fatfs_test::native(path);
     if(!native[0])return FR_INVALID_DRIVE;
     if(mode!=FA_READ || fatfs_test::fail_open)return FR_DENIED;
+    if(fatfs_test::before_open)fatfs_test::before_open(path);
     file->handle=std::fopen(native,"rb");
     if(!file->handle)return FR_NO_FILE;
     struct stat st{};
     if(fstat(fileno(file->handle),&st)){std::fclose(file->handle);file->handle=nullptr;return FR_DISK_ERR;}
     file->size=static_cast<FSIZE_t>(st.st_size);file->fptr=0;
-    ++fatfs_test::live;++fatfs_test::opens;return FR_OK;
+    ++fatfs_test::live;++fatfs_test::opens;
+    file->context=nullptr;if(fatfs_test::on_open)fatfs_test::on_open(file,path);return FR_OK;
 }
 inline FRESULT f_close(FIL* file) {
+    if(fatfs_test::fail_close){fatfs_test::fail_close=false;return FR_DISK_ERR;}
+    if(fatfs_test::on_close)fatfs_test::on_close(file);
     const int result=std::fclose(file->handle);file->handle=nullptr;
     --fatfs_test::live;++fatfs_test::closes;return result?FR_DISK_ERR:FR_OK;
 }
@@ -57,14 +66,21 @@ inline FRESULT f_lseek(FIL* file,FSIZE_t offset) {
     // FatFs read-only seeks past EOF succeed, but clip the position.
     offset=std::min(offset,file->size);
     if(fseeko(file->handle,offset,SEEK_SET))return FR_DISK_ERR;
-    file->fptr=offset;return FR_OK;
+    file->fptr=offset;if(fatfs_test::on_seek)fatfs_test::on_seek(file,offset);return FR_OK;
 }
 inline FSIZE_t f_tell(const FIL* file){return file->fptr;}
 inline FSIZE_t f_size(const FIL* file){return file->size;}
 inline FRESULT f_read(FIL* file,void* buffer,UINT count,UINT* received) {
     ++fatfs_test::reads;
+    if(fatfs_test::before_read && !fatfs_test::before_read(file,count)){*received=0;return FR_DISK_ERR;}
     if(fatfs_test::fail_read)count=std::min(count,3u);
     *received=static_cast<UINT>(std::fread(buffer,1,count,file->handle));
     file->fptr+=*received;
     return fatfs_test::fail_read || std::ferror(file->handle)?FR_DISK_ERR:FR_OK;
 }
+
+inline FRESULT f_write(FIL* file,const void* data,UINT count,UINT* written) {
+    *written=std::fwrite(data,1,count,file->handle);file->fptr+=*written;
+    file->size=std::max(file->size,file->fptr);return *written==count?FR_OK:FR_DISK_ERR;
+}
+inline FRESULT f_sync(FIL* file) {return std::fflush(file->handle)?FR_DISK_ERR:FR_OK;}

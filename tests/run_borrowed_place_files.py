@@ -1,4 +1,4 @@
-"""Compare ordinary and UI-workspace place queries against real UTF-8 datasets."""
+"""Verify UI-workspace and test-owned fixed place outputs against real UTF-8 datasets."""
 import argparse,subprocess,tempfile,os
 from pathlib import Path
 r=Path(__file__).resolve().parents[1]

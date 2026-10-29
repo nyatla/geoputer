@@ -177,7 +177,7 @@ void testMaps() {
     map::BufferLease denied{};auto another=request;another.buffer={};++another.token;
     check(!receiver.begin(another,denied),"an outstanding lease excludes another writer");
     input=source(request);
-    map::CodeImageBuffer session_pixels{};map::MapSession session(session_pixels);MapBuildJob job;check(job.start(request,session) && !job.start(request,session),"only one accepted map operation is retained");
+    map::CodeImageBuffer session_pixels{};map::MapSession session(session_pixels);ReadFileSlot job_file;MapBuildJob job(job_file);check(job.start(request,session) && !job.start(request,session),"only one accepted map operation is retained");
     job.loaded(std::move(input));for(int n=0;n<13;++n)job.step();
     check(job.complete() && job.notificationPending(),"direct output ready after bounded render steps");
     const auto completed=job.info();

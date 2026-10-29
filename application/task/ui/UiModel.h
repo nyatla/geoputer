@@ -16,6 +16,11 @@ class UiModel {
 public:
     OperationStatus setScreen(const SetUiScreen& command);
     OperationStatus updateContent(const UpdateUiContent& command);
+    OperationStatus beginDatasetRead(const DatasetRequest&,map::BufferLease&);
+    OperationStatus commitDatasetRead(const DatasetCompletion&);
+    OperationStatus discardDatasetRead(const DatasetCompletion&);
+    OperationStatus datasetReadError(const DatasetCompletion&);
+    OperationStatus updateDatasetProgress(const IndexProgress&);
     OperationStatus beginPlaceSearch(const PlaceRequest& request,map::BufferLease& buffer);
     OperationStatus commitPlaceSearch(const PlaceRequest& request);
     OperationStatus discardPlaceSearch(const PlaceRequest& request);
@@ -70,6 +75,7 @@ private:
     void settingsKey(UiKey key);
 
     void copyData(const UiData& data);
+    void datasetChanged();
     void updateDialogState();
     bool canDeleteLog() const;
     unsigned selectionCount() const;
@@ -86,6 +92,8 @@ private:
 
 
     UiScreenResources screen_resources_;
+    DatasetRequest dataset_borrow_{};
+    bool dataset_owned_=false,dataset_publishable_=false;
     PlaceRequest place_borrow_{}; // Survives screen changes until Storage has stopped.
     void updateMapCursor();
     bool acceptsMap(const map::Request& request) const;

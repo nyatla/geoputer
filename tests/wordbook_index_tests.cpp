@@ -1,3 +1,7 @@
+#include "support/PlaceFormatOracle.h"
+#include <galuchat/std_file_reader.hpp>
+#include "support/StorageFixture.h"
+#include "PlaceText.h"
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -21,38 +25,43 @@ std::vector<uint8_t> bytes(const fs::path& p) {std::ifstream f(p,std::ios::binar
 }
 void testWordBookIndex(const std::string& dir,const std::string& map,const std::string& book) {
     using namespace geoputer;
-    DatasetIndex loader;
+    test_storage::Index loader;
     const auto path=dir+"/_mapindex.dat";
     DatasetWordBookIndex info;
     loader.loadMap(path,map,nullptr,nullptr,&info,"ja");
-    const auto meta=loader.checkWordBook(info,book);
-    FileIoTiming source_io{},index_io{},old_io{};
-    auto source=std::make_shared<ObservedFileReaderFactory>(book,nullptr,&source_io);
-    auto index=std::make_shared<ObservedFileReaderFactory>(path,nullptr,&index_io,FileReadOptions{4096,0});
+    loader.checkWordBook(info,book);
+    FileIoTiming source_io{},index_io{};
+    ReadFileSlot slot;std::array<uint8_t,4096> memory;BorrowedReadBuffer work(memory.data(),memory.size());
+    WordBookWorkspace scratch;char fixed[2][config::PlaceResultLineBytes];
+    FileReadSource source(book,nullptr,&source_io,{},0,&slot),index(path,nullptr,&index_io,{4096,0},0,&slot);
     DiskIndexedWordBookReader reader(info,source,index);
-    auto legacy_source=std::make_shared<ObservedFileReaderFactory>(book,nullptr,&old_io);
+    auto legacy_source=std::make_shared<galuchat::FileReaderFactory>(book);
     galuchat::GaluchatGisWordBookReader legacy(legacy_source,0);
-    check(meta==legacy.metadata(),"selected Wordbook metadata differs");
+    // The SDK is an independent format oracle; the app only uses fixed output.
+    auto query=[&](const DiskIndexedWordBookReader& input,int64_t code,std::vector<std::string>& rows) {
+        const bool found=input.readPlaceLinesByCode(code,fixed,{},scratch,&work);
+        rows.clear();if(found)for(auto& line:fixed) {char short_line[64];PlaceLineBuilder b;b.append(line);b.finish(short_line);rows.emplace_back(short_line);}
+        check(!work.inUse() && !slot.inUse(),"query retained caller resources");return found;
+    };
+    auto expectedRows=[&](size_t code) {char rows[2][64];formatPlaceLines(legacy.readStringSet(code),rows);return std::vector<std::string>{rows[0],rows[1]};};
     const auto count=legacy.recordCount();
     std::vector<size_t> points{0,count-1,count/4,count/2,count*3/4};
     if(count>66081)points.push_back(66081);
     for(size_t i=0;i<std::min<size_t>(count,20);++i)points.push_back((i*7919)%count);
     for(auto point:points) {
         std::vector<std::string> actual;
-        check(reader.readStringSetByCode(point+1,actual),"indexed lookup false for a valid code");
-        check(actual==legacy.readStringSet(point),"indexed Wordbook differs from sequential Reader");
+        check(query(reader,point+1,actual),"indexed lookup false for a valid code");
+        check(actual==expectedRows(point),"indexed Wordbook differs from sequential Reader");
     }
-    source_io={};index_io={};old_io={};
-    std::vector<std::string> actual,expected;
+    source_io={};index_io={};
+    std::vector<std::string> actual;
     const auto sample=count>66081?66082:count;
-    check(reader.readStringSetByCode(sample,actual) && legacy.readStringSetByCode(sample,expected) && actual==expected,"sample name mismatch");
-    check(index_io.opens==3 && index_io.closes==3,"lookup must close the index after each TI/TT/TM phase");
-    std::cout<<"Wordbook index: "<<points.size()<<" names match; sample="<<sample
-             <<" book_bytes="<<old_io.bytes<<"->"<<source_io.bytes<<" reads="<<old_io.reads<<"->"<<source_io.reads
-             <<" seeks="<<old_io.seeks<<"->"<<source_io.seeks<<" index_bytes="<<index_io.bytes<<'\n';
+    check(query(reader,sample,actual) && actual==expectedRows(sample-1),"sample name mismatch");
+    check(index_io.opens && index_io.opens==index_io.closes,"index must close between body phases");
+    std::cout<<"Wordbook fixed output: "<<points.size()<<" names match SDK oracle; sample="<<sample<<" source_bytes="<<source_io.bytes<<" index_bytes="<<index_io.bytes<<'\n';
     source_io={};index_io={};actual={"old"};
-    check(!reader.readStringSetByCode(0,actual) && actual.empty() && !source_io.opens && !index_io.opens,"zero code must not access storage");
-    fails([&]{reader.readStringSetByCode(count+1,actual);},"out of range code accepted");
+    check(!query(reader,0,actual) && actual.empty() && !source_io.opens && !index_io.opens,"zero code must not access storage");
+    fails([&]{query(reader,count+1,actual);},"out of range code accepted");
     check(!source_io.opens && !index_io.opens,"bad code should fail before opening files");
     DatasetWordBookIndex wrong;
     fails([&]{loader.loadMap(path,map,nullptr,nullptr,&wrong,"xx");},"missing selected language accepted");
@@ -61,7 +70,7 @@ void testWordBookIndex(const std::string& dir,const std::string& map,const std::
     fs::last_write_time(book,stamp+std::chrono::seconds(60));
     fails([&]{loader.checkWordBook(info,book);},"changed Wordbook timestamp accepted");
     fs::last_write_time(book,stamp);
-    check(loader.checkWordBook(info,book)==meta,"restored timestamp fails verification");
+    loader.checkWordBook(info,book); // Restoring the timestamp permits reuse.
     const auto alias=fs::path(dir)/"alias.giswordbook";
     fs::copy_file(book,alias,fs::copy_options::overwrite_existing);
     fails([&]{loader.checkWordBook(info,alias.string());},"wrong Wordbook basename accepted");
@@ -72,24 +81,24 @@ void testWordBookIndex(const std::string& dir,const std::string& map,const std::
     fails([&]{loader.checkWordBook(info,book);},"changed GW00 with unchanged mtime/size accepted");
     {std::ofstream f(book,std::ios::binary|std::ios::trunc);f.write(reinterpret_cast<const char*>(original.data()),original.size());}
     fs::last_write_time(book,stamp);
-    check(loader.checkWordBook(info,book)==meta,"original header could not be restored");
+    loader.checkWordBook(info,book); // Restoring bytes permits reuse.
     // Runtime header/table mutations must fail without recomputing the full CRC.
     auto data=bytes(path);
-    auto memory=std::make_shared<galuchat::BufferReaderFactory>(data);
-    DiskIndexedWordBookReader broken(info,source,memory);
+    test_storage::File mutated(data);
+    DiskIndexedWordBookReader broken(info,source,mutated);
     const auto good=data;
     data[info.section_offset+90]^=1;
-    fails([&]{broken.readStringSetByCode(sample,actual);},"runtime header mutation accepted");
+    fails([&]{mutated.replace(data);query(broken,sample,actual);},"runtime header mutation accepted");
     data=good;put(data.data()+info.section_offset+128+4,0);
-    fails([&]{broken.readStringSetByCode(sample,actual);},"zero-length root accepted");
+    fails([&]{mutated.replace(data);query(broken,sample,actual);},"zero-length root accepted");
     data=good;
     const auto tt=info.section_offset+128+get(info.header.data()+92)*16;
     put(data.data()+tt+4,0xffffffff);
-    fails([&]{broken.readStringSetByCode(sample,actual);},"bad text page offset accepted");
+    fails([&]{mutated.replace(data);query(broken,sample,actual);},"bad text page offset accepted");
     data=good;
     const auto tm=tt+get(info.header.data()+96)*8;
     put(data.data()+tm+8,0);
-    fails([&]{broken.readStringSetByCode(sample,actual);},"zero token width accepted");
+    fails([&]{mutated.replace(data);query(broken,sample,actual);},"zero token width accepted");
     // Empty and unsorted target handling belongs to the new explicit SDK API.
     std::vector<uint8_t> raw{65,66,67};galuchat::BufferReader raw_source(raw);
     check(galuchat::GaluchatGisWordBookReader::readTokensFromPage(raw_source,0,3,1,{}).empty(),"empty token selection");

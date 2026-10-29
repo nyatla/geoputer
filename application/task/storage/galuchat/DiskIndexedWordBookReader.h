@@ -1,22 +1,22 @@
 #pragma once
-#include <memory>
-#include <string>
-#include <vector>
 #include <galuchat/gis_wordbook_reader.hpp>
 #include "../dataset/DatasetIndex.h"
+#include "ScopedReaderSource.h"
+#include "WordBookWorkspace.h"
+#include "TextEncoding.h"
 
 namespace geoputer {
-// Validated header only. Per-phase stack references end before the next phase.
-// Index and body Readers never overlap, allowing one shared read buffer.
+// Owns validated header only. Input descriptions outlive this consumer.
+// Index and body Readers end in turn, sharing one per-call work buffer.
 class DiskIndexedWordBookReader {
 public:
-    DiskIndexedWordBookReader(DatasetWordBookIndex info,
-        std::shared_ptr<const galuchat::ReaderFactory> book,
-        std::shared_ptr<const galuchat::ReaderFactory> index)
-        : info_(info), book_(std::move(book)), index_(std::move(index)) {}
-    bool readStringSetByCode(int64_t code, std::vector<std::string>& result) const;
+    DiskIndexedWordBookReader(DatasetWordBookIndex info,ScopedReaderSource book,ScopedReaderSource index)
+        :info_(info),book_(book),index_(index){}
+    bool readPlaceLinesByCode(int64_t code,char (&lines)[2][config::PlaceResultLineBytes],
+                             const PlaceDisplayFormat& format,WordBookWorkspace& scratch,
+                             BorrowedReadBuffer* work) const;
 private:
     DatasetWordBookIndex info_;
-    std::shared_ptr<const galuchat::ReaderFactory> book_, index_;
+    ScopedReaderSource book_,index_;
 };
 } // namespace geoputer

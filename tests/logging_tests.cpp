@@ -24,7 +24,8 @@ std::vector<uint8_t> bytes(const std::string& path) {
 }
 void fileTests(const std::string& directory) {
     Activity activity;
-    LogWriter writer(directory+"/logs", &activity);
+    const std::string log_directory=directory+"/logs";
+    LogWriter writer(log_directory, &activity);
     uint64_t utc;
     check(nmeaEpochMs("141026", 15*3600000u+1000, utc),"valid absolute GPS date");
     check(writer.open(0x1234,utc-1000)==LogError::None,"create RAM log session");
@@ -57,8 +58,8 @@ void fileTests(const std::string& directory) {
     check(writer.flush(15000),"retry pending bytes at the same offset");
     check(writer.snapshot().buffered==0 && writer.snapshot().saved==64 && writer.snapshot().error==LogError::None,
           "confirmed persistence releases RAM and clears error");
-    check(writer.path().find("20261015_000001_0.gps.dat")!=std::string::npos,"filename uses first point JST across midnight");
-    auto file=bytes(writer.path());
+    check(std::string(writer.path().view()).find("20261015_000001_0.gps.dat")!=std::string::npos,"filename uses first point JST across midnight");
+    auto file=bytes(std::string(writer.path().view()));
     check(file.size()==512+64*32 && validLogHeader(file.data()),"512-byte header and 64 exact records after partial-write retry");
     check(logGet(file.data()+24,8)==utc-1000 && logGet(file.data()+16,8)==0x1234,"header keeps session start time and ID");
     for(unsigned n=0;n<64;++n) {
@@ -69,18 +70,18 @@ void fileTests(const std::string& directory) {
               logGet(record+24,2)==75 && record[26]==12 && record[27]==127,"signed altitude, units, course wrap and validity flags");
     }
     check(writer.requestFlush(0x1234,64,true)==LogError::None && writer.flush(16000),"stop flushes and closes");
-    check(writer.path().empty() && writer.snapshot().name[0],"completed close releases path storage and preserves the filename snapshot");
+    check(std::string(writer.path().view()).empty() && writer.snapshot().name[0],"completed close releases path storage and preserves the filename snapshot");
     check(writer.open(0x1234,utc)==LogError::SessionExists,"persisted session cannot be overwritten");
     check(writer.open(0x1235,utc)==LogError::None,"new session after close");
     point.session_id=0x1235; point.sample_seq=1;
     check(writer.append(point)==LogError::None && writer.flush(17000),"save second session in same second");
-    check(writer.path().find("_1.gps.dat")!=std::string::npos,"filename collisions advance suffix");
+    check(std::string(writer.path().view()).find("_1.gps.dat")!=std::string::npos,"filename collisions advance suffix");
     check(writer.requestFlush(0x1235,1,true)==LogError::None && writer.flush(18000),"close second session");
     check(writer.open(0x1236,UINT64_MAX)==LogError::None,"unknown datetime allowed");
     point.session_id=0x1236; point.fix.fields=0;
     check(writer.append(point)==LogError::None && writer.flush(19000),"save point with unknown optional data");
-    check(writer.path().find("undated_0000000000001236_0.gps.dat")!=std::string::npos,"unknown datetime stable session filename");
-    file=bytes(writer.path()); const auto* record=file.data()+512;
+    check(std::string(writer.path().view()).find("undated_0000000000001236_0.gps.dat")!=std::string::npos,"unknown datetime stable session filename");
+    file=bytes(std::string(writer.path().view())); const auto* record=file.data()+512;
     check(record[27]==1 && logGet(record,8)==UINT64_MAX && logGet(record+16,8)==0 && logGet(record+24,3)==0,
           "missing metadata uses validity flags and canonical empty values");
     check(activity.depth==0,"all physical I/O scopes balanced");
@@ -136,6 +137,9 @@ void uiTests() {
 }
 }
 void testLogging() {
+    const std::string oversized_directory(config::TemporaryPathBytes,'x');
+    LogWriter oversized(oversized_directory);
+    check(oversized.open(1,UINT64_MAX)==LogError::Io && !oversized.hasRetainedSession(),"oversized log directory fails without a session");
     check(logCrc32(reinterpret_cast<const uint8_t*>("123456789"),9)==0xcbf43926u,"standard CRC32 test vector");
     uint64_t time;
     check(!nmeaEpochMs("290225",0,time) && nmeaEpochMs("290224",0,time),"GPS calendar leap date validation");

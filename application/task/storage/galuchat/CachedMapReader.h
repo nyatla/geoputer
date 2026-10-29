@@ -2,7 +2,6 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <memory>
 #include <array>
 #include <stdexcept>
 #include "DiskIndexedMapReader.h"
@@ -31,15 +30,15 @@ public:
     static constexpr size_t Pixels = Side * Side;
     static constexpr size_t Bytes = Pixels * sizeof(uint32_t);
 
-    CachedMapReader(CodeCacheBuffer& pixels,DatasetMapIndex info,std::shared_ptr<const galuchat::ReaderFactory> map,
-                    std::shared_ptr<const galuchat::ReaderFactory> index,StorageObserver* observer=nullptr,unsigned side=Side)
-        : reader_(info,std::move(map),std::move(index)),pixels_(pixels),observer_(observer),side_(side) {
+    CachedMapReader(CodeCacheBuffer& pixels,DatasetMapIndex info,ScopedReaderSource map,
+                    ScopedReaderSource index,StorageObserver* observer=nullptr,unsigned side=Side)
+        :reader_(info,map,index),pixels_(pixels),observer_(observer),side_(side) {
         if(!side_ || side_>Side)throw std::invalid_argument("invalid code cache side");
     }
 
     // Code zero includes uncovered cells and undefined regions, as PlaceLookup
     // already treats both as NotFound. No point/file reads are made on a hit.
-    uint32_t readWgsPoint(double longitude, double latitude);
+    uint32_t readWgsPoint(double longitude, double latitude,BorrowedReadBuffer* work=nullptr);
     bool isCached(double longitude, double latitude) const;
     void invalidate() { stats_.valid = false; if (observer_) observer_->cacheState(RgCacheState::Unprepared); }
     const MapCacheStats& stats() const { return stats_; }
@@ -49,7 +48,7 @@ public:
 
 private:
     bool contains(int x, int y) const;
-    void rebuild(int x, int y);
+    void rebuild(int x, int y,BorrowedReadBuffer* work);
 
     DiskIndexedMapReader reader_;
     CodeCacheBuffer& pixels_;

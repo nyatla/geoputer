@@ -1,5 +1,9 @@
+#include "support/PlaceFormatOracle.h"
+#include <galuchat/std_file_reader.hpp>
+#include "PlaceText.h"
 #include "task/storage/galuchat/DiskIndexedWordBookReader.h"
 #include "task/storage/galuchat/ObservedFileReader.h"
+#include "task/storage/galuchat/TextEncoding.h"
 #include <array>
 #include <filesystem>
 #include <fstream>
@@ -10,47 +14,7 @@ using namespace geoputer;
 void check(bool value, const char* why) {
     if (!value) throw std::runtime_error(why);
 }
-struct Lifetime {
-    unsigned live = 0, peak = 0;
-};
-class CountedReader final : public galuchat::ByteReader {
-public:
-    CountedReader(std::unique_ptr<galuchat::ByteReader> reader, Lifetime& life, bool fail)
-        : reader_(std::move(reader)), life_(life), fail_(fail) {
-        ++life_.live;
-        life_.peak = std::max(life_.peak, life_.live);
-    }
-    ~CountedReader() override { reader_.reset(); --life_.live; }
-    size_t pos() const override { return reader_->pos(); }
-    bool atEnd() const override { return reader_->atEnd(); }
-protected:
-    uint8_t nextByte() override {
-        if (fail_) throw std::runtime_error("injected body read failure");
-        return reader_->readByte();
-    }
-    void skipByte(size_t count) override { reader_->skipInByte(count); }
-private:
-    std::unique_ptr<galuchat::ByteReader> reader_;
-    Lifetime& life_;
-    bool fail_;
-};
-class CountedFactory final : public galuchat::ReaderFactory {
-public:
-    CountedFactory(const std::string& path, FileIoTiming& timing, BorrowedReadBuffer& pool, Lifetime& life)
-        : source_(path, nullptr, &timing, {4096, 4096}, 0, &pool), life_(life) {}
-    size_t fail_offset = SIZE_MAX;
-    std::unique_ptr<galuchat::ByteReader> create(size_t offset = 0) const override {
-        check(!life_.live, "index/body Readers overlapped");
-        return std::make_unique<CountedReader>(source_.create(offset), life_, offset == fail_offset);
-    }
-    std::unique_ptr<galuchat::ByteReader> createRange(size_t offset, size_t count) const override {
-        check(!life_.live, "index/body Readers overlapped");
-        return std::make_unique<CountedReader>(source_.createRange(offset, count), life_, offset == fail_offset);
-    }
-private:
-    ObservedFileReaderFactory source_;
-    Lifetime& life_;
-};
+
 }
 int main(int argc, char** argv) {
     try {
@@ -74,56 +38,59 @@ int main(int argc, char** argv) {
             return native;
 #endif
         };
-        auto legacy_factory = std::make_shared<ObservedFileReaderFactory>(path(book_path), nullptr);
-        galuchat::GaluchatGisWordBookReader legacy(legacy_factory, 0);
-        check(legacy.readStringSet(0) == expected, "fixture differs from the sequential SDK Reader");
-#ifdef GEOPUTER_TEST_FATFS
-        check(!fatfs_test::live, "legacy Reader escaped query");
-#endif
-        std::array<uint8_t, 4096 + 32> guarded;
-        guarded.fill(0xa5);
-        BorrowedReadBuffer pool(guarded.data() + 16, 4096);
-        FileIoTiming book_io, index_io;
-        Lifetime life;
-        auto book = std::make_shared<CountedFactory>(path(book_path), book_io, pool, life);
-        auto index = std::make_shared<CountedFactory>(path(index_path), index_io, pool, life);
-        DiskIndexedWordBookReader reader(info, book, index);
-        std::vector<std::string> actual;
-        for (unsigned attempt = 0; attempt < 3; ++attempt) {
-            book_io = {}; index_io = {};
-            check(reader.readStringSetByCode(1, actual) && actual == expected, "phased query name mismatch");
-            check(!pool.inUse() && !life.live && life.peak == 1, "query retained a Reader/lease");
-            check(index_io.opens == 2 + (pages + 31) / 32 && index_io.opens == index_io.closes,
-                  "index must be closed before body reads, with bounded TM rescans");
-            check(book_io.opens == 1 + 32 + pages && book_io.opens == book_io.closes,
-                  "body page was omitted or decoded twice");
-#ifdef GEOPUTER_TEST_FATFS
-            check(!fatfs_test::live, "query leaked FIL");
-#endif
+        auto oracle=std::make_shared<galuchat::FileReaderFactory>(book_path);
+        galuchat::GaluchatGisWordBookReader sdk(oracle,0);
+        check(sdk.readStringSet(0)==expected,"independent SDK oracle differs");
+        std::array<uint8_t,4096+32> guarded;guarded.fill(0xa5);
+        BorrowedReadBuffer pool(guarded.data()+16,4096);
+        FileIoTiming book_io,index_io;
+        const auto native_book=path(book_path),native_index=path(index_path);
+        ReadFileSlot slot;
+        FileReadSource file_book(native_book,nullptr,&book_io,{4096,4096},0,&slot);
+        FileReadSource file_index(native_index,nullptr,&index_io,{4096,0},0,&slot);
+        DiskIndexedWordBookReader direct(info,file_book,file_index);
+        // Caller-owned fixed output agrees with the independent SDK oracle.
+        WordBookWorkspace scratch;char fixed[2][config::PlaceResultLineBytes];char expected_rows[2][64];
+        PlaceDisplayFormat format{{"%2 %0 %% %2","%9%1"},true};
+        for(const auto& setting:{PlaceDisplayFormat{},format}) {
+            formatPlaceLines(expected,expected_rows,setting);
+            bool exhausted=false;
+            try {
+                check(direct.readPlaceLinesByCode(1,fixed,setting,scratch,&pool),"bounded query failed");
+            }catch(const std::length_error&){exhausted=true;}
+            check(exhausted==(pages-31>128),"per-component capacity error mismatch");
+            if(!exhausted) {char display[2][64];for(unsigned row=0;row<2;++row){PlaceLineBuilder b;b.append(fixed[row]);b.finish(display[row]);}check(!std::strcmp(display[0],expected_rows[0]) && !std::strcmp(display[1],expected_rows[1]),"bounded rows differ from oracle formatting");}
+            check(!pool.inUse() && !slot.inUse(),"bounded query retained Reader resources");
         }
-        // Fail while a body Reader owns the loan, once in each phase and once
-        // in the final TM batch. The same Reader object must remain reusable.
-        std::ifstream raw(index_path, std::ios::binary);
-        std::vector<uint8_t> bytes{std::istreambuf_iterator<char>(raw), {}};
-        const auto ti = fmt::get(bytes.data() + 128 + fmt::TiRoot::DataOffset);
-        const auto tt = fmt::get(bytes.data() + 128 + 16 + fmt::TtPage::DataOffset);
-        const auto tm_start = 128 + 16 + 32 * 8;
-        const auto tm = fmt::get(bytes.data() + tm_start + fmt::TmPage::DataOffset);
-        const auto last_tm = fmt::get(bytes.data() + tm_start + (pages - 1) * 16 + fmt::TmPage::DataOffset);
-        for (const auto offset : {ti, tt, tm, last_tm}) {
-            book->fail_offset = offset;
-            bool failed = false;
-            try { reader.readStringSetByCode(1, actual); }
-            catch (const std::runtime_error&) { failed = true; }
-            check(failed && !pool.inUse() && !life.live, "body failure retained a Reader/lease");
-#ifdef GEOPUTER_TEST_FATFS
-            check(!fatfs_test::live, "body failure leaked FIL");
-#endif
-            book->fail_offset = SIZE_MAX;
-            check(reader.readStringSetByCode(1, actual) && actual == expected && !pool.inUse(),
-                  "query could not recover after failed body read");
+        // Page-local capacity is per component. The last component has pages-31 tokens.
+        const auto tt_start=fmt::get(info.header.data()+fmt::Wordbook::TtDataOffset);
+        const auto tt_end=uint64_t(tt_start)+fmt::get(info.header.data()+fmt::Wordbook::TtDataBytes);
+        const auto tt_index=128+16+31*8;
+        std::ifstream table(index_path,std::ios::binary);std::array<uint8_t,8> last{};
+        table.seekg(tt_index);table.read(reinterpret_cast<char*>(last.data()),last.size());
+        const auto last_start=fmt::get(last.data()+4);std::array<uint16_t,130> bounded;bounded.fill(0xa5a5);
+        bool capacity_failed=false;size_t decoded=0;
+        try {
+            file_book.withRange(last_start,tt_end-last_start,[&](galuchat::ByteReader& source) {
+                decoded=galuchat::GaluchatGisWordBookReader::readTokenIdsFromPageInto(source,tt_end-last_start,31,1,info.header[fmt::Wordbook::TokenBits],31,bounded.data()+1,128);
+            },&pool);
+        }catch(const std::length_error&){capacity_failed=true;}
+        check(capacity_failed==(pages-31>128),"128-token capacity boundary mismatch");
+        if(!capacity_failed) {
+            check(decoded==pages-31,"bounded TT count differs");
+            for(size_t i=0;i<decoded;++i)check(bounded[i+1]==i+31,"bounded TT token order differs");
         }
-        check(!reader.readStringSetByCode(0, actual) && actual.empty(), "zero code behavior changed");
+        check(bounded.front()==0xa5a5 && bounded.back()==0xa5a5 && !pool.inUse() && !slot.inUse(),"capacity failure overran output or retained a loan");
+
+#ifdef GEOPUTER_TEST_FATFS
+        for(bool* flag:{&fatfs_test::fail_open,&fatfs_test::fail_seek,&fatfs_test::fail_read}) {
+            *flag=true;bool failed=false;
+            try{direct.readPlaceLinesByCode(1,fixed,{},scratch,&pool);}catch(const std::runtime_error&){failed=true;}
+            *flag=false;
+            check(failed && !pool.inUse() && !slot.inUse() && !fatfs_test::live,"failure leaked resource");
+        }
+#endif
+        check(!direct.readPlaceLinesByCode(0,fixed,{},scratch,&pool) && !fixed[0][0] && !fixed[1][0],"zero code behavior changed");
         for (unsigned i = 0; i < 16; ++i)
             check(guarded[i] == 0xa5 && guarded[4112 + i] == 0xa5, "shared buffer overran guards");
         std::cout << "PASS: depth=32 TT=32 TM=" << pages

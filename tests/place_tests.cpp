@@ -1,7 +1,9 @@
+#include "support/PlaceFormatOracle.h"
 #include <cstring>
 #include <stdexcept>
 #include <string>
 #include "task/storage/galuchat/TextEncoding.h"
+#include "task/storage/galuchat/PlaceLineOutput.h"
 #include "task/storage/PlaceSearchFlow.h"
 #include "task/ui/PlacePresentation.h"
 #include "task/ui/UiModel.h"
@@ -24,9 +26,12 @@ static void testPlaceLoans() {
     check(!validPlaceMemory(malformed),"undersized place layout must be rejected");
     auto* result=placeResultMemory(request);
     check(result->region_code==0 && !result->lines[0][0] && !result->detail[0],"only the new result starts empty");
-    check(samePlaceRequest(result->request,request) && reinterpret_cast<uint8_t*>(result)>=request.buffer.data+request.work_bytes &&
-          reinterpret_cast<uint8_t*>(result+1)<=request.buffer.data+request.buffer.capacity,"scratch/result are disjoint and bounded");
-    auto& reader=placeReaderMemory(request);std::memset(reader.data(),0xa5,reader.size());
+    auto& reader=placeReaderMemory(request);
+    const auto reader_offset=reinterpret_cast<uint8_t*>(&reader)-request.buffer.data;
+    check(samePlaceRequest(result->request,request) && reinterpret_cast<uint8_t*>(result)==request.buffer.data &&
+          reinterpret_cast<uint8_t*>(&reader)>=reinterpret_cast<uint8_t*>(result+1) &&
+          reinterpret_cast<uint8_t*>(&reader)+sizeof(reader)<=request.buffer.data+request.buffer.capacity,"reply is first and scratch is disjoint and bounded");
+    std::memset(reader.data(),0xa5,reader.size());
     check(samePlaceRequest(result->request,request),"index scratch cannot overwrite result identity");
     auto next=request;next.buffer={};++next.token;map::BufferLease denied{};
     check(ui.beginPlaceSearch(next,denied)==OperationStatus::Unavailable,"one outstanding work loan at a time");
@@ -44,7 +49,7 @@ static void testPlaceLoans() {
     check(ui.discardPlaceSearch(next)==OperationStatus::Ok,"return after writer completion regardless of current screen");
     check(ui.beginMapFrame(map_request,map_request.buffer)==OperationStatus::Ok,"map can use returned scratch slot");
     map::FrameInfo frame{};frame.request=map_request;frame.width=240;frame.height=101;frame.meters_per_pixel=1;
-    check(map_request.buffer.data[0]==0xa5,"lending must not clear the writer scratch");
+    check(map_request.buffer.data[reader_offset]==0xa5,"lending must not clear the writer scratch");
     std::memset(map_request.buffer.data,0,map::BoundaryBytes); // Completed writer initializes every pixel.
     map_request.buffer.data[0]=0x60;
     check(ui.commitMapFrame(frame)==OperationStatus::Ok,"publish map before name lookup");
@@ -61,16 +66,20 @@ static void testPlaceLoans() {
 
 void testPlace() {
     testPlaceLoans();
+    char direct[config::PlaceResultLineBytes]{};char expected_direct[2][64];
+    const std::string long_name="Comunidad de Palacios de la Sierra, Vilviestre del Pinar y San Leonardo de Yagüe";
+    formatPlaceLines({long_name},expected_direct);
+    PlaceLineOutput direct_row(direct,sizeof(direct));direct_row.append(long_name);
+    check(direct_row.full() && !std::strcmp(direct,expected_direct[0]),"direct row uses the existing display clipping");
+    for(size_t i=std::strlen(direct)+1;i<sizeof(direct);++i)check(!direct[i],"clipped reply tail must stay empty");
+    char unicode[config::PlaceResultLineBytes]{};PlaceLineOutput unicode_row(unicode,sizeof(unicode));
+    unicode_row.append("千葉県");unicode_row.append(" ");unicode_row.append("習志野市");
+    check(!std::strcmp(unicode,"千葉県 習志野市") && validUtf8(unicode),"direct UTF-8 output preserves complete characters");
+    char prefix[8]{};PlaceLineOutput prefix_row(prefix,sizeof(prefix));
+    std::memcpy(prefix_row.tail(),"千葉県",7);prefix_row.accept(7,true);
+    check(validUtf8(prefix) && prefix_row.full(),"byte capacity never publishes a split UTF-8 character");
     check(validUtf8("千葉県習志野市鷺沼二丁目") && validUtf8("髙﨑ｱA") && validUtf8("\xF0\x9F\x9A\x80"),
           "UTF-8 Japanese, compatibility characters, half-width kana, ASCII and supplementary characters");
-    for (const char* metadata : {"{\"token_encoding\":\"UTF-8\"}",
-                                 "{\"text_encoding\": \"uTf8\"}",
-                                 "{\"token_encoding\":\"\",\"text_encoding\":\"utf-8\"}"})
-        check(wordBookUsesUtf8(metadata), "encoding view preserves case folding and empty-value fallback");
-    for (const char* metadata : {"{}", "{\"token_encoding\":\"utf-8}",
-                                 "{\"token_encoding\":\"UTF-8-extra\"}",
-                                 "{\"token_encoding\":\"sjis\",\"text_encoding\":\"utf8\"}"})
-        check(!wordBookUsesUtf8(metadata), "encoding view preserves rejection and primary-key priority");
     char lines[2][64];
     for (const auto& bad : {std::string("\x81"), std::string("\x90\xE7\x97\x74"),
                            std::string("\xC0\xAF"), std::string("\xED\xA0\x80"), std::string("\xE3\x81"),
@@ -100,26 +109,26 @@ void testPlace() {
     formatPlaceLines({"千葉県", "", "習志野市", "", "鷺沼", "2丁目"}, lines, format);
     check(std::strcmp(lines[0], "千葉県 習志野市") == 0 && std::strcmp(lines[1], "鷺沼2丁目") == 0,
           "percent placeholders preserve empty slots and create two final rows");
-    format = {{"%2/%%/%0", "%9:%1"}, true};
+    format = PlaceDisplayFormat{{"%2/%%/%0", "%9:%1"}, true};
     formatPlaceLines({"%1", "", "市"}, lines, format);
     check(!std::strcmp(lines[0], "市/%/%1") && !std::strcmp(lines[1], ":"),
           "reordering, percent escape and missing slots work without recursively interpreting dictionary text");
-    format = {{"%1", "%0"}, true};
+    format = PlaceDisplayFormat{{"%1", "%0"}, true};
     formatPlaceLines({"A", "B"}, lines, format);
     check(!std::strcmp(lines[0], "B") && !std::strcmp(lines[1], "A"), "explicit rows are not joined again by App");
-    format = {{"%10", "%%%0"}, true};
+    format = PlaceDisplayFormat{{"%10", "%%%0"}, true};
     formatPlaceLines({"A", "B"}, lines, format);
     check(!std::strcmp(lines[0], "B0") && !std::strcmp(lines[1], "%A"), "indices are exactly one digit");
-    format = {{"", ""}, true};
+    format = PlaceDisplayFormat{{"", ""}, true};
     formatPlaceLines({"unused"}, lines, format);
     check(!lines[0][0] && !lines[1][0], "explicit empty formats can hide both rows");
     for (const auto* bad : {"%", "%A", "%/", "abc%%def%"}) {
         check(!validPlaceFormat(bad), "malformed placeholder is rejected");
-        format = {{bad, ""}, true}; bool rejected = false;
+        format = PlaceDisplayFormat{}; format.specified=true;check(format.setLine(0,bad),"invalid syntax still fits fixed storage"); bool rejected = false;
         try { formatPlaceLines({"A"}, lines, format); } catch (const std::runtime_error&) { rejected = true; }
         check(rejected, "runtime formatting also rejects malformed syntax");
     }
-    format = {{"%0", "%0%0"}, true};
+    format = PlaceDisplayFormat{{"%0", "%0%0"}, true};
     const std::string spaces(29, ' ');
     formatPlaceLines({spaces}, lines, format);
     check(std::string(lines[0]) == spaces && std::string(lines[1]) == std::string(23, ' ') + "...",
@@ -129,7 +138,7 @@ void testPlace() {
     check(std::string(lines[0]) == fourteen + " ", "fourteen 16-dot glyphs plus an eight-dot space fit exactly");
     formatPlaceLines({std::string(200000, 'x')}, lines, format);
     check(!std::strcmp(lines[0], "xxxxxxxxxxx...") && validUtf8(lines[1]), "large expansions retain only a bounded prefix");
-    format = {{"%0", ""}, true}; bool rejected = false;
+    format = PlaceDisplayFormat{{"%0", ""}, true}; bool rejected = false;
     try { formatPlaceLines({"valid", "\xc0\x80"}, lines, format); } catch (const std::runtime_error&) { rejected = true; }
     check(rejected, "unreferenced invalid UTF-8 cannot enter the name cache");
 

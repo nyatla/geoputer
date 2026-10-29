@@ -35,6 +35,7 @@ with tempfile.TemporaryDirectory(prefix="geoputer-native-") as directory:
         str(root / "tests/live_layout_tests.cpp"),
         str(root / "tests/boot_tests.cpp"),
         str(root / "tests/dataset_tests.cpp"),
+        str(root / "tests/dataset_borrow_tests.cpp"),
         str(root / "tests/dataset_selection_tests.cpp"),
         str(root / "application/task/storage/dataset/DatasetMetadata.cpp"),
         str(root / "tests/clock_tests.cpp"),
@@ -74,3 +75,5 @@ with tempfile.TemporaryDirectory(prefix="geoputer-native-") as directory:
     subprocess.run([str(backend)],check=True,timeout=15)
 
 subprocess.run([sys.executable, str(root / "tests/build_metadata_tests.py")], check=True, timeout=60)
+
+subprocess.run([sys.executable,str(root / "tests/run_metadata.py")],check=True,timeout=120)

@@ -48,6 +48,7 @@ enum class MessageKind : uint8_t {
     SyncReturn,
     ReleaseLogBrowse, ReadLogStatistics, LogStatisticsProgress,
     BeginPlaceSearch, CommitPlaceSearch, DiscardPlaceSearch,
+    BeginDatasetRead, CommitDatasetRead, DiscardDatasetRead, DatasetReadError, UpdateDatasetProgress,
 };
 enum class OperationStatus : uint8_t { Ok, InvalidRequest, StaleContent, Unavailable };
 
@@ -86,6 +87,8 @@ union UiRequestPayload {
     UpdateUiContent update;
     map::FrameInfo map;
     PlaceRequest place;
+    DatasetCompletion dataset;
+    IndexProgress dataset_progress;
 };
 union StorageRequestPayload {
     StorageCommand storage_command;

@@ -3,22 +3,33 @@
 // real-file CRC/source identity tests. This fixture alone owns its byte array.
 #include <fstream>
 #include <array>
-#include <vector>
 #include <memory>
+#include <vector>
+#include "StorageFixture.h"
 #include <galuchat/wgsmap3_reader.hpp>
 #include "task/storage/galuchat/CachedMapReader.h"
 namespace test_index {
 using Bytes=std::vector<uint8_t>;
 inline void put(uint8_t* p,uint32_t v) { for(unsigned i=0;i<4;++i)p[i]=uint8_t(v>>(8*i)); }
-class OwnedFactory final:public galuchat::ReaderFactory {
+class OwnedCache {
+    std::shared_ptr<test_storage::File> source_;
+    test_storage::File index_;
+    std::array<uint8_t,geoputer::config::MapRectReadBufferBytes> bytes_;
+    geoputer::BorrowedReadBuffer work_{bytes_.data(),bytes_.size()};
+    geoputer::CachedMapReader cache_;
 public:
-    explicit OwnedFactory(Bytes bytes):bytes_(std::move(bytes)) {}
-    std::unique_ptr<galuchat::ByteReader> create(size_t offset=0) const override {
-        return galuchat::BufferReaderFactory(bytes_).create(offset);
-    }
-private:Bytes bytes_;
+    OwnedCache(geoputer::CodeCacheBuffer& pixels,geoputer::DatasetMapIndex info,
+        std::shared_ptr<test_storage::File> source,Bytes index,geoputer::StorageObserver* observer)
+        :source_(std::move(source)),index_(index),cache_(pixels,info,source_->source(),index_.source(),observer) {}
+    OwnedCache(const OwnedCache&)=delete;OwnedCache& operator=(const OwnedCache&)=delete;
+    uint32_t readWgsPoint(double longitude,double latitude) {source_->sync();return cache_.readWgsPoint(longitude,latitude,&work_);}
+    bool isCached(double longitude,double latitude)const {return cache_.isCached(longitude,latitude);}
+    void invalidate() {cache_.invalidate();}
+    const geoputer::MapCacheStats& stats()const {return cache_.stats();}
+    size_t chunkCount()const {return cache_.chunkCount();}
+    int unitInvX()const {return cache_.unitInvX();}int unitInvY()const {return cache_.unitInvY();}
 };
-inline geoputer::CachedMapReader cache(geoputer::CodeCacheBuffer& pixels,std::shared_ptr<const galuchat::ReaderFactory> factory,const Bytes& bytes,geoputer::StorageObserver* observer=nullptr) {
+inline OwnedCache cache(geoputer::CodeCacheBuffer& pixels,std::shared_ptr<test_storage::File> factory,const Bytes& bytes,geoputer::StorageObserver* observer=nullptr) {
     galuchat::BufferReader src(bytes);
     if(galuchat::detail::readAscii(src,4)!="GLCH")throw std::runtime_error("fixture GLCH");
     const auto payload=src.readMbUInt();const auto end=src.pos()+payload;
@@ -51,14 +62,14 @@ inline geoputer::CachedMapReader cache(geoputer::CodeCacheBuffer& pixels,std::sh
     put(info.header.data()+16,index.size());put(info.header.data()+60,index.size()-64);
     std::copy(info.header.begin(),info.header.end(),index.begin());
     info.west=west;info.south=south;info.width=east-west;info.height=north-south;
-    return geoputer::CachedMapReader(pixels,info,std::move(factory),std::make_shared<OwnedFactory>(std::move(index)),observer);
+    return OwnedCache(pixels,info,std::move(factory),std::move(index),observer);
 }
-inline geoputer::CachedMapReader cacheFile(geoputer::CodeCacheBuffer& pixels,std::shared_ptr<const galuchat::ReaderFactory> factory,const std::string& path) {
-    std::ifstream f(path,std::ios::binary);return cache(pixels,std::move(factory),Bytes(std::istreambuf_iterator<char>(f),{}));
+inline OwnedCache cacheFile(geoputer::CodeCacheBuffer& pixels,std::shared_ptr<test_storage::File> source,const std::string& path) {
+    std::ifstream f(path,std::ios::binary);return cache(pixels,std::move(source),Bytes(std::istreambuf_iterator<char>(f),{}));
 }
 inline void generate(const std::string& directory,const std::string& map,const std::string& book) {
-    geoputer::DatasetMetadata metadata;metadata.map=map;metadata.wordbook=book;metadata.language="ja";
-    const auto result=geoputer::DatasetIndex{}.apply(directory,metadata,[](void*){return true;},nullptr);
+    geoputer::DatasetMetadata metadata;geoputer::datasetCopyText(metadata.map,sizeof(metadata.map),map);geoputer::datasetCopyText(metadata.wordbook,sizeof(metadata.wordbook),book);geoputer::datasetCopyText(metadata.language,sizeof(metadata.language),"ja");
+    const auto result=test_storage::Index{}.apply(directory,metadata,[](void*){return true;},nullptr);
     if(result!=geoputer::DatasetError::None)throw std::runtime_error("test index generation failed");
 }
 }

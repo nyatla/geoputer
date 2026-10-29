@@ -126,8 +126,8 @@ void Application::handleNotification(const AppNotification& event) {
     }
     if(event.source==TaskId::Storage && event.kind==MessageKind::MapCompleted) {completeMap(event.payload.map);return;}
     if(event.source==TaskId::Storage && event.kind==MessageKind::DatasetProgress) {
-        if(dataset_applying_ && dataset_waiting_ && data_.hasDatasets() && event.payload.index_progress.token==dataset_waiting_) {
-            data_.editDatasets().progress=event.payload.index_progress;++data_.editDatasets().revision;++data_.revision;ui_data_dirty_=true;
+        if(dataset_applying_ && dataset_waiting_ && event.payload.index_progress.token==dataset_waiting_) {
+            dataset_progress_=event.payload.index_progress;dataset_progress_dirty_=true;
         }
         return;
     }
@@ -148,12 +148,17 @@ void Application::handleNotification(const AppNotification& event) {
          event.kind == MessageKind::StorageError || event.kind == MessageKind::LogWritten)) {
         const auto& completed = event.payload.storage_completion;
         applyStorage(completed.snapshot);
-        if (completed.read_kind == StorageReadKind::DatasetBrowser) { completeDataset(completed.dataset_view); return; }
+        if (completed.read_kind == StorageReadKind::DatasetBrowser) { completeDataset(completed.dataset); return; }
         if(completed.read_kind==StorageReadKind::LogBrowse) { completeBrowser(completed.logs); return; }
         if (completed.read_kind == StorageReadKind::Log) { log_retry_at_ = taskTimeMs(); return; }
         if (completed.read_kind == StorageReadKind::Dataset) {
             if (completed.request_id != dataset_check_waiting_) return;
             dataset_check_waiting_ = 0;
+            if(completed.place.state==PlaceState::Waiting) {
+                if(screen_==ScreenId::Boot && boot_stage_==BootStage::WaitDataset)boot_stage_=BootStage::NeedDataset;
+                else dataset_check_needed_=true;
+                return;
+            }
             if (applyDatasetInfo(data_.dataset, completed.place.dataset)) refreshPlace();
             if (screen_ == ScreenId::Boot && boot_stage_ == BootStage::WaitDataset && completed.request_id == BootDatasetRequest) {
                 data_.boot.dataset(completed.place.state); boot_stage_ = BootStage::Complete; bootChanged();
@@ -774,6 +779,7 @@ void Application::processLog() {
 
 void Application::runOnce() {
     drainNotifications();
+    processDataset();
     processPlace();
     if (restart_pending_) {
         message("RESTARTING...");
@@ -832,6 +838,7 @@ void Application::runOnce() {
         const TickType_t log_wait = pdMS_TO_TICKS(100);
         if (wait == portMAX_DELAY || wait > log_wait) wait = log_wait;
     }
+    if(dataset_pending_ || dataset_ready_ || dataset_progress_dirty_) {if(wait==portMAX_DELAY || wait>pdMS_TO_TICKS(20))wait=pdMS_TO_TICKS(20);}
     if(dataset_check_needed_ && !dataset_check_waiting_ && data_.storage.card_state == CardState::Mounted) { if(wait==portMAX_DELAY || wait>pdMS_TO_TICKS(50)) wait=pdMS_TO_TICKS(50); }
     if(browse_cancel_ || browse_release_generation_ || (screen_resources_.hasLogs() && screen_resources_.logs().need && !browse_waiting_)) { if(wait==portMAX_DELAY || wait>pdMS_TO_TICKS(50)) wait=pdMS_TO_TICKS(50); }
     if (notifications_.receive(event, wait)) handleNotification(event);

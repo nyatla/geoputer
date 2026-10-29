@@ -1,6 +1,9 @@
+#include "support/LogReaderFixture.h"
 #include "task/storage/StorageWorkArea.h"
 #include "task/storage/StorageScreenResources.h"
 #include "task/storage/StorageReplies.h"
+#include "task/storage/StorageIndexLease.h"
+#include "task/storage/StorageCodeImages.h"
 #include "map/MapFrameReceiver.h"
 #include <atomic>
 #include <cstdlib>
@@ -32,6 +35,52 @@ extern "C" int __wrap_fclose(FILE* file) {
     if(fail_close){fail_close=false;return EOF;}return result;
 }
 int main() {
+    {
+        static StorageCodeImages images;StorageScreenResources screens(images.map.image());
+        auto* address=images.map.image().data();images.point[0]=0x11223344;
+        screens.live_map.valid=screens.log_map.valid=true;
+        allocations=0;track=true;
+        {
+            StorageIndexLease lease(images.map,screens);
+            check(bool(lease) && images.map.indexing() && !screens.live_map.pixels && !screens.log_map.pixels,
+                  "index lifetime detaches all map pointers");
+            check(!screens.live_map.valid && !screens.log_map.valid,"index work invalidates both retained map sessions");
+            auto& work=*lease.work();
+            {FileReadBuffer a,b;a.resize(4096,work.available());b.resize(4096,work.available());
+             a[0]=0x12;b[0]=0x34;check(a.data()!=b.data() && a[0]==0x12 && b[0]==0x34,"simultaneous index buffers are separate");}
+            work.origins().back()={123,-456};
+            check(!work.inUse() && work.origins().back().x==123,"fixed origins cover the maximum chunk count");
+            StorageIndexLease nested(images.map,screens);check(!nested,"nested maintenance is refused");
+        }
+        track=false;
+        check(!allocations && !images.map.indexing() && screens.live_map.pixels==address && screens.log_map.pixels==address,
+              "normal lease restores fresh map bindings without C++ allocation");
+        check(!screens.live_map.valid && !screens.log_map.valid && images.point[0]==0x11223344,
+              "old map pixels are never reused and point cache stays intact");
+        bool failed=false;
+        try {StorageIndexLease lease(images.map,screens);throw std::runtime_error("injected index failure");}
+        catch(const std::runtime_error&){failed=true;}
+        check(failed && !images.map.indexing() && screens.live_map.pixels==address,"exception restores the map lifetime");
+        // A pending read prevents maintenance without disturbing retained maps.
+        auto* logs=screens.work.forLogs();LogReadRequest read{};read.kind=LogReadKind::List;
+        check(logs->begin(read),"pending log read");screens.live_map.valid=true;
+        {StorageIndexLease lease(images.map,screens);check(!lease && screens.live_map.valid,"pending read rejects maintenance before invalidation");}
+        logs->cancel();
+        // A returned read may still own a close-retry FIL; keep its protection.
+        const auto file_path=std::filesystem::temp_directory_path()/"rgp-index-lease-file.dat";
+        {auto* f=std::fopen(file_path.c_str(),"wb");check(f,"index lease fixture");std::fclose(f);}
+        ReadFile retained(0,&screens.work.files().primary());check(retained.openRead(file_path.string()),"retained FIL");
+        {StorageIndexLease lease(images.map,screens);check(!lease && screens.live_map.valid,"live FIL rejects maintenance");}
+        check(retained.close(),"release retained FIL");std::filesystem::remove(file_path);
+        auto* map_job=screens.work.forMap();map::FixedBoundaryImage back;
+        map::Request map_request{};map_request.token=77;map_request.buffer={back.storageData(),back.Capacity,77};
+        check(map_job && map_job->start(map_request,screens.live_map),"pending map borrow");
+        {StorageIndexLease lease(images.map,screens);check(!lease && !images.map.indexing(),"pending map read rejects maintenance");}
+        map_job->fail(map::Error::ReadError);
+        {StorageIndexLease lease(images.map,screens);check(!lease,"unreturned map completion also rejects maintenance");}
+        check(map_job->release(map_request),"return map write ownership");
+        {StorageIndexLease lease(images.map,screens);check(bool(lease),"maintenance resumes after map acknowledgement");}
+    }
     {
         map::CodeImageBuffer fixed{};StorageScreenResources resources(fixed);
         auto& live=resources.live_map;auto& history=resources.log_map;
@@ -83,7 +132,21 @@ int main() {
     check(!work.forMap() && work.activeLogs()==logs && !fail_close,"close failure preserves active reader and refuses overwrite");
     check(work.forMap(),"retry after close recovery succeeds");std::filesystem::remove(path);
 
-    // Long directories remain supported; repeated scans reuse one path allocation.
+    {
+        auto& slots=work.files();
+        const auto fixture=std::filesystem::temp_directory_path()/"rgp-two-file-loans.dat";
+        {auto* f=std::fopen(fixture.c_str(),"wb");check(f,"two-file fixture");std::fputs("test",f);std::fclose(f);}
+        ReadFile first(0,slots.available());check(first.openRead(fixture.string()),"first fixed FIL loan");
+        ReadFile second(0,slots.available());check(second.openRead(fixture.string()),"second fixed FIL loan");
+        bool rejected=false;try{(void)slots.available();}catch(const std::logic_error&){rejected=true;}
+        check(rejected && slots.inUse(),"third FIL loan is rejected without allocating a fallback");
+        check(second.close() && first.close() && !slots.inUse(),"both FIL loans returned");
+        const auto* primary=&slots.primary();const auto* secondary=&slots.secondary();
+        check(work.forLogs() && work.forMap() && primary==&work.files().primary() && secondary==&work.files().secondary(),
+              "both fixed FIL addresses survive job variant switches");
+        std::filesystem::remove(fixture);
+    }
+    // Borrowed long roots stay supported; even the first scan needs no C++ path allocation.
     const auto list_dir=std::filesystem::temp_directory_path()/"rgp-reusable-log-path"/std::string(180,'x');
     std::filesystem::create_directories(list_dir);
     for(unsigned i=0;i<32;++i) {
@@ -91,53 +154,67 @@ int main() {
         auto* file=std::fopen((list_dir/name).c_str(),"wb");check(file,"list fixture");std::fclose(file);
     }
     {
-        LogReader reader(list_dir.string());LogReadRequest list{};list.kind=LogReadKind::List;list.token=99;
+        const auto log_directory=list_dir.string();
+        test_storage::LogReader reader(log_directory);LogReadRequest list{};list.kind=LogReadKind::List;list.token=99;
         allocations=0;track=true;
         check(reader.begin(list),"first list accepted");while(!reader.done())reader.step();
         track=false;
-        check(reader.result().error==LogReadError::None && reader.result().count==LogListRows && allocations==1,
-              "first scan allocates one reusable path, regardless of directory entry count");
-        const auto before=reader.result();const auto* path=reader.path_.data();
+        check(reader.result().error==LogReadError::None && reader.result().count==LogListRows && allocations==0,
+              "first scan has no C++ path allocations, regardless of entry count");
+        const auto before=reader.result();
         allocations=0;track=true;
         check(reader.begin(list),"repeat list accepted");while(!reader.done())reader.step();
         track=false;
-        check(!allocations && reader.path_.data()==path && !std::memcmp(before.data.list.names,reader.result().data.list.names,sizeof(before.data.list.names)),
+        check(!allocations && !std::memcmp(before.data.list.names,reader.result().data.list.names,sizeof(before.data.list.names)),
               "repeated scan has identical sorted names and no C++ path allocation");
         list.kind=LogReadKind::Summary;std::strcpy(list.name,before.data.list.names[0]);
         allocations=0;track=true;
         check(reader.begin(list),"summary accepted");while(!reader.done())reader.step();
         track=false;
-        check(!allocations && reader.result().error==LogReadError::Header,"summary reuses path and still rejects an empty file");
+        check(!allocations && reader.result().error==LogReadError::Header,"summary uses a local path and still rejects an empty file");
     }
     std::filesystem::remove_all(list_dir.parent_path());
 
     // Screen exit only releases a terminal, closed reader from that generation.
     {
         auto* logs=work.forLogs();check(logs,"reader workspace for scope test");
-        logs->path_.assign(80,'x');
-        LogReadRequest read{};read.kind=LogReadKind::List;read.screen_generation=11;
-        check(logs->begin(read) && !work.releaseLogs(11) && !logs->path_.empty(),"active read excludes scope release");
-        logs->cancel();check(work.releaseLogs(10) && !logs->path_.empty(),"old scope release preserves a newer reader");
+        LogReadRequest read{};read.kind=LogReadKind::Summary;read.screen_generation=11;
+        std::strcpy(read.name,"retained.gps.dat");
+        check(logs->begin(read) && !work.releaseLogs(11) && !std::strcmp(logs->result().request.name,read.name),"active read excludes scope release");
+        logs->cancel();check(work.releaseLogs(10) && !std::strcmp(logs->result().request.name,read.name),"old scope release preserves a newer reader");
         check(logs->file_.openRead(path.string())==false,"removed fixture is absent");
         {auto* f=std::fopen(path.c_str(),"wb");check(f,"release fixture");std::fclose(f);}
         check(logs->file_.openRead(path.string()),"open retained read handle");
         fail_close=true;
-        check(!work.releaseLogs(11) && !logs->path_.empty(),"close failure preserves reader and path");
-        check(work.releaseLogs(11) && logs->path_.empty() && logs->path_.capacity()==std::string{}.capacity(),"successful retry releases path capacity");
+        check(!work.releaseLogs(11) && !std::strcmp(logs->result().request.name,read.name),"close failure preserves reader and target name");
+        check(work.releaseLogs(11) && !logs->file_.opened(),"successful retry closes the file before workspace reuse");
         std::filesystem::remove(path);check(work.forMap() && work.releaseLogs(11),"late reader release is harmless to map work");
     }
     // Writer close failures retain their retry identity; a completed retry frees it.
     {
         const auto writer_dir=std::filesystem::temp_directory_path()/"rgp-writer-close-path";
         std::filesystem::remove_all(writer_dir);std::filesystem::create_directory(writer_dir);
-        LogWriter writer(writer_dir.string());LogCommand point{};point.session_id=777;point.sample_seq=1;point.fix={35.0,140.0,0,true};
-        check(writer.open(777,UINT64_MAX)==LogError::None && writer.append(point)==LogError::None && writer.flush(1),"write close-retry fixture");
-        const auto old_path=writer.path();check(!old_path.empty(),"writer has retry identity");
+        const auto log_directory=writer_dir.string();
+        LogWriter writer(log_directory);LogCommand point{};point.session_id=777;point.sample_seq=1;point.fix={35.0,140.0,0,true};
+        allocations=0;track=true;
+        const bool written=writer.open(777,UINT64_MAX)==LogError::None && writer.append(point)==LogError::None && writer.flush(1);
+        track=false;check(written && !allocations,"first filename/create/write needs no C++ path allocation");
+        const auto old_path=std::string(writer.path().view());check(!old_path.empty(),"writer has retry identity");
         check(writer.requestFlush(777,1,true)==LogError::None,"request writer close");fail_close=true;
-        check(!writer.flush(2) && writer.path()==old_path && writer.snapshot().closing,"failed close retains path and closing state");
-        check(writer.flush(3) && writer.path().empty() && writer.path().capacity()==std::string{}.capacity() && !writer.snapshot().closing,
-              "completed close retry releases path capacity outside critical section");
+        allocations=0;track=true;const bool failed_close=!writer.flush(2);track=false;
+        check(failed_close && !allocations && std::string(writer.path().view())==old_path && writer.snapshot().closing,"failed close retains filename without C++ allocation");
+        allocations=0;track=true;const bool closed=writer.flush(3);track=false;
+        check(closed && !allocations && writer.retainedName().empty() && !writer.snapshot().closing,
+              "completed close retry clears active identity without C++ allocation");
         check(std::filesystem::exists(old_path) && writer.snapshot().name[0],"saved file and name remain after path release");
+        test_storage::LogReader reader(log_directory);LogReadRequest request{};
+        std::strcpy(request.name,writer.snapshot().name);request.session_id=777;request.limit=1;request.count=1;
+        for(const auto kind:{LogReadKind::Summary,LogReadKind::Records,LogReadKind::Statistics}) {
+            request.kind=kind;allocations=0;track=true;
+            const bool accepted=reader.begin(request);while(accepted && !reader.done())reader.step(&writer);
+            track=false;
+            check(accepted && !allocations && reader.result().error==LogReadError::None,"summary/records/statistics must use allocation-free local paths");
+        }
         std::filesystem::remove_all(writer_dir);
     }
 

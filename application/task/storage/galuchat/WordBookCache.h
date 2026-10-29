@@ -18,12 +18,16 @@ class WordBookCache {
 public:
     static constexpr size_t Capacity = config::WordBookCacheEntries;
 
-    bool find(uint32_t code, char (&lines)[2][64]) {
+    template<size_t N>
+    bool find(uint32_t code, char (&lines)[2][N]) {
+        static_assert(N>=64,"Cache copies the clipped display prefix");
         if (!code) return false;
         for (unsigned position = 0; position < count_; ++position) {
             const auto slot = order_[position];
             if (entries_[slot].code != code) continue;
-            std::memcpy(lines, entries_[slot].lines, sizeof(lines));
+            for(unsigned row=0;row<2;++row) {
+                std::memset(lines[row],0,N);std::memcpy(lines[row],entries_[slot].lines[row],64);
+            }
             promote(position);
             ++hits_;
             return true;
@@ -32,7 +36,9 @@ public:
         return false;
     }
 
-    void remember(uint32_t code, const char (&lines)[2][64]) {
+    template<size_t N>
+    void remember(uint32_t code, const char (&lines)[2][N]) {
+        static_assert(N>=64,"Cache stores the clipped display prefix");
         if (!code) return;
         unsigned position = 0;
         for (; position < count_; ++position)
@@ -45,7 +51,9 @@ public:
         }
         auto& entry = entries_[order_[position]];
         entry.code = code;
-        std::memcpy(entry.lines, lines, sizeof(entry.lines));
+        for(unsigned row=0;row<2;++row) {
+            std::memcpy(entry.lines[row],lines[row],64);entry.lines[row][63]='\0';
+        }
         promote(position);
     }
 

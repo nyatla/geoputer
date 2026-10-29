@@ -16,7 +16,9 @@ struct MapSession {
     size_t capacity=0;
     bool valid=false;
     MapSession()=default;
-    explicit MapSession(CodeImageBuffer& storage):pixels(storage.data()),capacity(storage.size()){}
+    explicit MapSession(CodeImageBuffer& storage) {bind(storage);}
+    void bind(CodeImageBuffer& storage) {clear();pixels=storage.data();capacity=storage.size();}
+    void unbind() {clear();pixels=nullptr;capacity=0;}
     MapSession(const MapSession&)=delete;
     MapSession& operator=(const MapSession&)=delete;
     MapSession(MapSession&& other) noexcept {moveFrom(other);}

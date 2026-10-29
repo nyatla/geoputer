@@ -7,6 +7,7 @@
 #include <memory>
 #include <stdexcept>
 #include <freertos/semphr.h>
+#include "../../../../application/task/storage/StorageCard.cpp"
 #include "../../../../application/task/storage/log/LogWriter.cpp"
 #include "../../../../application/task/storage/log/LogReader.cpp"
 
@@ -76,7 +77,7 @@ void verifyRing(const std::string& path,uint64_t session) {
     check(valid,"ring wrap preserves all 104 records in order with exact CRC");
 }
 void readExisting(uint8_t drive) {
-    auto reader=std::make_unique<LogReader>("/sd/logs");reader->setDrive(drive);
+    ReadFileSlot read_slot;auto reader=std::make_unique<LogReader>("/sd/logs",nullptr,&read_slot);reader->setDrive(drive);
     LogReadRequest request{};request.kind=LogReadKind::List;
     check(reader->begin(request),"accept existing log list");while(!reader->step())delay(1);
     check(reader->result().error==LogReadError::None,"read existing log directory without changes");
@@ -117,8 +118,8 @@ void setup() {
     std::string directory; std::vector<std::string> created;
     try {
         spi.begin(40,39,14,12);
-        const auto drive=sdcard_init(12,&spi,4000000);
-        check(drive!=0xff && sdcard_mount(drive,"/sd",5,false),"mount existing SD without formatting");
+        const auto drive=initStorageCard(12,&spi,4000000);
+        check(drive!=0xff && mountStorageCard(drive,"/sd",5,false),"mount existing SD without formatting");
         const uint64_t session=(static_cast<uint64_t>(esp_random())<<32)|esp_random();
         char name[80]; std::snprintf(name,sizeof(name),"/sd/.geoputer-log-test-%016llx",static_cast<unsigned long long>(session));
         directory=name; check(mkdir(directory.c_str(),0775)==0,"create unique test directory");
@@ -134,28 +135,28 @@ void setup() {
             for(unsigned n=1;n<=64;++n) { point.sample_seq=n; check(writer.append(point)==LogError::None,"append 64 points"); }
             check(activity.count==accesses,"RAM appends cause no SD access");
             point.sample_seq=65; check(writer.append(point)==LogError::BufferFull,"reject buffer overflow");
-            check(writer.flush(millis()),"save 64 points and FatFs f_sync"); created.push_back(writer.path());
+            check(writer.flush(millis()),"save 64 points and FatFs f_sync"); created.push_back(std::string(writer.path().view()));
             check(writer.snapshot().saved==64 && writer.snapshot().buffered==0,"committed counters");
-            verify(writer.path(),64,session);
+            verify(std::string(writer.path().view()),64,session);
             check(writer.requestFlush(session,64,false)==LogError::None && writer.flush(millis()),"pause boundary");
             check(writer.append(point)==LogError::None,"resume same session");
             check(writer.requestFlush(session,65,true)==LogError::None && writer.flush(millis()),"stop saves pending record and closes");
-            verify(writer.path(),65,session);
+            verify(std::string(writer.path().view()),65,session);
             check(writer.open(session,utc)==LogError::SessionExists,"reject duplicate persisted session");
             check(writer.open(session+1,utc)==LogError::None,"open collision-time session");
             point.session_id=session+1; point.sample_seq=1;
-            check(writer.append(point)==LogError::None && writer.flush(millis()),"save same-second session"); created.push_back(writer.path());
-            check(writer.path().find("_1.gps.dat")!=std::string::npos,"exclusive create suffix");
+            check(writer.append(point)==LogError::None && writer.flush(millis()),"save same-second session"); created.push_back(std::string(writer.path().view()));
+            check(std::string(writer.path().view()).find("_1.gps.dat")!=std::string::npos,"exclusive create suffix");
             check(writer.requestFlush(session+1,1,true)==LogError::None && writer.flush(millis()),"close second session");
             check(writer.open(session+2,UINT64_MAX)==LogError::None,"open empty session");
-            check(writer.requestFlush(session+2,0,true)==LogError::None && writer.flush(millis()) && writer.path().empty(),"empty session has no file");
+            check(writer.requestFlush(session+2,0,true)==LogError::None && writer.flush(millis()) && std::string(writer.path().view()).empty(),"empty session has no file");
             check(writer.open(session+3,UINT64_MAX)==LogError::None,"open concurrent ring session");
             point.session_id=session+3;
             for(unsigned n=1;n<=40;++n) {
                 point.sample_seq=n; point.fix.utc_epoch_ms=n*1000ull;
                 check(writer.append(point,millis())==LogError::None,"ring initial 40 points");
             }
-            saveDuringAppend(writer,activity,point,41,64); created.push_back(writer.path());
+            saveDuringAppend(writer,activity,point,41,64); created.push_back(std::string(writer.path().view()));
             check(writer.snapshot().saved==40 && writer.snapshot().buffered==24,"only the first pinned 40 records are released");
             for(unsigned n=65;n<=90;++n) {
                 point.sample_seq=n; point.fix.utc_epoch_ms=n*1000ull;
@@ -163,16 +164,16 @@ void setup() {
             }
             saveDuringAppend(writer,activity,point,91,104);
             check(writer.snapshot().saved==90 && writer.snapshot().buffered==14,"wrapped save retains its concurrently appended suffix");
-            auto reader=std::make_unique<LogReader>(directory,&activity);reader->setDrive(drive);
+            ReadFileSlot read_slot;auto reader=std::make_unique<LogReader>(directory,&activity,&read_slot);reader->setDrive(drive);
             LogReadRequest request{};request.kind=LogReadKind::Summary;
-            std::snprintf(request.name,sizeof(request.name),"%s",std::strrchr(writer.path().c_str(),'/')+1);
+            std::snprintf(request.name,sizeof(request.name),"%s",std::strrchr(std::string(writer.path().view()).c_str(),'/')+1);
             check(reader->begin(request) && reader->step(&writer) && reader->result().error==LogReadError::None && reader->result().summary.records==90,
                   "active log reader excludes the 14 buffered points and uses shared FIL");
             request.kind=LogReadKind::Records;request.session_id=session+3;request.limit=90;request.start=84;request.count=10;
             check(reader->begin(request) && reader->step(&writer) && reader->result().error==LogReadError::None && reader->result().count==6 && reader->result().eof,
                   "active reader observes fixed upper bound and short final batch");
             check(writer.requestFlush(session+3,104,true)==LogError::None && writer.flush(millis()),"close ring session");
-            verifyRing(writer.path(),session+3);
+            verifyRing(std::string(writer.path().view()),session+3);
             Serial.println("[RING-TEST] PASS records=104 wrap=OK concurrent_append=OK overflow=OK CRC=OK");
             request.kind=LogReadKind::Summary;
             check(reader->begin(request) && reader->step(&writer) && reader->result().summary.records==104,"reader sees final saved file after close");

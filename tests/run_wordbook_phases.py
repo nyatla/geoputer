@@ -51,7 +51,7 @@ def fixture(folder, tokens):
     for component in range(components):
         ids = [component] if component < components - 1 else list(range(component, tokens))
         expected.append(''.join(chr(65 + token % 26) for token in ids))
-        fields = [(2 * len(ids) + 1, 8)]
+        fields = [(byte, 8) for byte in mb(2 * len(ids) + 1)]
         for token in ids:
             fields += [(1, 2), (4 + token_bits, 8), (1, 4), (token, token_bits),
                        (2, 2), (4, 8), (1, 4)]
@@ -63,9 +63,13 @@ def fixture(folder, tokens):
     tt_start = len(book) + prefix
     book += data
     fields = []
-    for component in range(components - 1):
-        fields += [(component, 5), (1, 8), (0, 8)]
-    fields += [(1, 8), (components - 1, 5)]
+    # Put the long component first in the TI path, while TT remains sorted by
+    # token count. The bounded display path must exercise all TM page batches.
+    path_codes = [components - 1] + list(range(components - 1))
+    expected = expected[-1:] + expected[:-1]
+    for code in path_codes[:-1]:
+        fields += [(code, 5), (1, 8), (0, 8)]
+    fields += [(1, 8), (path_codes[-1], 5)]
     stream = packed(fields)
     ti_header = mb(components) + mb(1) + mb(5) + mb(1) + mb(len(stream))
     ti = ti_header + stream
@@ -98,7 +102,7 @@ def fixture(folder, tokens):
 def main():
     with tempfile.TemporaryDirectory(prefix='rgp-wordbook-phases-') as tmp:
         directory = Path(tmp)
-        for count in (32, 33, 65):
+        for count in (32, 33, 65, 111, 159, 160):
             fixture(directory / str(count), count)
         for backend in ('stdio', 'fatfs'):
             binary = directory / backend
@@ -113,8 +117,9 @@ def main():
                             '-I' + str(root / 'third_party/galuchat/include'),
                             str(root / 'tests/wordbook_phase_tests.cpp'),
                             str(root / 'application/task/storage/galuchat/DiskIndexedWordBookReader.cpp'),
+                            str(root / 'application/task/storage/galuchat/TextEncoding.cpp'),
                             '-o', str(binary)], check=True, timeout=180)
-            for count in (32, 33, 65):
+            for count in (32, 33, 65, 111, 159, 160):
                 subprocess.run([str(binary), str(directory / str(count)), str(count)],
                                check=True, timeout=30,
                                env=dict(os.environ, ASAN_OPTIONS='detect_leaks=0'))

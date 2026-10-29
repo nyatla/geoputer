@@ -1,5 +1,6 @@
 // Exercise production App dispatch and logging against queued GPS/UI and a real LogWriter.
 #include "Application.h"
+#include "task/storage/dataset/DatasetReadMemory.h"
 #include "utils/Console.h"
 #include "task/storage/log/LogFormat.h"
 #include "task/ui/KeyBindings.h"
@@ -15,8 +16,8 @@ std::vector<MessageKind> calls;
 bool fail_open=false,hold_place_queries=false;
 AppNotification late_dataset{};bool deliver_dataset_on_ui_send=false;
 StorageRequest last_read{};
-MapBuildJob map_backend;map::CodeImageBuffer shared_map_pixels{};map::MapSession live_session(shared_map_pixels),log_session(shared_map_pixels);
-bool reject_screen=false,reject_place_return=false;
+ReadFileSlot map_backend_file;MapBuildJob map_backend(map_backend_file);map::CodeImageBuffer shared_map_pixels{};map::MapSession live_session(shared_map_pixels),log_session(shared_map_pixels);
+bool reject_screen=false,reject_place_return=false,reject_dataset_return=false,reject_dataset_once=false;
 void check(bool ok,const char* why){if(!ok)throw std::runtime_error(why);}
 void route(QueueHandle_t queue) {
     ReturnMessage reply{};
@@ -37,6 +38,14 @@ void route(QueueHandle_t queue) {
             result.status=reject_screen?OperationStatus::Unavailable:app->ui_.model_.setScreen(command.payload.screen);
             reject_screen=false;
         }
+        else if(command.kind==MessageKind::BeginDatasetRead)result.status=app->ui_.model_.beginDatasetRead(command.payload.dataset.request,result.map_buffer);
+        else if(command.kind==MessageKind::CommitDatasetRead)result.status=app->ui_.model_.commitDatasetRead(command.payload.dataset);
+        else if(command.kind==MessageKind::DiscardDatasetRead) {
+            if(reject_dataset_return){reject_dataset_return=false;result.status=OperationStatus::Unavailable;}
+            else result.status=app->ui_.model_.discardDatasetRead(command.payload.dataset);
+        }
+        else if(command.kind==MessageKind::DatasetReadError)result.status=app->ui_.model_.datasetReadError(command.payload.dataset);
+        else if(command.kind==MessageKind::UpdateDatasetProgress)result.status=app->ui_.model_.updateDatasetProgress(command.payload.dataset_progress);
         else if(command.kind==MessageKind::BeginPlaceSearch)result.status=app->ui_.model_.beginPlaceSearch(command.payload.place,result.map_buffer);
         else if(command.kind==MessageKind::CommitPlaceSearch)result.status=app->ui_.model_.commitPlaceSearch(command.payload.place);
         else if(command.kind==MessageKind::DiscardPlaceSearch) {
@@ -68,6 +77,7 @@ void route(QueueHandle_t queue) {
         if(command.kind==MessageKind::DatasetOperation || command.kind==MessageKind::ListLogs ||
            command.kind==MessageKind::ReadLogSummary || command.kind==MessageKind::ReadLogRecords || command.kind==MessageKind::ReadLogStatistics) {
             last_read=command;result.status=OperationStatus::Ok;
+            if(command.kind==MessageKind::DatasetOperation && reject_dataset_once){reject_dataset_once=false;result.status=OperationStatus::Unavailable;}
             result.storage=app->data_.storage;++result.storage.revision;
             result.storage.busy=command.kind==MessageKind::DatasetOperation;
             check(app->results_.send(reply),"read request return queue full");return;
@@ -113,7 +123,9 @@ bool Application::operateUsbExport(const UiAction&){throw std::runtime_error("un
 }
 int main(){
     char directory[]="/tmp/rgp-app-log-XXXXXX";check(mkdtemp(directory)!=nullptr,"temp directory");
-    Application instance;app=&instance;app->storage_.log_writer_.directory_=std::string(directory)+"/logs";
+    const std::string log_directory=std::string(directory)+"/logs";
+    Application instance;app=&instance;check(&app->storage_.selected_dataset_==&app->storage_.place_lookup_.selected_,
+        "Storage owns one session borrowed by lookup; App stores no second session");app->storage_.log_writer_.directory_=LogDirectory(log_directory);
     check(app->results_.initialize() && app->notifications_.initialize() && app->gps_.initialize() && app->ui_.initialize() && app->storage_.initialize(),"queues");
     hostQueueHook=route;app->screen_=ScreenId::GpsLogger;app->generation_=1;app->data_.settings=defaultSettings();app->data_.settings.log_interval=0;
     app->data_.storage.card_state=CardState::Mounted;app->data_.storage.revision=1;
@@ -212,40 +224,65 @@ int main(){
         std::strcmp(app->data_.place[0],"LATE SCREEN NAME"),"old screen result is returned without publication");
     check(app->setScreen(ScreenId::Map),"restore map after place-lifetime scenarios");
     std::puts("PASS: shared current-place lookup on map, changed-cell dispatch, same-cell suppression and map-job exclusion");
-    // A delayed catalog response must not overwrite the Logs page even when it
-    // arrives inside the synchronous SetUiScreen call, before generation changes.
+    // Dataset text stays in the UI back loan, including a screen switch during a sync wait.
     hold_place_queries=false;app->data_.storage.busy=false;
     app->data_.recording={};app->data_.storage.log={};app->data_.storage.settings_state=SettingsState::Loaded;
     check(app->setScreen(ScreenId::Settings),"enter settings before catalog read");
     DatasetRequest catalog{};catalog.action=DatasetAction::Open;
-    check(app->requestDataset(catalog) && app->data_.hasDatasets() && app->data_.datasets().loading,"catalog accepted");
-    late_dataset={};late_dataset.source=TaskId::Storage;late_dataset.kind=MessageKind::ReadCompleted;
-    auto& catalog_reply=late_dataset.payload.storage_completion;
-    catalog_reply.read_kind=StorageReadKind::DatasetBrowser;
-    catalog_reply.snapshot=app->data_.storage;++catalog_reply.snapshot.revision;catalog_reply.snapshot.busy=false;
-    catalog_reply.snapshot.settings=app->data_.settings;
-    catalog_reply.dataset_view.revision=app->dataset_waiting_;catalog_reply.dataset_view.count=1;
-    std::strcpy(catalog_reply.dataset_view.rows[0].title,"DELAYED DATASET");
-    deliver_dataset_on_ui_send=true;
-    check(app->setScreen(ScreenId::Logs),"shortcut from settings to logs while catalog is pending");
-    check(!app->dataset_waiting_ && app->data_.hasBrowse() && app->data_.browse().loading &&
-          !app->data_.browse().deleting && !app->data_.browse().names[0][0],"late catalog must release token without overwriting browser");
-    check(app->ui_.model_.data().hasBrowse(),"UI receives browser payload after the synchronous shortcut");
-    // Conversely, a late log result cannot replace the dataset payload.
-    app->processBrowser();check(last_read.kind==MessageKind::ListLogs,"browser queues a real read request");
+    check(app->requestDataset(catalog) && !app->data_.hasDatasets() && app->ui_.model_.data().datasets().loading,"UI owns pending catalog, App holds control only");
+    auto request=app->dataset_borrow_;check(validDatasetMemory(request) && app->ui_.model_.mapFrame().leased(),"catalog borrows the fixed back image");
+    auto makeCatalog=[&](const DatasetRequest& req,const char* title) {
+        auto& view=*datasetResultMemory(req);view={};view.revision=req.token;view.count=1;view.rows[0].number=2;
+        std::snprintf(view.rows[0].title,sizeof(view.rows[0].title),"%s",title);
+        AppNotification event{};event.source=TaskId::Storage;event.kind=MessageKind::ReadCompleted;
+        auto& done=event.payload.storage_completion;done.read_kind=StorageReadKind::DatasetBrowser;
+        done.snapshot=app->data_.storage;++done.snapshot.revision;done.snapshot.busy=false;
+        done.dataset={req,DatasetError::None};return event;
+    };
+    late_dataset=makeCatalog(request,"DELAYED DATASET");deliver_dataset_on_ui_send=true;
+    check(app->setScreen(ScreenId::Logs),"shortcut to logs during catalog write");
+    check(app->dataset_waiting_ && app->ui_.model_.mapFrame().leased(),"notification cannot return a loan from inside a sync wait");
+    app->processDataset();
+    check(!app->dataset_waiting_ && !app->ui_.model_.mapFrame().leased() && app->data_.hasBrowse() && !app->data_.browse().names[0][0],"late catalog returns loan without replacing Logs");
+    app->processBrowser();check(last_read.kind==MessageKind::ListLogs,"browser queues read");
     const auto log_request=last_read.payload.log_read;
-    check(app->setScreen(ScreenId::Settings),"leave log read for settings");
-    check(app->requestDataset(catalog),"new catalog request selects dataset payload");
-    const auto catalog_token=app->dataset_waiting_;
-    LogReadReply late_log{};late_log.request=log_request;late_log.count=1;
-    std::strcpy(late_log.data.list.names[0],"must-not-overwrite-dataset.gps.dat");
-    app->completeBrowser(late_log);
-    check(app->data_.hasDatasets() && app->data_.datasets().loading && !app->browse_waiting_,
-          "late log releases its token but leaves dataset payload intact");
-    DatasetView ready{};ready.revision=catalog_token;ready.count=1;ready.rows[0].number=2;
-    std::strcpy(ready.rows[0].title,"CURRENT DATASET");app->completeDataset(ready);
-    check(app->data_.hasDatasets() && !app->data_.datasets().loading &&
-          !std::strcmp(app->data_.datasets().rows[0].title,"CURRENT DATASET"),"current catalog still completes normally");
+    check(app->setScreen(ScreenId::Settings) && app->requestDataset(catalog),"catalog intent can wait for an old log read");
+    LogReadReply late_log{};late_log.request=log_request;late_log.count=1;std::strcpy(late_log.data.list.names[0],"must-not-overwrite-dataset.gps.dat");
+    app->completeBrowser(late_log);app->processDataset();
+    check(app->dataset_waiting_ && !app->data_.hasDatasets(),"App never stores catalog result");
+    auto current=makeCatalog(app->dataset_borrow_,"CURRENT DATASET");app->handleNotification(current);app->processDataset();
+    check(!app->dataset_waiting_ && !std::strcmp(app->ui_.model_.data().datasets().rows[0].title,"CURRENT DATASET"),"current catalog publishes in UI");
+    app->publishUiContent();
+    check(!std::strcmp(app->ui_.model_.data().datasets().rows[0].title,"CURRENT DATASET"),"general App updates cannot overwrite the UI-owned page");
+    // Superseding read, failed return and resubmission preserve the old lease.
+    app->data_.storage.busy=false;check(app->requestDataset(catalog),"first superseded read");request=app->dataset_borrow_;
+    catalog.number=2;check(app->requestDataset(catalog) && app->dataset_borrow_.token==request.token,"new intent cannot revoke Storage loan");
+    auto superseded=makeCatalog(request,"SUPERSEDED");app->handleNotification(superseded);reject_dataset_return=true;app->processDataset();
+    check(app->dataset_borrow_.token==request.token,"failed return retains owner");app->processDataset();
+    check(app->dataset_borrow_.token && app->dataset_borrow_.token!=request.token,"next read begins after old loan returns");
+    current=makeCatalog(app->dataset_borrow_,"LATEST");app->handleNotification(current);app->processDataset();
+    check(!std::strcmp(app->ui_.model_.data().datasets().rows[0].title,"LATEST"),"superseded text never publishes");
+    reject_dataset_once=true;check(app->requestDataset(catalog) && app->dataset_ready_,"rejected Storage submission schedules loan return");
+    app->processDataset();check(app->dataset_borrow_.token && app->dataset_queued_,"rejected request retries after returning UI back");
+    current=makeCatalog(app->dataset_borrow_,"RETRIED");app->handleNotification(current);app->processDataset();
+    DatasetRequest verify{};verify.action=DatasetAction::VerifyIndex;verify.purpose=DatasetPurpose::Verify;verify.number=app->data_.settings.dataset;
+    check(app->requestDataset(verify) && app->dataset_applying_,"maintenance enters busy state without an App result payload");
+    AppNotification progress_event{};progress_event.source=TaskId::Storage;progress_event.kind=MessageKind::DatasetProgress;
+    progress_event.payload.index_progress.token=app->dataset_waiting_;progress_event.payload.index_progress.percent=55;
+    app->handleNotification(progress_event);app->processDataset();
+    check(app->ui_.model_.data().datasets().progress.percent==55,"App forwards progress without copying display text");
+    current=makeCatalog(app->dataset_borrow_,"UNUSED MAINTENANCE TEXT");app->handleNotification(current);app->processDataset();
+    check(app->dataset_check_needed_ && !app->dataset_applying_ && !app->ui_.model_.data().datasets().applying,"maintenance completion schedules dataset check and releases UI loan");
+    app->dataset_check_needed_=false;
+    // Scratch contention during initialization is retryable and keeps the selected dataset.
+    const auto selected=app->data_.settings.dataset;app->dataset_check_waiting_=123;
+    AppNotification busy{};busy.source=TaskId::Storage;busy.kind=MessageKind::ReadCompleted;
+    auto& blocked=busy.payload.storage_completion;blocked.read_kind=StorageReadKind::Dataset;blocked.request_id=123;
+    blocked.snapshot=app->data_.storage;++blocked.snapshot.revision;blocked.place.state=PlaceState::Waiting;
+    app->handleNotification(busy);
+    check(!app->dataset_check_waiting_ && app->dataset_check_needed_ && app->data_.settings.dataset==selected,"initialization scratch contention retries without unselecting dataset");
+    app->dataset_check_needed_=false;
+    std::puts("PASS: UI dataset loans, App control-only state, stale/superseded results, retryable returns and init scratch contention");
     // Preserve list names and selection through detail/point/back navigation.
     check(app->setScreen(ScreenId::Logs),"reopen browser after dataset use");
     auto& list=app->data_.editBrowse();list.loading=false;list.count=2;list.selected=1;++list.revision;

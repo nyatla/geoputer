@@ -1,16 +1,20 @@
+#include "support/StorageFixture.h"
 #include <filesystem>
 #include "support/MapIndexFixture.h"
 #include <fstream>
 #include <stdexcept>
 #include <cstring>
 #include "task/storage/dataset/DatasetCatalog.h"
+#include "task/storage/StorageIndexLease.h"
+#include "task/storage/StorageCodeImages.h"
 #include "task/storage/galuchat/PlaceLookup.h"
 using namespace geoputer;
 namespace fs=std::filesystem;
+namespace candidate_heap {extern bool track;extern size_t calls,bytes;}
 std::vector<uint8_t> oversizedMapFixture(unsigned count);
 namespace {void check(bool ok,const char* text){if(!ok)throw std::runtime_error(text);}}
 void testDatasetFiles(const std::string& temporary,const std::string& map,const std::string& book) {
-    const auto root=fs::path(temporary)/"catalog";fs::create_directories(root);
+    const auto root=fs::path(temporary)/"catalog";const auto dataset_root=root.string();fs::create_directories(root);
     auto manifest=[&](unsigned number,const std::string& text){char name[12];std::snprintf(name,sizeof(name),"%02u",number);const auto dir=root/name;fs::create_directories(dir);std::ofstream(dir/"dataset.ini")<<text;return dir;};
     const std::string ini="[dataset]\nversion=1\nmap=map.glc\ndefault_language=ja\n[ja]\ntitle=日本\ndescription=市区町村\nwordbook=ja.giswordbook\n[en]\ntitle=Japan\nwordbook=en.giswordbook\n";
     auto dir=manifest(1,ini);
@@ -21,7 +25,8 @@ void testDatasetFiles(const std::string& temporary,const std::string& map,const 
     {std::ofstream(dir/"unselected.glc")<<"invalid";std::ofstream(dir/"unselected.giswordbook")<<"invalid";}
     for(unsigned n:{2u,10u,21u,55u,99u})manifest(n,ini);
     fs::create_directories(root/"00");fs::create_directories(root/"100");fs::create_directories(root/"abc");
-    DatasetCatalog catalog(root.string());DatasetRequest request{};request.action=DatasetAction::Open;
+    test_storage::Resources catalog_resources;
+    DatasetCatalog catalog(dataset_root,nullptr,0,&catalog_resources.files,&catalog_resources.work);DatasetRequest request{};request.action=DatasetAction::Open;
     auto list=catalog.read(request,UiLanguage::English);
     check(list.count==4 && list.rows[0].number==0 && list.rows[3].number==10 && list.has_newer && !list.has_older,"numeric ID list is ordered, bounded and paginated without opening GLCs");
     check(!std::strcmp(list.rows[1].title,"Japan"),"catalog chooses the UI title independently");
@@ -45,9 +50,38 @@ void testDatasetFiles(const std::string& temporary,const std::string& map,const 
     request.action=DatasetAction::Language;std::strcpy(request.language,"ja");request.direction=1;
     detail=catalog.read(request,UiLanguage::Japanese);
     check(detail.error==DatasetError::None && !std::strcmp(detail.info.language,"en"),"next language selects the exact named Wordbook");
+    {
+        static StorageCodeImages images;StorageScreenResources screens(images.map.image());
+        auto* address=images.map.image().data();images.point[0]=0x1234abcd;
+        screens.live_map.valid=screens.log_map.valid=true;
+        ReadFileSlots files;
+        {
+            StorageIndexLease lease(images.map,screens);check(bool(lease),"candidate can borrow the existing 96KiB");
+            DatasetCatalog borrowed(dataset_root,nullptr,0,&files,lease.work());
+            DatasetView received{};DatasetRequest query{};query.action=DatasetAction::Detail;query.number=1;
+            candidate_heap::calls=candidate_heap::bytes=0;candidate_heap::track=true;
+            borrowed.readInto(query,UiLanguage::English,received);candidate_heap::track=false;
+            check(received.error==DatasetError::None && !candidate_heap::calls && !lease.work()->inUse() && !files.inUse(),
+                  "candidate detail uses stack Readers, borrowed buffers and zero C++ allocations");
+            check(received.info.chunks==detail.info.chunks && received.info.west==detail.info.west && received.info.east==detail.info.east &&
+                  received.info.unit_inv_x==detail.info.unit_inv_x && !std::strcmp(received.info.title,"Japan"),"borrowed map coverage and direct text equal the compatibility result");
+            query.action=DatasetAction::Language;std::strcpy(query.language,"ja");query.direction=1;
+            candidate_heap::calls=candidate_heap::bytes=0;candidate_heap::track=true;
+            borrowed.readInto(query,UiLanguage::Japanese,received);candidate_heap::track=false;
+            check(received.error==DatasetError::None && !candidate_heap::calls && !std::strcmp(received.info.language,"en") &&
+                  !lease.work()->inUse() && !files.inUse(),"language candidate checks use the same zero-allocation SD path");
+            // A bad candidate cannot retain either FIL or borrowed buffer.
+            query.number=2;query.action=DatasetAction::Detail;
+            borrowed.readInto(query,UiLanguage::Japanese,received);
+            check(received.error==DatasetError::Missing && !lease.work()->inUse() && !files.inUse(),"missing candidate returns all borrowed resources");
+        }
+        check(!images.map.indexing() && !screens.live_map.valid && !screens.log_map.valid && screens.live_map.pixels==address &&
+              screens.log_map.pixels==address && images.point[0]==0x1234abcd,
+              "candidate borrowing invalidates retained maps, rebinds the raster and preserves the point cache");
+    }
     fs::remove(dir/"en.giswordbook");request.action=DatasetAction::Detail;std::strcpy(request.language,"en");
     check(catalog.read(request,UiLanguage::Japanese).error==DatasetError::Missing,"missing selected Wordbook does not fall back to another file");
-    CodeCacheBuffer lookup_pixels{};SelectedDataset lookup_dataset;PlaceLookup lookup(lookup_pixels,lookup_dataset,dir.string());lookup.configure(dir.string(),"ja");
+    CodeCacheBuffer lookup_pixels{};SelectedDataset lookup_dataset;test_storage::Lookup lookup(lookup_pixels,lookup_dataset,0,dataset_root);lookup.configure(1,"ja");
     check(lookup.prepare().state==PlaceState::DataError,"missing saved index is a dataset error without automatic generation");
     test_index::generate(dir.string(),"map.glc","ja.giswordbook");lookup.close();
     check(lookup.prepare().state==PlaceState::Ready && lookup.selectedLanguage()=="ja","strict manifest tolerates unselected extra files");
@@ -69,18 +103,18 @@ void testDatasetFiles(const std::string& temporary,const std::string& map,const 
         output.write(bytes.data(),bytes.size());
     }
     request.action=DatasetAction::Apply;request.number=1;std::strcpy(request.language,"en");
-    check(catalog.read(request,UiLanguage::Japanese).error==DatasetError::Encoding &&
+    check(catalog.read(request,UiLanguage::Japanese).error==DatasetError::None &&
           lookup.search(point).state==PlaceState::Ready && lookup.cacheStats().fills==before.fills,
-          "unsupported candidate language fails validation without disturbing the active UTF-8 caches");
+          "opaque metadata does not reject a candidate or disturb the active UTF-8 caches");
     lookup.close();
     manifest(1,ini+"display_line1=%1%2%3%4\ndisplay_line2=%0 %%\n");
-    lookup.configure(dir.string(),"ja");
+    lookup.configure(1,"ja");
     const auto defaults=lookup.search(point);
     check(defaults.state==PlaceState::Ready && !std::strcmp(defaults.lines[0],"千葉県 習志野市"),
           "unselected English format does not affect the selected Japanese Wordbook");
     const auto ja_end=ini.find("[en]");
     manifest(1,ini.substr(0,ja_end)+"display_line1=%1%2%3%4\ndisplay_line2=%0 %%\n"+ini.substr(ja_end));
-    lookup.configure(dir.string(),"ja");
+    lookup.configure(1,"ja");
     const auto formatted=lookup.search(point);
     check(formatted.state==PlaceState::Ready && !std::strcmp(formatted.lines[0],"習志野市") &&
           !std::strcmp(formatted.lines[1],"千葉県 %"), "real dictionary fields expand into the configured final two rows");

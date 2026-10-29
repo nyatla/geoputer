@@ -1,4 +1,4 @@
-"""Compare owned/borrowed index buffers for one or more map/Wordbook pairs."""
+"""Verify fixed caller-owned map buffers against an independent reference layout."""
 import argparse,os,subprocess,tempfile
 from pathlib import Path
 root=Path(__file__).resolve().parents[1]

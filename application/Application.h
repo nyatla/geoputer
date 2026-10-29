@@ -72,7 +72,9 @@ private:
     bool showCachedPoint();
     bool operateDataset(const UiAction& action);
     bool requestDataset(DatasetRequest request);
-    void completeDataset(const DatasetView& view);
+    void completeDataset(const DatasetCompletion& completion);
+    void processDataset();
+    [[gnu::noinline]] bool datasetUiCommand(MessageKind,const DatasetCompletion&,map::BufferLease* =nullptr,const IndexProgress* =nullptr);
     bool datasetChangeReady() const;
 
     Queue<AppNotification, 8> notifications_;
@@ -108,8 +110,11 @@ private:
     PlaceRequest place_borrow_{};
     bool place_completion_ready_=false,place_queued_=false,place_discard_=false;
     uint32_t dataset_token_ = 0, dataset_waiting_ = 0;
+    DatasetRequest dataset_borrow_{},dataset_next_{};
+    IndexProgress dataset_progress_{};
+    DatasetError dataset_error_=DatasetError::None;
+    bool dataset_pending_=false,dataset_ready_=false,dataset_queued_=false,dataset_discard_=false,dataset_progress_dirty_=false;
     bool dataset_applying_ = false, restart_pending_ = false;
-    DatasetAction dataset_operation_ = DatasetAction::Open;
     bool dataset_check_needed_ = false;
     uint32_t dataset_check_waiting_ = 0;
     uint32_t place_request_id_ = 0x90000000u;

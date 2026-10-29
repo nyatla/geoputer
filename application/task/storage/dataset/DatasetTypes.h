@@ -2,12 +2,12 @@
 #include "../../../Config.h"
 #include "../log/LogTypes.h"
 #include "../PlaceTypes.h"
+#include "../../../map/MapTypes.h"
 
 namespace geoputer {
 enum class DatasetPurpose : uint8_t { Select, Rebuild, Verify };
 enum class DatasetAction : uint8_t { Open, Older, Newer, Detail, Language, Apply, CancelLanguage, RebuildIndex, VerifyIndex, Clear };
 enum class DatasetError : uint8_t { None, Missing, Metadata, Version, Data, Encoding, TooManyChunks, NoMemory, NotStopped, SaveFailed, IndexFailed, IndexRestoreFailed, Busy, IndexMismatch, Unselected, CardUnavailable, AlreadyUnselected, SettingsUnavailable };
-enum class IndexTarget : uint8_t { All, Map, WordBooks, Reuse };
 enum class IndexPhase : uint8_t { Idle, Preparing, Map, TI, TT, TM, Structure, Publish, Complete, Failed };
 struct IndexProgress {
     uint32_t token, elapsed_ms;
@@ -20,12 +20,13 @@ using IndexProgressCallback=void (*)(void*,const IndexProgress&);
 struct DatasetRequest {
     DatasetAction action;
     DatasetPurpose purpose;
-    IndexTarget index_target;
     uint32_t token;
     uint8_t number;
     int8_t direction;
     bool reset_settings;
     char language[config::DatasetLanguageBytes];
+    uint32_t screen_generation=0;
+    map::BufferLease buffer{};
 };
 struct DatasetRow { uint8_t number; char title[64]; DatasetError error; };
 struct DatasetDetail {
@@ -44,6 +45,18 @@ struct DatasetView {
     IndexProgress progress;
     union { DatasetRow rows[config::DatasetPageRows]; DatasetDetail info; };
 };
+struct DatasetCompletion {
+    DatasetRequest request;
+    DatasetError error;
+};
+inline bool datasetMutation(DatasetAction action) {
+    return action==DatasetAction::Apply || action==DatasetAction::Clear ||
+        action==DatasetAction::RebuildIndex || action==DatasetAction::VerifyIndex;
+}
+inline bool sameDatasetRequest(const DatasetRequest& a,const DatasetRequest& b) {
+    return a.token && a.token==b.token && a.screen_generation==b.screen_generation &&
+        a.action==b.action && a.purpose==b.purpose && a.number==b.number && map::sameBuffer(a.buffer,b.buffer);
+}
 inline bool datasetLogStopped(const RecordingSnapshot& recording,const LogSnapshot& log) {
     return loggerStopped(recording, log);
 }

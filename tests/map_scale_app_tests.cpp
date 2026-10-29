@@ -7,7 +7,7 @@
 #include <cstdio>
 using namespace geoputer;
 namespace {
-MapBuildJob backend;map::CodeImageBuffer session_pixels{};map::MapSession session(session_pixels);
+ReadFileSlot backend_file;MapBuildJob backend(backend_file);map::CodeImageBuffer session_pixels{};map::MapSession session(session_pixels);
 std::vector<MessageKind> commands;
 bool reject_cancel=false,reject_request=false,reject_discard=false;
 void check(bool value,const char* why){if(!value)throw std::runtime_error(why);}

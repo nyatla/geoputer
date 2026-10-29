@@ -3,7 +3,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <stdexcept>
-#include <vector>
 
 namespace geoputer {
 class FileReadBuffer;
@@ -29,24 +28,22 @@ private:
     size_t capacity_;
     bool used_=false;
 };
-// Own a vector, or hold a non-owning lease. Destruction never frees borrowed RAM.
+// Mandatory borrowed storage; this class never allocates.
 class FileReadBuffer {
 public:
     FileReadBuffer()=default;
     ~FileReadBuffer() {if(borrowed_)borrowed_->release();}
     FileReadBuffer(const FileReadBuffer&)=delete;
     FileReadBuffer& operator=(const FileReadBuffer&)=delete;
-    void resize(size_t bytes,BorrowedReadBuffer* borrowed=nullptr) {
-        if(data_ || !bytes)throw std::invalid_argument("invalid read buffer initialization");
-        if(borrowed) {data_=borrowed->acquire(bytes);borrowed_=borrowed;}
-        else {owned_.resize(bytes);data_=owned_.data();}
+    void resize(size_t bytes,BorrowedReadBuffer* borrowed) {
+        if(data_ || !bytes || !borrowed)throw std::invalid_argument("invalid read buffer initialization");
+        data_=borrowed->acquire(bytes);borrowed_=borrowed;
         bytes_=bytes;
     }
     size_t size() const {return bytes_;}
     uint8_t* data() {return data_;}
     uint8_t& operator[](size_t offset) {return data_[offset];}
 private:
-    std::vector<uint8_t> owned_;
     BorrowedReadBuffer* borrowed_=nullptr;
     uint8_t* data_=nullptr;
     size_t bytes_=0;

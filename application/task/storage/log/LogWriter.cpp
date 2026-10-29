@@ -9,20 +9,35 @@
 #include <unistd.h>
 
 namespace geoputer {
+namespace {
+[[gnu::noinline]] bool sameSession(FILE* file,uint64_t session) {
+    uint8_t header[LogHeaderBytes];const auto count=std::fread(header,1,sizeof(header),file);
+    return count==sizeof(header) && validLogHeader(header) && logGet(header+16,8)==session;
+}
+}
+std::string_view LogWriter::retainedName() const {
+    // Storage-only reference. App changes record counters, never filename bytes.
+    ShortLock::Guard guard(lock_);
+    return state_.open || state_.closing || state_.buffered?std::string_view(state_.name):std::string_view{};
+}
+bool LogWriter::matches(const LogDirectory& directory,std::string_view name,bool fold) const {
+    const auto retained=retainedName();
+    return !retained.empty() && directory_.same(directory,fold) && LogDirectory::equal(retained,name,fold);
+}
 bool LogWriter::sameSessionExists(uint64_t session, bool& io_error) {
     SdAccessScope scope(observer_);
-    DIR* dir=opendir(directory_.c_str());
+    if(!directory_.valid()) {io_error=true;errno=ENAMETOOLONG;return false;}
+    DIR* dir=directory_.open();
     if (!dir) { io_error=errno!=ENOENT; return false; }
     bool found=false;
     while (auto* entry=readdir(dir)) {
         const std::string_view name=entry->d_name;
         if (name.size()<8 || name.compare(name.size()-8,8,".gps.dat")) continue;
-        auto* file=std::fopen((directory_+"/"+entry->d_name).c_str(),"rb");
+        if(!directory_.fits(name)) {io_error=true;errno=ENAMETOOLONG;break;}
+        auto* file=directory_.openStream(name);
         if (!file) { io_error=true; break; }
-        uint8_t header[512];
-        const auto count=std::fread(header,1,sizeof(header),file);
-        std::fclose(file);
-        if (count==sizeof(header) && validLogHeader(header) && logGet(header+16,8)==session) { found=true; break; }
+        found=sameSession(file,session);std::fclose(file);
+        if(found)break;
     }
     closedir(dir);
     return found;
@@ -46,7 +61,7 @@ LogError LogWriter::open(uint64_t session, uint64_t created) {
     bool io_error=false;
     if (sameSessionExists(session,io_error)) return LogError::SessionExists;
     if (io_error) return LogError::Io;
-    path_.clear(); header_saved_=false;
+    header_saved_=false;
     ShortLock::Guard guard(lock_);
     const auto revision=state_.revision;
     state_={}; state_.revision=revision; state_.open=true; state_.session_id=session;
@@ -88,26 +103,26 @@ LogError LogWriter::requestFlush(uint64_t session, uint32_t boundary, bool close
     return LogError::None;
 }
 bool LogWriter::createFile(uint64_t session, uint64_t first_utc) {
-    if (file_.opened()) return true;
-    if (mkdir(directory_.c_str(),0775) && errno!=EEXIST) return false;
-    if (path_.empty()) {
-        char prefix[64], time[24];
-        if (formatJstFilenameTime(first_utc,time,sizeof(time))) std::snprintf(prefix,sizeof(prefix),"%s",time);
-        else std::snprintf(prefix,sizeof(prefix),"undated_%016llx",static_cast<unsigned long long>(session));
-        for (uint32_t n=0;;++n) {
-            path_=directory_+"/"+prefix+"_"+std::to_string(n)+".gps.dat";
-            if (file_.open(path_,true)) break;
-            if (errno!=EEXIST || n==UINT32_MAX) { path_.clear(); return false; }
+    if(file_.opened())return true;
+    if(!directory_.ensure())return false;
+    const auto retained=retainedName();
+    if(!retained.empty())return directory_.openWrite(file_,retained,false);
+    char prefix[25];
+    if(!formatJstFilenameTime(first_utc,prefix,sizeof(prefix)))
+        std::snprintf(prefix,sizeof(prefix),"undated_%016llx",static_cast<unsigned long long>(session));
+    for(uint32_t n=0;;++n) {
+        char name[sizeof(state_.name)];
+        const auto length=std::snprintf(name,sizeof(name),"%s_%lu.gps.dat",prefix,static_cast<unsigned long>(n));
+        if(length<0 || size_t(length)>=sizeof(name) || !directory_.fits(name)){errno=ENAMETOOLONG;return false;}
+        if(directory_.openWrite(file_,name,true)) {
+            ShortLock::Guard guard(lock_);std::memcpy(state_.name,name,size_t(length)+1);return true;
         }
-    } else {
-        // Retry a previously created but not yet committed header, never truncate.
-        file_.open(path_,false);
+        if(errno!=EEXIST || n==UINT32_MAX)return false;
     }
-    if (file_.opened()) {
-        ShortLock::Guard guard(lock_);
-        std::snprintf(state_.name, sizeof(state_.name), "%s", path_.c_str() + directory_.size() + 1);
-    }
-    return file_.opened();
+}
+bool LogWriter::writeHeader(uint64_t session,uint64_t created) {
+    uint8_t header[LogHeaderBytes];encodeLogHeader(header,session,created);
+    return file_.seek(0) && file_.write(header,sizeof(header));
 }
 bool LogWriter::flush(uint32_t now) {
     uint8_t head=0, count=0;
@@ -127,14 +142,12 @@ bool LogWriter::flush(uint32_t now) {
             session=state_.session_id; created=created_; first_utc=first_utc_;
         }
     }
-    // Heap release belongs outside the producer critical section.
-    if(finished) {std::string{}.swap(path_);return true;}
+    if(finished)return true;
     SdAccessScope scope(observer_);
     bool ok=createFile(session,first_utc);
     if (ok) {
         if (!header_saved_) {
-            uint8_t header[LogHeaderBytes]; encodeLogHeader(header,session,created);
-            ok=file_.seek(0) && file_.write(header,sizeof(header));
+            ok=writeHeader(session,created);
         }
         const uint64_t offset=LogHeaderBytes+static_cast<uint64_t>(LogRecordBytes)*saved;
         if (ok) ok=file_.seek(offset);
@@ -172,7 +185,6 @@ bool LogWriter::flush(uint32_t now) {
             if (!closed) { state_.error=LogError::Io; flush_requested_=true; changed(); return false; }
             state_.closing=false; changed();
         }
-        std::string{}.swap(path_);
     }
     return true;
 }

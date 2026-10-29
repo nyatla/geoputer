@@ -39,17 +39,26 @@ ExportSnapshot run(LogExporter& exporter,const char* name,ExportFormat format) {
 }
 }
 void testExport() {
-    check(fatFsPath(0,"/sd/logs/a.gps.dat")=="0:/logs/a.gps.dat" &&
-          fatFsPath(12,"/sd/dataset/01/日本.glc")=="12:/dataset/01/日本.glc",
+    check(fatFsPath(0,"/sd/logs/a.gps.dat").view()=="0:/logs/a.gps.dat" &&
+          fatFsPath(12,"/sd/dataset/01/日本.glc").view()=="12:/dataset/01/日本.glc",
           "shared native path conversion retains drive, directories and UTF-8 bytes");
-    check(fatFsPath(255,"/sd/"+std::string(2048,'x'))=="255:/"+std::string(2048,'x') &&
-          fatFsPath(0,"/sd/")=="0:/", "native path assembly preserves long paths, full drive range and the root");
+    check(fatFsPath(255,"/sd/"+std::string(250,'x')).view()=="255:/"+std::string(250,'x') &&
+          fatFsPath(0,"/sd/").view()=="0:/", "native path assembly preserves 255-byte boundary, full drive range and root");
+    bool too_long=false;
+    try{(void)fatFsPath(255,"/sd/"+std::string(251,'x'));}catch(const std::length_error&){too_long=true;}
+    check(too_long,"oversized native path must fail without truncation");
     for(const auto* path:{"/sd", "/sd-other/a", "relative.dat", ""}) {
         bool rejected=false;
         try { (void)fatFsPath(0,path); } catch(const std::runtime_error&) { rejected=true; }
         check(rejected,"FatFs paths must start with the exact SD mount prefix");
     }
-    check(storageNativePath(3,"/tmp/host/path")=="/tmp/host/path","host paths bypass FatFs translation");
+    check(storageNativePath(3,"/tmp/host/path").view()=="/tmp/host/path","host paths bypass FatFs translation");
+    LogExporter oversized(std::string(config::TemporaryPathBytes,'x'));
+    check(oversized.begin("a.gps.dat",ExportFormat::Gpx) && oversized.snapshot().phase==ExportPhase::Failed &&
+          oversized.snapshot().error==ExportError::InvalidName,"oversized export path fails before creating files");
+    LogFile oversized_file;errno=0;
+    check(!oversized_file.openRead(std::string(config::TemporaryPathBytes,'x')) && !oversized_file.opened() &&
+          errno==ENAMETOOLONG,"log file overflow returns an error without an open handle");
     namespace fs=std::filesystem;
     const char* configured=std::getenv("GEOPUTER_EXPORT_FIXTURES");
     const fs::path root=configured?fs::path(configured):fs::temp_directory_path()/"geoputer-export-native";

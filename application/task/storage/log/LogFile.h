@@ -5,7 +5,7 @@
 #include <string>
 #include "../StoragePath.h"
 #ifdef ARDUINO_ARCH_ESP32
-#include <ff.h>
+#include "../StorageFs.h"
 #else
 #include <fcntl.h>
 #include <unistd.h>
@@ -19,18 +19,21 @@ class LogFile {
 public:
     void setDrive(uint8_t drive) { drive_ = drive; }
     bool opened() const { return opened_; }
-    bool open(const std::string& path, bool exclusive) {
+    bool open(std::string_view path, bool exclusive) {
+        try {
 #ifdef ARDUINO_ARCH_ESP32
         const auto native = fatFsPath(drive_, path);
         const auto result = f_open(&file_, native.c_str(), FA_READ | FA_WRITE | (exclusive ? FA_CREATE_NEW : FA_OPEN_EXISTING));
         if (result != FR_OK) { errno = result == FR_EXIST ? EEXIST : EIO; return false; }
 #else
-        const int fd = ::open(path.c_str(), O_RDWR | (exclusive ? O_CREAT | O_EXCL : 0), 0664);
+        const int fd = ::open(TemporaryPath(path).c_str(), O_RDWR | (exclusive ? O_CREAT | O_EXCL : 0), 0664);
         if (fd < 0) return false;
         file_ = fdopen(fd, "r+b");
         if (!file_) { ::close(fd); return false; }
 #endif
         opened_ = true; return true;
+        } catch(const std::length_error&) {errno=ENAMETOOLONG;return false;}
+          catch(const std::invalid_argument&) {errno=EINVAL;return false;}
     }
     bool seek(uint64_t offset) {
 #ifdef ARDUINO_ARCH_ESP32
@@ -40,14 +43,17 @@ public:
         return fseeko(file_, static_cast<off_t>(offset), SEEK_SET) == 0;
 #endif
     }
-    bool openRead(const std::string& path) {
+    bool openRead(std::string_view path) {
+        try {
 #ifdef ARDUINO_ARCH_ESP32
         const auto native=fatFsPath(drive_, path);
         if (f_open(&file_,native.c_str(),FA_READ)!=FR_OK) return false;
 #else
-        file_=std::fopen(path.c_str(),"rb"); if (!file_) return false;
+        file_=std::fopen(TemporaryPath(path).c_str(),"rb"); if (!file_) return false;
 #endif
         opened_=true; return true;
+        } catch(const std::length_error&) {errno=ENAMETOOLONG;return false;}
+          catch(const std::invalid_argument&) {errno=EINVAL;return false;}
     }
     bool read(uint8_t* bytes,size_t count) {
 #ifdef ARDUINO_ARCH_ESP32

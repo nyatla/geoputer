@@ -29,7 +29,7 @@ inline void prepareSyncReturn(ReturnMessage& reply, TaskId source, const Message
     result.status = status;
     // These snapshots have default member initializers. Explicit construction
     // starts the selected union member's lifetime without another stack frame.
-    if (source == TaskId::UI && (request.kind == MessageKind::BeginMapFrame || request.kind == MessageKind::BeginPlaceSearch)) new (&result.map_buffer) map::BufferLease{};
+    if (source == TaskId::UI && (request.kind == MessageKind::BeginMapFrame || request.kind == MessageKind::BeginPlaceSearch || request.kind == MessageKind::BeginDatasetRead)) new (&result.map_buffer) map::BufferLease{};
     else if (source == TaskId::Storage) new (&result.storage) StorageSnapshot{};
     else if (source == TaskId::GPS) new (&result.gps) GpsSnapshot{};
 }

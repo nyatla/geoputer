@@ -29,7 +29,9 @@ bool LogReader::begin(const LogReadRequest& request) {
     result_={}; result_.request=request;
     result_.summary.first_utc=result_.summary.last_utc=UINT64_MAX;
     eligible_=0; started_=false; done_=false;
-    if(request.kind==LogReadKind::Delete && !request.confirmed) fail(LogReadError::Unconfirmed);
+    if(!directory_.valid() || (request.kind!=LogReadKind::List &&
+       !directory_.fits(std::string_view(request.name,strnlen(request.name,LogNameBytes))))) fail(LogReadError::Range);
+    else if(request.kind==LogReadKind::Delete && !request.confirmed) fail(LogReadError::Unconfirmed);
     else if(request.kind!=LogReadKind::List && !validLogName(request.name)) fail(LogReadError::InvalidName);
     else if(request.kind==LogReadKind::List && request.direction!=LogListDirection::Newest && !validLogName(request.anchor))
         fail(LogReadError::InvalidName);
@@ -40,24 +42,17 @@ bool LogReader::begin(const LogReadRequest& request) {
 }
 void LogReader::fail(LogReadError error) {
     if(directory_handle_) { SdAccessScope access(observer_); closedir(directory_handle_); directory_handle_=nullptr; }
-    if(file_.opened()) { SdAccessScope access(observer_); file_.close(); }
+    if(file_.opened()) { SdAccessScope access(observer_); file_.close(true); }
     result_.error=error; done_=true;
 }
 void LogReader::cancel() {
     if(!done_) fail(LogReadError::Cancelled);
-    if(file_.opened()) { SdAccessScope access(observer_); file_.close(); }
+    if(file_.opened()) { SdAccessScope access(observer_); file_.close(true); }
 }
 bool LogReader::releaseForReuse() {
     if(!done_ || directory_handle_)return false;
-    if(file_.opened()) {SdAccessScope access(observer_);if(!file_.close())return false;}
-    std::string{}.swap(path_);
+    if(file_.opened()) {SdAccessScope access(observer_);if(!file_.close(true))return false;}
     return true;
-}
-const std::string& LogReader::pathFor(const char* name) {
-    // All names have passed validLogName(). Reserve once for any accepted name.
-    path_.reserve(directory_.size()+LogNameBytes);
-    path_.assign(directory_);path_.push_back('/');path_.append(name);
-    return path_;
 }
 void LogReader::finishList(LogWriter* writer) {
     closedir(directory_handle_); directory_handle_=nullptr;
@@ -69,7 +64,7 @@ void LogReader::finishList(LogWriter* writer) {
     result_.has_older=list.first_index+result_.count<list.total_files;
     if(writer && writer->hasRetainedSession()) {
         for(unsigned n=0;n<result_.count;++n)
-            if(pathFor(result_.data.list.names[n])==writer->path()) result_.active_mask|=1u<<n;
+            if(writer->matches(directory_,result_.data.list.names[n])) result_.active_mask|=1u<<n;
     }
     done_=true;
 }
@@ -81,15 +76,16 @@ bool LogReader::step(LogWriter* writer) {
     const auto rows=result_.request.count?result_.request.count:LogListRows;
     if(result_.request.kind!=LogReadKind::List) { readTarget(writer); return true; }
     if(!started_) {
-        started_=true; errno=0; directory_handle_=opendir(directory_.c_str());
+        started_=true; errno=0; directory_handle_=directory_.open();
         if(!directory_handle_) { if(errno!=ENOENT) result_.error=LogReadError::Io; done_=true; return true; }
     }
     for(unsigned scanned=0;scanned<10;++scanned) {
         errno=0; auto* entry=readdir(directory_handle_);
         if(!entry) { if(errno) fail(LogReadError::Io); else finishList(writer); return true; }
         if(!validLogName(entry->d_name)) continue;
+        if(!directory_.fits(entry->d_name)) {fail(LogReadError::Range);return true;}
         struct stat info{};
-        if(stat(pathFor(entry->d_name).c_str(),&info)) { fail(LogReadError::Io); return true; }
+        if(directory_.stat(entry->d_name,info)) { fail(LogReadError::Io); return true; }
         if(!S_ISREG(info.st_mode)) continue;
         auto& list=result_.data.list;
         ++list.total_files;
@@ -127,48 +123,35 @@ bool LogReader::step(LogWriter* writer) {
     return false;
 }
 void LogReader::deleteTarget(LogWriter* writer) {
-    const auto& path=pathFor(result_.request.name);
-    // FAT32 filenames are case-insensitive. Protect even an alias of the
-    // retained writer path, including paused/closing/failed-save sessions.
-    auto samePath=[](const std::string& a,const std::string& b) {
-        if(a.size()!=b.size()) return false;
-        for(size_t n=0;n<a.size();++n)
-            if(std::tolower(static_cast<unsigned char>(a[n]))!=std::tolower(static_cast<unsigned char>(b[n]))) return false;
-        return true;
-    };
-    if(writer && writer->hasRetainedSession() && samePath(path,writer->path())) {
-        fail(LogReadError::Active); return;
+    // Protect paused/closing/retrying writer sessions, including case aliases.
+    if(writer && writer->matches(directory_,result_.request.name,true)) {
+        fail(LogReadError::Active);return;
     }
     SdAccessScope access(observer_);
-    if(file_.opened() && !file_.close()) {fail(LogReadError::DeleteFailed);return;}
+    if(file_.opened() && !file_.close(true)) {fail(LogReadError::DeleteFailed);return;}
     struct stat info{};
-    if(stat(path.c_str(),&info)) {fail(errno==ENOENT?LogReadError::NotFound:LogReadError::DeleteFailed);return;}
+    if(directory_.stat(result_.request.name,info)) {fail(errno==ENOENT?LogReadError::NotFound:LogReadError::DeleteFailed);return;}
     if(!S_ISREG(info.st_mode)) {fail(LogReadError::InvalidName);return;}
-    if(std::remove(path.c_str())) {fail(LogReadError::DeleteFailed);return;}
+    if(directory_.remove(result_.request.name)) {fail(LogReadError::DeleteFailed);return;}
     done_=true;
 }
 void LogReader::readTarget(LogWriter* writer) {
     const auto& request=result_.request;
-    const auto& path=pathFor(request.name);
-    const bool active=writer && writer->hasRetainedSession() && writer->path()==path;
+    const bool active=writer && writer->matches(directory_,request.name);
     auto& file=file_;
-    if(file.opened() && !file.close()) { fail(LogReadError::Io); return; }
+    if(file.opened() && !file.close(true)) { fail(LogReadError::Io); return; }
     const auto current=active?writer->snapshot():LogSnapshot{};
     auto read=[&](uint64_t offset,uint8_t* bytes,size_t length) {
         return active ? writer->readSaved(offset,bytes,length,current.session_id) : file.seek(offset)&&file.read(bytes,length);
     };
     auto& summary=result_.summary;
     if(active) summary.bytes=512ull+32ull*current.saved;
-    else if(!file.openRead(path)) { fail(LogReadError::Io); return; }
+    else if(!directory_.openRead(file,request.name)) { fail(LogReadError::Io); return; }
     do {
         if(!active && !file.size(summary.bytes)) { result_.error=LogReadError::Io; break; }
         if(summary.bytes<512 || summary.bytes>UINT32_MAX) { result_.error=LogReadError::Header; break; }
-        uint8_t header[512];
-        if(!read(0,header,sizeof(header))) { result_.error=LogReadError::Io; break; }
-        if(std::memcmp(header,"GPTLOG\r\n",8) || logGet(header+508,4)!=logCrc32(header,508)) { result_.error=LogReadError::Header; break; }
-        if(logGet(header+8,2)!=1) { result_.error=LogReadError::Unsupported; break; }
-        if(!validLogHeader(header)) { result_.error=LogReadError::Header; break; }
-        summary.session_id=logGet(header+16,8); summary.records=(summary.bytes-512)/32; summary.tail=(summary.bytes-512)%32;
+        result_.error=readHeader(active?writer:nullptr,current.session_id,summary);
+        if(result_.error!=LogReadError::None)break;
         if(request.kind==LogReadKind::Records) {
             if(summary.session_id!=request.session_id || summary.records<request.limit) { result_.error=LogReadError::Changed; break; }
             if(request.start>request.limit) { result_.error=LogReadError::Range; break; }
@@ -190,8 +173,20 @@ void LogReader::readTarget(LogWriter* writer) {
             }
         }
     } while(false);
-    if(!active && !file.close() && result_.error==LogReadError::None) result_.error=LogReadError::Io;
+    if(!active && !file.close(true) && result_.error==LogReadError::None) result_.error=LogReadError::Io;
     done_=true;
+}
+
+LogReadError LogReader::readHeader(LogWriter* writer,uint64_t session,LogSummary& summary) {
+    uint8_t header[LogHeaderBytes];
+    const bool ok=writer?writer->readSaved(0,header,sizeof(header),session):file_.seek(0) && file_.read(header,sizeof(header));
+    if(!ok)return LogReadError::Io;
+    if(std::memcmp(header,"GPTLOG\r\n",8) || logGet(header+508,4)!=logCrc32(header,508))return LogReadError::Header;
+    if(logGet(header+8,2)!=1)return LogReadError::Unsupported;
+    if(!validLogHeader(header))return LogReadError::Header;
+    summary.session_id=logGet(header+16,8);summary.records=(summary.bytes-LogHeaderBytes)/LogRecordBytes;
+    summary.tail=(summary.bytes-LogHeaderBytes)%LogRecordBytes;
+    return LogReadError::None;
 }
 
 LogStatisticsProgress LogReader::progress() const {
@@ -217,14 +212,14 @@ void LogReader::stepStatistics(LogWriter* writer) {
         const auto read_start=monotonicMicros();
         const auto offset=LogHeaderBytes+uint64_t(value.processed)*LogRecordBytes;
         bool ok=false;
-        if(writer && writer->hasRetainedSession() && writer->path()==path_) {
+        if(writer && writer->matches(directory_,result_.request.name)) {
             ok=writer->readSaved(offset,result_.data.records[0],count*LogRecordBytes,result_.summary.session_id);
         } else {
             if(!file_.opened()) {
-                uint64_t bytes=0;uint8_t header[LogHeaderBytes];
-                if(!file_.openRead(path_) || !file_.size(bytes)) {fail(LogReadError::Io);return;}
-                if(bytes<result_.summary.bytes || !file_.read(header,sizeof(header)) || !validLogHeader(header) ||
-                   logGet(header+16,8)!=result_.summary.session_id) {fail(LogReadError::Changed);return;}
+                LogSummary checked{};
+                if(!directory_.openRead(file_,result_.request.name) || !file_.size(checked.bytes)) {fail(LogReadError::Io);return;}
+                if(checked.bytes<result_.summary.bytes || readHeader(nullptr,0,checked)!=LogReadError::None ||
+                   checked.session_id!=result_.summary.session_id) {fail(LogReadError::Changed);return;}
                 if(!file_.seek(offset)) {fail(LogReadError::Io);return;}
             }
             ok=file_.read(result_.data.records[0],count*LogRecordBytes);
@@ -243,7 +238,7 @@ void LogReader::stepStatistics(LogWriter* writer) {
     value.elapsed_ms=(monotonicMicros()-statistics_started_)/1000;
     value.max_step_us=std::max<uint32_t>(value.max_step_us,monotonicMicros()-step_start);
     if(value.processed==result_.summary.records) {
-        if(file_.opened() && !file_.close()) {fail(LogReadError::Io);return;}
+        if(file_.opened() && !file_.close(true)) {fail(LogReadError::Io);return;}
         result_.data.statistics=value;done_=true;
     }
 }
