@@ -38,6 +38,10 @@ void CachedMapReader::rebuild(int x, int y,BorrowedReadBuffer* work) {
 uint32_t CachedMapReader::readWgsPoint(double longitude, double latitude,BorrowedReadBuffer* work) {
     const int x = galuchat::detail::roundedInt(longitude * reader_.unitInvX(), "cache longitude");
     const int y = galuchat::detail::roundedInt(latitude * reader_.unitInvY(), "cache latitude");
+    return readGridPoint(x,y,work);
+}
+
+uint32_t CachedMapReader::readGridPoint(int x,int y,BorrowedReadBuffer* work) {
     if (contains(x, y)) ++stats_.hits;
     else rebuild(x, y,work);
     const size_t offset = static_cast<size_t>(y - stats_.bounds.y) * side_ + (x - stats_.bounds.x);

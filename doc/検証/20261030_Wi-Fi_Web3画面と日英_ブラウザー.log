@@ -1,0 +1,19 @@
+PASS ja 320px: info, placeholder, lazy list, text save/dirty cancel, pagination, folders, upload/replace, delete, busy navigation, refresh and exit
+PASS ja 390px: info, placeholder, lazy list, text save/dirty cancel, pagination, folders, upload/replace, delete, busy navigation, refresh and exit
+PASS ja 768px: info, placeholder, lazy list, text save/dirty cancel, pagination, folders, upload/replace, delete, busy navigation, refresh and exit
+PASS ja 1280px: info, placeholder, lazy list, text save/dirty cancel, pagination, folders, upload/replace, delete, busy navigation, refresh and exit
+PASS en 320px: info, placeholder, lazy list, text save/dirty cancel, pagination, folders, upload/replace, delete, busy navigation, refresh and exit
+PASS en 390px: info, placeholder, lazy list, text save/dirty cancel, pagination, folders, upload/replace, delete, busy navigation, refresh and exit
+PASS en 768px: info, placeholder, lazy list, text save/dirty cancel, pagination, folders, upload/replace, delete, busy navigation, refresh and exit
+PASS en 1280px: info, placeholder, lazy list, text save/dirty cancel, pagination, folders, upload/replace, delete, busy navigation, refresh and exit
+PASS browser language preference null: valid fallback, local switching and persistence
+PASS browser language preference broken: valid fallback, local switching and persistence
+PASS browser language preference en: valid fallback, local switching and persistence
+PASS en-US: absent SD, unsupported-locale fallback and blocked browser storage
+PASS fr-FR: absent SD, unsupported-locale fallback and blocked browser storage
+PASS ja-JP: absent SD, unsupported-locale fallback and blocked browser storage
+PASS portal ja 320px: URL, language switch, manager link and shared preference
+PASS portal ja 390px: URL, language switch, manager link and shared preference
+PASS portal en 320px: URL, language switch, manager link and shared preference
+PASS portal en 390px: URL, language switch, manager link and shared preference
+Screenshots: /tmp/rgp-wifi-browser-kYVi5X

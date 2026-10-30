@@ -4,7 +4,6 @@
 
 namespace geoputer {
 bool Application::beginUsb() {
-    storage_.setUsbMode(true);
     // As in normal boot, wait for M5 display/board initialization before
     // configuring the SD SPI peripheral. UI startup runs in another task.
     if (!setScreen(ScreenId::UsbStorage)) return false;
@@ -17,13 +16,14 @@ bool Application::beginUsb() {
     return publishUiContent();
 }
 bool Application::operateBootMode(const UiAction& action) {
-    if (!action.confirmed || storage_operation_id_ || dataset_applying_) return false;
-    if (!usb_mode_ && (!usbEntryAllowed(data_) || log_control_.kind != ActionKind::None)) {
+    if (!action.confirmed || storage_operation_id_ || (!usb_mode_ && gpsMode().dataset_applying_)) return false;
+    if (!usb_mode_ && (!usbEntryAllowed(data_) || gpsMode().log_control_.kind != ActionKind::None)) {
         message("STOP LOGGER FIRST"); return false;
     }
     StorageRequest request{}; request.kind = MessageKind::OperateStorage;
     auto& command = request.payload.storage_command;
-    command.operation = usb_mode_ ? StorageOperation::ExitUsbMode : StorageOperation::EnterUsbMode;
+    command.operation = usb_mode_ ? StorageOperation::ExitUsbMode : action.storage_operation;
+    if(!usb_mode_ && command.operation!=StorageOperation::EnterUsbMode && command.operation!=StorageOperation::EnterWifiMode)return false;
     if (command.operation != action.storage_operation) return false;
     command.confirmed = true; command.operation_id = action.action_id;
     SyncReturn result{};
@@ -38,8 +38,8 @@ bool Application::operateBootMode(const UiAction& action) {
     return true;
 }
 bool Application::operateUsbExport(const UiAction& action) {
-    if(!screen_resources_.hasLogs() || !usb_mode_ || storage_operation_id_ || restart_pending_)return false;
-    auto& logs=screen_resources_.logs();
+    if(!screenResources().hasLogs() || !usb_mode_ || storage_operation_id_ || restart_pending_)return false;
+    auto& logs=screenResources().logs();
     const auto& view=data_.browse();
     if(action.usb_action==UsbAction::Older || action.usb_action==UsbAction::Newer) {
         const bool older=action.usb_action==UsbAction::Older;

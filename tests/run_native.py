@@ -34,6 +34,7 @@ with tempfile.TemporaryDirectory(prefix="geoputer-native-") as directory:
         str(root / "tests/key_binding_tests.cpp"),
         str(root / "tests/live_layout_tests.cpp"),
         str(root / "tests/boot_tests.cpp"),
+        str(root / "tests/wifi_mode_tests.cpp"),
         str(root / "tests/dataset_tests.cpp"),
         str(root / "tests/dataset_borrow_tests.cpp"),
         str(root / "tests/dataset_selection_tests.cpp"),
@@ -79,5 +80,5 @@ subprocess.run([sys.executable, str(root / "tests/build_metadata_tests.py")], ch
 subprocess.run([sys.executable,str(root / "tests/run_metadata.py")],check=True,timeout=120)
 
 # Alarm contracts and hardware scheduling use the same production modules.
-for script in ("run_alarms.py", "run_audio.py"):
+for script in ("run_alarms.py", "run_audio.py", "run_mode_resources.py"):
     subprocess.run([sys.executable,str(root/"tests"/script)],check=True,timeout=180)

@@ -57,10 +57,18 @@ int main(int argc,char**argv){try{
         check(alarm_work.beginWork(request.token,request.buffer),"lend same UI back for alarm sample");
         auto* result=beginPlaceMemory(request);auto& bytes=placeReaderMemory(request);BorrowedReadBuffer work(bytes.data(),bytes.size());
         alarm::Settings settings;settings.enabled=true;settings.level=level;
+        const auto cell_before=borrowed.cacheStats();
         allocated=allocations=four_k=0;track=true;borrowed.observeAlarmInto(request,*result,settings,&work);track=false;
         check(result->state==PlaceState::Ready && result->alarm.center.depth==level && result->alarm.valid_points>0 &&
               result->alarm.agreeing>=1 && result->alarm.agreeing<=result->alarm.valid_points,"real nine-point lookup returns selected parent path and votes");
         check(!allocations && !four_k && !work.inUse() && !files.inUse(),"alarm hierarchy lookup is heapless and returns FIL/buffer loans");
+        const auto cell_after=borrowed.cacheStats();
+        check((cell_after.hits-cell_before.hits)+(cell_after.misses-cell_before.misses)==9,"standard samples exactly center and eight adjacent source cells");
+        settings.judgement=alarm::Judgement::Immediate;
+        allocated=allocations=four_k=0;track=true;borrowed.observeAlarmInto(request,*result,settings,&work);track=false;
+        const auto one=borrowed.cacheStats();
+        check(!allocations && result->alarm.valid_points==1 && result->alarm.agreeing==1 &&
+              (one.hits-cell_after.hits)+(one.misses-cell_after.misses)==1,"immediate samples one cell and remains heapless");
         endPlaceMemory(request);check(alarm_work.returnWork(request.token,request.buffer),"return alarm workspace");
     }
     const auto names_after=borrowed.wordBookCacheStats();

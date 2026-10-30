@@ -1,0 +1,2 @@
+PASS Wi-Fi setup: persistent random credentials, regeneration, NVS failures, same-password rejection, bounded QR encoding/quiet zones, payload escaping and captive host/probe routing
+PASS independent decoder: both native 100x100 QR images match network credentials / URL

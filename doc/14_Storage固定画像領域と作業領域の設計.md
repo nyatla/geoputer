@@ -1,6 +1,6 @@
 # Storage固定画像領域と作業領域の設計
 
-対象: Cardputer ADV、32bit区域コード、地名判定用128×128、地図用上限96 KiB。固定画像化と、UIの4 KiBを索引・GLC・Wordbook Readerへ順に貸す方式は実装済み。地図用96 KiBは索引生成・突合検証の作業領域と排他共用する。起動確認も同じ96 KiBを一時利用する。USBへの転用は後続候補とする。
+対象: Cardputer ADV、32bit区域コード、地名判定用128×128、地図用上限96 KiB。固定画像化と、UIの4 KiBを索引・GLC・Wordbook Readerへ順に貸す方式は実装済み。地図用96 KiBは索引生成・突合検証の作業領域と排他共用する。起動確認も同じ96 KiBを一時利用する。USBとの排他配置は最上位の動作モードunionで行う。
 
 ## 1. 二つの画像の役割
 
@@ -34,7 +34,7 @@ flowchart LR
 
 ## 2. 所有権と静的予約
 
-StorageTaskがStorageCodeImagesを直接内包し、CodeCacheBuffer 65,536 Bと、地図／索引保守用98,304 BのStorageMapMemoryを所有する。データ領域の合計163,840 Bを起動から終了まで予約する。メイン画面、設定、USBモードでも解放しない。StorageMapMemoryは役割を表す管理フィールドを別に持ち、CodeImageBufferとDatasetIndexWorkspaceをunionで排他配置する。
+GPS用のStorageGpsResourcesがStorageCodeImagesを内包し、CodeCacheBuffer 65,536 Bと、地図／索引保守用98,304 BのStorageMapMemoryを所有する。データ領域の合計163,840 BはGPSモードの一部として固定予約する。GPSモード内ではメイン画面・設定でも解放しない。USBモードではこのオブジェクトを構築せず、同じ最上位unionへUSB資源を配置する。全体は[動作モード別メモリ構成設計](18_動作モード別メモリ構成設計.md)に従う。StorageMapMemoryは役割を表す管理フィールドを別に持ち、CodeImageBufferとDatasetIndexWorkspaceをunionで排他配置する。
 
 CachedMapReaderとPlaceLookupは地名判定配列を参照する。MapSessionは地図配列を参照する。両者はヒープから配列を確保せず、Reader・セッションの破棄でも予約領域を解放しない。地図配列と索引作業領域の型の寿命はStorageIndexLeaseが切り替える。容量超過時に動的確保へ切り替える処理も持たない。
 
@@ -130,19 +130,17 @@ INI解析を含め、既存作業領域を渡すアプリの索引適用・再�
 
 ## 5. 次に検討する借用先
 
-GLCとWordbookのバッファはUIからの借用へ、索引保守・起動確認はStorageの96 KiBへ移行済みである。以下はUSB等の後続候補とする。固定化によって、大きな連続領域のアドレスと上限が決まった。作業領域へ貸す条件は、読出し・書込みが排他的であることに加え、有効な保持画像を壊さないこととする。使用していない画面の領域でも、有効な画像を保持していれば自由な領域ではない。
+GLCとWordbookのバッファはUIからの借用へ、索引保守・起動確認はStorageの96 KiBへ移行済みである。USBとの共有は最上位の動作モードunionへ移行した。以下はGPSモード内での借用候補とする。固定化によって、大きな連続領域のアドレスと上限が決まった。作業領域へ貸す条件は、読出し・書込みが排他的であることに加え、有効な保持画像を壊さないこととする。使用していない画面の領域でも、有効な画像を保持していれば自由な領域ではない。
 
 ### 画像の末尾余白
 
 Wordbookは既存UI領域の4 KiBを順に借用するため、画像末尾の余白を利用する必要はない。地図画像の余白は緯度・格子比率等で変わり、240×83では18,624 B、赤道付近の240×101では1,344 Bとなる。今後ほかのReaderへ貸す場合は、使用範囲と借用先の寿命を確認し、有効な画像を壊さない条件を別途定義する。
 
-### 画像が無効な間に全体を貸す候補
+### USBとの排他配置
 
-| 候補 | 利用できる状態 | 対応の範囲 |
-|---|---|---|
-| USBエクスポート | GPSロガーと排他的なUSB起動中 | 配列領域は使われない。まず変換用のバイトバッファが候補。LogExporter全体を載せるには型・アラインメント・構築破棄順の設計も必要 |
+USB起動中はGPS用のStorageCodeImages・PlaceLookup・MapSessionを構築せず、同じ最上位unionのUSBメンバーに媒体制御・Reader・変換状態を置く。GPSの配列オブジェクトからUSBへ借用する方式は使用しない。既存LogExporter本体の遅延確保は今回変更していない。
 
-今のStorageCodeImagesはPlaceLookupとMapSessionより先に構築される。USBのExporterオブジェクト等へ貸す場合は、その借用先より先に領域を構築し、最後に破棄するようメンバーの宣言順も整理する。
+GPS起動中のStorageCodeImagesはPlaceLookupとMapSessionより先に構築され、Readerや借用先が終了した後に破棄される。モード切替は再起動を境界とし、実行中にはモード領域の有効メンバーを変更しない。
 
 ### 今回は対象としないもの
 

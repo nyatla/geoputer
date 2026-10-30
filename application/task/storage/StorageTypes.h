@@ -9,12 +9,13 @@
 #include "dataset/DatasetTypes.h"
 #include "usb/UsbStorageTypes.h"
 #include "export/ExportTypes.h"
+#include "../../wifi/WifiTypes.h"
 
 namespace geoputer {
 
 enum class SettingsState : uint8_t { Unavailable, Defaults, Loaded, Invalid, Saving, Saved, Failed };
 enum class CardState : uint8_t { Unknown, NoCard, Mounted, Unmounted, Unsupported, Failed };
-enum class StorageOperation : uint8_t { None, SaveSettings, Remount, Unmount, Format, EnterUsbMode, ExitUsbMode, SaveAlarm, ReloadAlarm };
+enum class StorageOperation : uint8_t { None, SaveSettings, Remount, Unmount, Format, EnterUsbMode, ExitUsbMode, SaveAlarm, ReloadAlarm, EnterWifiMode, ExitWifiMode, RegenerateWifi };
 enum class StorageReadKind : uint8_t { None, Settings, Place, Dataset, Log, LogBrowse, DatasetBrowser };
 
 struct StorageSnapshot {
@@ -37,6 +38,7 @@ struct StorageSnapshot {
     SdAccessSnapshot sd;
     LogSnapshot log;
     LogError log_result;
+    WifiView wifi;
     UsbStorageView usb;
     ExportSnapshot export_job;
     alarm::Profile alarm{};

@@ -1,44 +1,19 @@
 #pragma once
 #include "AlarmTypes.h"
 namespace geoputer::alarm {
-// App-owned, fixed state. Suppression survives silence, but not dataset changes.
+// Keep the last accepted region until the center candidate has enough cell votes.
 class Engine {
 public:
-    void reset() {known_={};left_={};right_={};settling_={};suppressed_=settling_valid_=false;}
-    void unavailable(){settling_valid_=false;}
-    bool observe(const Observation& o,const Settings& s,uint32_t now) {
-        if(!s.enabled || !o.center.valid()){unavailable();return false;}
-        const auto& current=o.center;
-        if(!known_.valid()) {known_=current;return false;}
-        const bool uniform=o.valid_points==9 && o.agreeing==9;
-        if(s.mode==Mode::Confirmed) {
-            if(!uniform || same(known_,current))return false;
-            known_=current;return true;
-        }
-        if(s.mode==Mode::Every) {
-            if(same(known_,current))return false;
-            known_=current;return true;
-        }
-        if(suppressed_) {
-            const bool pair=same(current,left_) || same(current,right_);
-            if(pair) {
-                if(uniform) {
-                    if(!settling_valid_ || !same(settling_,current)) {settling_=current;settled_at_=now;settling_valid_=true;}
-                    else if(now-settled_at_>=RearmMs) {known_=current;suppressed_=settling_valid_=false;}
-                } else settling_valid_=false;
-                return false;
-            }
-            // A third region is a different crossing, not an A/B bounce.
-            suppressed_=settling_valid_=false;
-        }
-        if(same(known_,current))return false;
-        left_=known_;right_=current;known_=current;suppressed_=true;settling_valid_=false;
-        return true;
+    void reset() {known_={};}
+    bool observe(const Observation& o,const Settings& s) {
+        if(!s.enabled || unsigned(s.judgement)>2 || !o.center.valid() ||
+           !o.valid_points || o.valid_points>9 || !o.agreeing || o.agreeing>o.valid_points)return false;
+        if(!known_.valid()) {known_=o.center;return false;}
+        if(same(known_,o.center) || o.agreeing<requiredPoints(s.judgement))return false;
+        known_=o.center;return true;
     }
 private:
-    Region known_{},left_{},right_{},settling_{};
-    uint32_t settled_at_=0;
-    bool suppressed_=false,settling_valid_=false;
+    Region known_{};
 };
 // A re-alert extends the selected duration, never the first-start hard deadline.
 class SoundSession {

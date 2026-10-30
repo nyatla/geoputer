@@ -2,7 +2,7 @@
 
 #include "TaskMessages.h"
 #include "alarm/AlarmEngine.h"
-#include "AppScreenResources.h"
+#include "ApplicationModeMemory.h"
 #include "map/MapTracking.h"
 #include "utils/SyncClient.h"
 #include "task/ui/UiTask.h"
@@ -15,8 +15,9 @@ namespace geoputer {
 // Runs on Arduino's main loopTask; no additional Application FreeRTOS task is created.
 class Application {
 public:
-    Application() : sync_(results_), ui_(notifications_, results_), gps_(notifications_, results_), storage_(notifications_, results_) {}
+    Application() : sync_(results_), ui_(notifications_, results_), storage_(notifications_, results_,mode_resources_) {}
     bool begin(bool usb_mode = false);
+    bool begin(BootMode mode){return mode==BootMode::WifiManagement?beginWifi():begin(mode==BootMode::UsbStorage);}
     void runOnce();
 
 private:
@@ -51,6 +52,8 @@ private:
     void applyStorage(const StorageSnapshot& state);
     bool operateStorage(const UiAction& action);
     bool beginUsb();
+    bool beginWifi();
+    void runWifiOnce();
     bool operateBootMode(const UiAction& action);
     bool operateUsbExport(const UiAction& action);
     bool usbSelecting() const { return usb_mode_ && screen_==ScreenId::UsbStorage && data_.storage.export_job.phase==ExportPhase::Selecting; }
@@ -89,52 +92,30 @@ private:
     Queue<ReturnMessage, 1> results_;
     SyncClient sync_;
     UiTask ui_;
-    GpsTask gps_;
+    ApplicationModeMemory mode_resources_; // Outlives Storage, which drains it at shutdown.
     StorageTask storage_;
     ScreenId screen_ = ScreenId::LivePlace;
     uint32_t generation_ = 0;
     uint32_t last_processed_action_ = 0;
     UiData data_{};
     bool ui_changed_ = false;
-    bool usb_mode_ = false;
+    bool usb_mode_ = false, wifi_mode_ = false;
     bool ui_data_dirty_ = false;
     DisplayMode mode_ = DisplayMode::View;
     uint32_t storage_operation_id_ = 0;
-    LogCommand log_pending_record_{};
-    UiAction log_control_{};
-    bool log_pending_ = false, log_accepting_ = false;
-    uint32_t log_seen_seq_ = 0, log_adopt_at_ = 0, log_retry_at_ = 0, log_elapsed_at_ = 0;
-    bool log_adopted_ = false;
-    AppScreenResources screen_resources_;
-    // Monotonic tokens and cancellation survive display-resource replacement.
     uint32_t browse_token_=0,browse_waiting_=0,browse_release_generation_=0;
-    bool browse_cancel_=false;
-    map::Request map_request_{},map_session_{};
-    bool map_session_close_=false,map_session_ready_=false;
-    uint32_t map_token_=0xa0000000u;
-    bool map_cancel_=false,map_storage_owned_=false;
-    alarm::Engine alarm_engine_;
-    alarm::SoundSession alarm_sound_;
-    uint32_t alarm_profile_revision_=0,alarm_identity_=0,alarm_sample_seq_=0;
-    uint8_t alarm_dataset_=0;
-    bool alarm_audio_owned_=false,alarm_preview_=false;
-    PlaceSearchFlow place_flow_;
-    // Loan ownership survives screen replacement and accepted async work.
-    PlaceRequest place_borrow_{};
-    bool place_completion_ready_=false,place_queued_=false,place_discard_=false;
-    uint32_t dataset_token_ = 0, dataset_waiting_ = 0;
-    DatasetRequest dataset_borrow_{},dataset_next_{};
-    IndexProgress dataset_progress_{};
-    DatasetError dataset_error_=DatasetError::None;
-    bool dataset_pending_=false,dataset_ready_=false,dataset_queued_=false,dataset_discard_=false,dataset_progress_dirty_=false;
-    bool dataset_applying_ = false, restart_pending_ = false;
-    bool dataset_check_needed_ = false;
-    uint32_t dataset_check_waiting_ = 0;
-    uint32_t place_request_id_ = 0x90000000u;
-    enum class BootStage { NeedSettings, WaitSettings, SelectMode, NeedDataset, WaitDataset, Complete };
-    BootStage boot_stage_ = BootStage::NeedSettings;
-    uint32_t boot_completed_at_ = 0;
-    uint32_t boot_selection_at_ = 0;
+    bool browse_cancel_=false,restart_pending_=false;
+    using BootStage=AppBootStage;
+    bool selectBootMode(bool usb) {
+        if(mode_resources_.selected())return false;
+        if(!storage_.setUsbMode(usb))return false;
+        usb_mode_=usb;
+        return true;
+    }
+    AppGpsResources& gpsMode(){return mode_resources_.gps().app;}
+    const AppGpsResources& gpsMode()const{return mode_resources_.gps().app;}
+    AppScreenResources& screenResources(){return wifi_mode_?mode_resources_.wifi().app.screen_resources_:usb_mode_?mode_resources_.usb().app.screen_resources_:gpsMode().screen_resources_;}
+    const AppScreenResources& screenResources()const{return wifi_mode_?mode_resources_.wifi().app.screen_resources_:usb_mode_?mode_resources_.usb().app.screen_resources_:gpsMode().screen_resources_;}
     static constexpr uint32_t BootSettingsRequest = 0x80000001u;
     static constexpr uint32_t BootDatasetRequest = 0x80000002u;
 };

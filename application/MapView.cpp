@@ -5,15 +5,15 @@
 
 namespace geoputer {
 bool Application::changeMapScale(uint8_t scale) {
-    if(!screen_resources_.hasMap() || usb_mode_ || data_.boot.maintenance || !showingMap(screen_,data_) || mode_!=DisplayMode::View ||
+    if(!screenResources().hasMap() || usb_mode_ || data_.boot.maintenance || !showingMap(screen_,data_) || mode_!=DisplayMode::View ||
        !map::supportedScale(scale))return false;
-    auto& work=screen_resources_.map();
+    auto& work=screenResources().map();
     if(scale==data_.map.scale)return true;
     data_.map.scale=scale;
     // A scale change is a fresh request even with the same GPS sample. Keep
     // the displayed frame until the new image has been received completely.
     work.retry_at=0;
-    if(map_request_.token)map_cancel_=true;
+    if(gpsMode().map_request_.token)gpsMode().map_cancel_=true;
     const auto error=mapAvailability();
     data_.map.busy=error==map::Error::None;data_.map.error=error;
     ++data_.revision;ui_data_dirty_=true;
@@ -35,10 +35,10 @@ void Application::mapState(bool busy,map::Error error) {
     data_.map.busy=busy;data_.map.error=error;++data_.revision;ui_data_dirty_=true;
 }
 void Application::completeMap(const map::FrameInfo& info) {
-    if(!screen_resources_.hasMap() || map_cancel_ || !map_request_.token ||
-       !map::sameRequest(info.request,map_request_) || info.request.scale!=data_.map.scale)return;
-    auto& work=screen_resources_.map();
-    map_session_ready_=info.error==map::Error::None;
+    if(!screenResources().hasMap() || gpsMode().map_cancel_ || !gpsMode().map_request_.token ||
+       !map::sameRequest(info.request,gpsMode().map_request_) || info.request.scale!=data_.map.scale)return;
+    auto& work=screenResources().map();
+    gpsMode().map_session_ready_=info.error==map::Error::None;
     work.info=info;work.ready=true;
 }
 bool Application::mapStorageCommand(MessageKind kind,const map::Request& command) {
@@ -58,81 +58,81 @@ void Application::processMap() {
     const auto now=taskTimeMs();
     const bool visible=!usb_mode_ && !data_.boot.maintenance && showingMap(screen_,data_) && mode_==DisplayMode::View;
     const auto available=mapAvailability();
-    if(map_session_.token && (!visible || map_session_.screen_generation!=generation_ ||
-       map_session_.dataset_generation!=data_.dataset.generation || !data_.settings.dataset))map_session_close_=true;
-    if(map_request_.token && (!visible || available!=map::Error::None || map_request_.screen_generation!=generation_ ||
-        map_request_.dataset_generation!=data_.dataset.generation || map_request_.scale!=data_.map.scale))map_cancel_=true;
-    if(map_cancel_ && map_request_.token) {
-        if(map_storage_owned_) {
-            if(!mapStorageCommand(MessageKind::CancelMap,map_request_))return;
-            map_storage_owned_=false;
+    if(gpsMode().map_session_.token && (!visible || gpsMode().map_session_.screen_generation!=generation_ ||
+       gpsMode().map_session_.dataset_generation!=data_.dataset.generation || !data_.settings.dataset))gpsMode().map_session_close_=true;
+    if(gpsMode().map_request_.token && (!visible || available!=map::Error::None || gpsMode().map_request_.screen_generation!=generation_ ||
+        gpsMode().map_request_.dataset_generation!=data_.dataset.generation || gpsMode().map_request_.scale!=data_.map.scale))gpsMode().map_cancel_=true;
+    if(gpsMode().map_cancel_ && gpsMode().map_request_.token) {
+        if(gpsMode().map_storage_owned_) {
+            if(!mapStorageCommand(MessageKind::CancelMap,gpsMode().map_request_))return;
+            gpsMode().map_storage_owned_=false;
         }
-        map::FrameInfo returned{};returned.request=map_request_;
+        map::FrameInfo returned{};returned.request=gpsMode().map_request_;
         if(!mapUiCommand(MessageKind::DiscardMapFrame,returned))return;
-        map_request_={};map_cancel_=false;
-        if(screen_resources_.hasMap())screen_resources_.map().ready=false;
+        gpsMode().map_request_={};gpsMode().map_cancel_=false;
+        if(screenResources().hasMap())screenResources().map().ready=false;
     }
-    if(map_session_close_ && map_session_.token) {
-        if(!mapStorageCommand(MessageKind::CloseMapSession,map_session_))return;
-        map_session_={};map_session_close_=false;map_session_ready_=false;
-        if(screen_resources_.hasMap())screen_resources_.map().anchor={};
+    if(gpsMode().map_session_close_ && gpsMode().map_session_.token) {
+        if(!mapStorageCommand(MessageKind::CloseMapSession,gpsMode().map_session_))return;
+        gpsMode().map_session_={};gpsMode().map_session_close_=false;gpsMode().map_session_ready_=false;
+        if(screenResources().hasMap())screenResources().map().anchor={};
     }
     if(!visible) {mapState(false,map::Error::None);return;}
-    if(!screen_resources_.hasMap())return;
-    auto& work=screen_resources_.map();
+    if(!screenResources().hasMap())return;
+    auto& work=screenResources().map();
     if(viewingLogPoint(screen_) && data_.browse().loading) {mapState(true,map::Error::None);return;}
     if(available!=map::Error::None) {mapState(false,available);return;}
     if(work.ready) {
         if(work.info.error!=map::Error::None) {
             mapState(false,work.info.error);if(work.info.error==map::Error::Stale)work.anchor={};
-            map_cancel_=true;work.retry_at=now+config::MapViewRetryMs;return;
+            gpsMode().map_cancel_=true;work.retry_at=now+config::MapViewRetryMs;return;
         }
         // Stop Storage owning the pointer before the UI can display or re-lend it.
-        if(map_storage_owned_) {
-            if(!mapStorageCommand(MessageKind::ReleaseMap,map_request_))return;
-            map_storage_owned_=false;
+        if(gpsMode().map_storage_owned_) {
+            if(!mapStorageCommand(MessageKind::ReleaseMap,gpsMode().map_request_))return;
+            gpsMode().map_storage_owned_=false;
         }
         if(!mapUiCommand(MessageKind::CommitMapFrame,work.info)) {
-            mapState(false,map::Error::Stale);map_cancel_=true;work.retry_at=now+config::MapViewRetryMs;return;
+            mapState(false,map::Error::Stale);gpsMode().map_cancel_=true;work.retry_at=now+config::MapViewRetryMs;return;
         }
         work.anchor={work.info.request,work.info.meters_per_pixel};
-        map_request_={};work.ready=false;mapState(false,map::Error::None);return;
+        gpsMode().map_request_={};work.ready=false;mapState(false,map::Error::None);return;
     }
     const auto& fix=displayedFix(screen_,data_);
-    const bool inside=map_session_.token && map_session_ready_ &&
-        map_session_.latitude==work.anchor.request.latitude && map_session_.longitude==work.anchor.request.longitude &&
-        map_session_.scale==work.anchor.request.scale && work.anchor.request.screen_generation==generation_ &&
+    const bool inside=gpsMode().map_session_.token && gpsMode().map_session_ready_ &&
+        gpsMode().map_session_.latitude==work.anchor.request.latitude && gpsMode().map_session_.longitude==work.anchor.request.longitude &&
+        gpsMode().map_session_.scale==work.anchor.request.scale && work.anchor.request.screen_generation==generation_ &&
         work.anchor.request.dataset_generation==data_.dataset.generation && work.anchor.request.scale==data_.map.scale &&
         map::inTrackingWindow(map::cursorOffset(work.anchor,fix.latitude,fix.longitude),config::MapCursorRadius);
     const bool region_known=(data_.place_state==PlaceState::Ready || data_.place_state==PlaceState::NotFound) &&
         data_.place_fix.latitude==fix.latitude && data_.place_fix.longitude==fix.longitude;
-    if(!map_request_.token && inside && (!region_known || data_.place_region==work.info.region)) {
+    if(!gpsMode().map_request_.token && inside && (!region_known || data_.place_region==work.info.region)) {
         mapState(false,map::Error::None);return;
     }
-    if(map_request_.token || static_cast<int32_t>(now-work.retry_at)<0 ||
-       place_flow_.pending() || place_borrow_.token || data_.storage.busy || dataset_waiting_ || dataset_check_waiting_ || browse_waiting_)return;
-    if(++map_token_==0)++map_token_;
-    map_request_={};map_request_.token=map_token_;map_request_.screen_generation=generation_;
-    map_request_.dataset_generation=data_.dataset.generation;map_request_.sample_seq=viewingLogPoint(screen_)?data_.browse().index+1:data_.gps.sample_seq;
-    map_request_.latitude=displayedFix(screen_,data_).latitude;map_request_.longitude=displayedFix(screen_,data_).longitude;
-    map_request_.scale=data_.map.scale;
-    map_request_.session=viewingLogPoint(screen_)?map::SessionId::Log:map::SessionId::Live;
-    map_request_.region_known=region_known;map_request_.region=data_.place_region;
+    if(gpsMode().map_request_.token || static_cast<int32_t>(now-work.retry_at)<0 ||
+       gpsMode().place_flow_.pending() || gpsMode().place_borrow_.token || data_.storage.busy || gpsMode().dataset_waiting_ || gpsMode().dataset_check_waiting_ || browse_waiting_)return;
+    if(++gpsMode().map_token_==0)++gpsMode().map_token_;
+    gpsMode().map_request_={};gpsMode().map_request_.token=gpsMode().map_token_;gpsMode().map_request_.screen_generation=generation_;
+    gpsMode().map_request_.dataset_generation=data_.dataset.generation;gpsMode().map_request_.sample_seq=viewingLogPoint(screen_)?data_.browse().index+1:data_.gps.sample_seq;
+    gpsMode().map_request_.latitude=displayedFix(screen_,data_).latitude;gpsMode().map_request_.longitude=displayedFix(screen_,data_).longitude;
+    gpsMode().map_request_.scale=data_.map.scale;
+    gpsMode().map_request_.session=viewingLogPoint(screen_)?map::SessionId::Log:map::SessionId::Live;
+    gpsMode().map_request_.region_known=region_known;gpsMode().map_request_.region=data_.place_region;
     if(inside) {
-        map_request_.reuse=true;
-        map_request_.latitude=work.anchor.request.latitude;map_request_.longitude=work.anchor.request.longitude;
+        gpsMode().map_request_.reuse=true;
+        gpsMode().map_request_.latitude=work.anchor.request.latitude;gpsMode().map_request_.longitude=work.anchor.request.longitude;
     }
-    map::FrameInfo loan{};loan.request=map_request_;
-    if(!mapUiCommand(MessageKind::BeginMapFrame,loan,&map_request_.buffer)) {
-        map_request_={};work.retry_at=now+config::MapViewRetryMs;return;
+    map::FrameInfo loan{};loan.request=gpsMode().map_request_;
+    if(!mapUiCommand(MessageKind::BeginMapFrame,loan,&gpsMode().map_request_.buffer)) {
+        gpsMode().map_request_={};work.retry_at=now+config::MapViewRetryMs;return;
     }
-    if(!mapStorageCommand(MessageKind::RequestMap,map_request_)) {
+    if(!mapStorageCommand(MessageKind::RequestMap,gpsMode().map_request_)) {
         // The operation was not accepted, but the UI loan still needs returning.
-        map_cancel_=true;work.retry_at=now+config::MapViewRetryMs;return;
+        gpsMode().map_cancel_=true;work.retry_at=now+config::MapViewRetryMs;return;
     }
-    map_storage_owned_=true;
-    if(!map_request_.reuse)map_session_ready_=false;
-    map_session_=map_request_;
+    gpsMode().map_storage_owned_=true;
+    if(!gpsMode().map_request_.reuse)gpsMode().map_session_ready_=false;
+    gpsMode().map_session_=gpsMode().map_request_;
     mapState(true,map::Error::None);
 }
 } // namespace geoputer

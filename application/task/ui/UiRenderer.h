@@ -4,12 +4,13 @@
 #include "PixelFont.h"
 #include "UiModel.h"
 #include "../../Config.h"
+#include "../../wifi/WifiQrCode.h"
 
 namespace geoputer {
 
 class UiRenderer {
 public:
-    explicit UiRenderer(M5GFX& display) : display_(display), frame_(&display), font_(display) {}
+    explicit UiRenderer(M5GFX& display,const wifi::QrCode* qr=nullptr) : display_(display), frame_(&display), font_(display),wifi_qr_(qr) {}
     bool begin(uint8_t color_depth = config::UiColorDepth, void* buffer = nullptr, size_t capacity = 0);
     void draw(const UiModel& model);
 
@@ -31,9 +32,11 @@ private:
     void speedText(const char* value);
     void drawDialog(const UiModel& model, UiLanguage language);
     void drawUsb(const UiModel& model);
+    void drawWifi(const UiModel& model);
     M5GFX& display_;
     UiCanvas frame_;
     PixelFont font_;
+    const wifi::QrCode* wifi_qr_; // UI task owns the small encoded matrix.
 };
 
 }  // namespace geoputer

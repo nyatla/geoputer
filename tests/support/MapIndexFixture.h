@@ -23,6 +23,7 @@ public:
         :source_(std::move(source)),index_(index),cache_(pixels,info,source_->source(),index_.source(),observer) {}
     OwnedCache(const OwnedCache&)=delete;OwnedCache& operator=(const OwnedCache&)=delete;
     uint32_t readWgsPoint(double longitude,double latitude) {source_->sync();return cache_.readWgsPoint(longitude,latitude,&work_);}
+    uint32_t readGridPoint(int x,int y) {source_->sync();return cache_.readGridPoint(x,y,&work_);}
     bool isCached(double longitude,double latitude)const {return cache_.isCached(longitude,latitude);}
     void invalidate() {cache_.invalidate();}
     const geoputer::MapCacheStats& stats()const {return cache_.stats();}

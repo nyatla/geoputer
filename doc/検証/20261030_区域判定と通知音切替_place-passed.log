@@ -1,0 +1,3 @@
+PASS: cache boundaries, zero hits/no map I/O, invalidation, partial read failures, overlaps and uint32 range
+PASS: 324 real cached/point comparisons; unitInv=1000,1000
+PASS: real file-based SDK lookup, UTF-8 names/encoding rejection, repeated seeks, missing/explicit-selection/corrupt data and recovery

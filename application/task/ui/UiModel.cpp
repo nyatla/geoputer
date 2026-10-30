@@ -16,12 +16,12 @@ namespace geoputer {
 
 static bool switchingMode(const UiData& data) {
     return data.storage.busy && (data.storage.operation == StorageOperation::EnterUsbMode ||
-                                 data.storage.operation == StorageOperation::ExitUsbMode);
+                                 data.storage.operation == StorageOperation::ExitUsbMode || data.storage.operation == StorageOperation::EnterWifiMode);
 }
 
 OperationStatus UiModel::setScreen(const SetUiScreen& command) {
     if (command.screen != ScreenId::LivePlace && command.screen != ScreenId::Settings && command.screen != ScreenId::Boot &&
-        command.screen != ScreenId::Menu && command.screen != ScreenId::Map && command.screen != ScreenId::GpsLogger && command.screen != ScreenId::UsbStorage && !isLogBrowser(command.screen)) {
+        command.screen != ScreenId::Menu && command.screen != ScreenId::Map && command.screen != ScreenId::GpsLogger && command.screen != ScreenId::UsbStorage && command.screen!=ScreenId::WifiManagement && !isLogBrowser(command.screen)) {
         return OperationStatus::InvalidRequest;
     }
     if (command.generation <= generation_) return OperationStatus::StaleContent;
@@ -204,6 +204,8 @@ void UiModel::copyData(const UiData& data) {
     const auto old_browse=data_.browse().revision;
     const auto old_dataset_revision=data_.datasets().revision;
     const auto old_export=data_.storage.export_job.phase;
+    if(screen_==ScreenId::WifiManagement && screen_resources_.wifi_page==WifiPage::ConnectionQr &&
+       !data_.storage.wifi.clients && data.storage.wifi.clients)screen_resources_.wifi_page=WifiPage::WebQr;
     // V switches modes inside LogPoint without SetUiScreen. The old images
     // are no longer visible; reject late commits but retain any outstanding loan.
     if(data.dataset.generation!=data_.dataset.generation ||
@@ -266,9 +268,10 @@ bool UiModel::canDeleteLog() const {
 }
 
 void UiModel::updateDialogState() {
+    if(dialog_.kind()==DialogKind::RegenerateWifi)dialog_.setActionEnabled(data_.storage.wifi.url[0] && data_.storage.wifi.phase!=WifiPhase::Stopping);
     if (dialog_.kind() == DialogKind::DeleteLog)
         dialog_.setActionEnabled(canDeleteLog());
-    if (dialog_.kind() == DialogKind::EnterUsbMode) dialog_.setActionEnabled(screen_resources_.settings.usb_mode && usbEntryAllowed(data_));
+    if ((dialog_.kind() == DialogKind::EnterUsbMode || dialog_.kind()==DialogKind::EnterWifiMode)) dialog_.setActionEnabled(screen_resources_.settings.usb_mode && usbEntryAllowed(data_));
     if (dialog_.kind() == DialogKind::ClearDataset || dialog_.kind() == DialogKind::RebuildIndex || dialog_.kind() == DialogKind::VerifyIndex)
         dialog_.setActionEnabled(data_.datasets().purpose==screen_resources_.settings.dataset.purpose && selection_<data_.datasets().count &&
             data_.datasets().rows[selection_].number==screen_resources_.settings.dataset.dialog_number && datasetRowBlock(data_,selection_)==DatasetError::None);
@@ -329,6 +332,11 @@ UiKeyGuide UiModel::keyGuide() const {
     UiKeyGuide guide;
     guide.accepting=action_.kind==ActionKind::None && !switchingMode(data_) &&
         !(isLogBrowser(screen_) && data_.browse().deleting);
+    if(screen_==ScreenId::WifiManagement) {
+        guide.accepting=guide.accepting && data_.storage.wifi.phase!=WifiPhase::Stopping;
+        guide.back=guide.accepting;guide.horizontal=true;guide.left=guide.right=guide.accepting;
+        return guide;
+    }
     guide.root=!data_.boot.maintenance && isScreenRoot(screen_,screen_resources_.settings.page) && !screen_resources_.settings.editing && !screen_resources_.settings.card_info;
     guide.system=!data_.boot.maintenance;
     const bool dataset_page=screen_==ScreenId::Settings && (screen_resources_.settings.page==SettingsPage::DatasetMenu ||
@@ -430,7 +438,7 @@ void UiModel::appendEnterShortcut(UiShortcutGuide& row,bool accepting) const {
         const auto& settings=screen_resources_.settings;
         if(!settings.card_info) switch(settings.page) {
             case SettingsPage::Licenses:return;
-            case SettingsPage::Alarm:if(selection_<AlarmTestRow && !editDirty())return;enabled=!data_.storage.busy && !data_.storage.nvs_error && (selection_==AlarmReloadRow?logMapAvailable(data_):data_.storage.alarm.usable());break;
+            case SettingsPage::Alarm:if(selection_<AlarmReloadRow && !editDirty())return;enabled=!data_.storage.busy && !data_.storage.nvs_error && (selection_==AlarmReloadRow?logMapAvailable(data_):data_.storage.alarm.usable());break;
             case SettingsPage::DatasetMenu:enabled=!data_.datasets().applying && datasetMenuBlock(data_,selection_)==DatasetError::None;break;
             case SettingsPage::DatasetList: {
                 const auto& view=data_.datasets();
@@ -472,7 +480,7 @@ UiShortcutGuide UiModel::shortcutGuide() const {
     if(mode_==DisplayMode::Background)return row;
     const auto guide=keyGuide();
     const auto active=guide.accepting;
-    if(audio_active_) {row.key(UiKey::Escape,active);return row;}
+    if(audio_active_ && !audio_preview_) {row.key(UiKey::Escape,active);return row;}
     if(dialog_.active()) {
         row.key(UiKey::Escape,active);row.group();appendEnterShortcut(row,active);
         bool left=false,right=false;
@@ -482,6 +490,11 @@ UiShortcutGuide UiModel::shortcutGuide() const {
         row.key(UiKey::Left,active && left);row.key(UiKey::Right,active && right);return row;
     }
     if(screen_==ScreenId::Boot) {row.key(UiKey::Escape,active);row.group();appendEnterShortcut(row,active);return row;}
+    if(screen_==ScreenId::WifiManagement) {
+        row.key(UiKey::Escape,active);row.group();
+        row.key(UiKey::Recalculate,active && data_.storage.wifi.url[0]);
+        row.key(UiKey::Left,active);row.key(UiKey::Right,active);return row;
+    }
     if(screen_==ScreenId::UsbStorage) {
         const auto page=screen_resources_.usb.page;
         if(page==UsbPage::Busy || page==UsbPage::Progress)return row;
@@ -541,7 +554,7 @@ void UiModel::keyPressed(UiKey key, uint32_t now_ms) {
         else if (!data_.boot.maintenance && data_.boot.complete && key == UiKey::Enter) action(ActionKind::ChangeScreen, ScreenId::LivePlace);
         return;
     }
-    if(audio_active_) {action(ActionKind::SilenceAlarm);return;}
+    if(audio_active_ && !audio_preview_) {action(ActionKind::SilenceAlarm);return;}
     if (mode_ == DisplayMode::Background) { action(ActionKind::Wake); return; }
     if (dialog_.active()) {
         updateDialogState();
@@ -559,6 +572,14 @@ void UiModel::keyPressed(UiKey key, uint32_t now_ms) {
         if (result == DialogInput::Accepted) acceptDialog(kind);
         else if (result != DialogInput::Ignored) changed();
         return; // A modal owns all keys, including screen shortcuts.
+    }
+    if(screen_==ScreenId::WifiManagement) {
+        if(data_.storage.wifi.phase==WifiPhase::Stopping)return;
+        if(key==UiKey::Escape){dialog_.open(DialogKind::ExitWifiMode);changed();}
+        else if(key==UiKey::Left || key==UiKey::Right) {
+            screen_resources_.wifi_page=static_cast<WifiPage>((static_cast<unsigned>(screen_resources_.wifi_page)+(key==UiKey::Right?1:2))%3);changed();
+        } else if(key==UiKey::Recalculate && data_.storage.wifi.url[0]){dialog_.open(DialogKind::RegenerateWifi);changed();}
+        return;
     }
     if (screen_ == ScreenId::UsbStorage) {
         usbKey(key);
@@ -692,7 +713,7 @@ unsigned UiModel::editableSettingChoices() const {
     switch(settings.page) {
         case SettingsPage::Operation:
             return !data_.storage.busy && settingEditable(selection_)?settingChoices(selection_):0;
-        case SettingsPage::System:return !data_.storage.busy && selection_==0?2:0;
+        case SettingsPage::System:return !data_.storage.busy && selection_==0?3:0;
         case SettingsPage::Alarm:
             return !data_.storage.busy && !data_.storage.nvs_error && data_.storage.alarm.usable()?
                 alarmChoices(selection_,data_.storage.alarm.depth):0;
@@ -731,7 +752,7 @@ bool UiModel::commitSettingEdit() {
                 setAlarmValue(action_.alarm_settings,selection_,settings.edit_value);
                 action_.alarm_identity=data_.storage.alarm.identity;
             }
-        } else if(settings.page==SettingsPage::System)settings.usb_mode=settings.edit_value!=0;
+        } else if(settings.page==SettingsPage::System)settings.usb_mode=settings.edit_value;
         // Dataset language is a local candidate. Apply still owns persistence/restart.
     }
     settings.editing=false;changed();return true;
@@ -768,7 +789,14 @@ void UiModel::settingsKey(UiKey key) {
                 edit.editing=true;
             }
             if(edit.page==SettingsPage::DatasetDetail)datasetAction(DatasetAction::Language,key==UiKey::Right?1:0);
-            else {edit.edit_value=(edit.edit_value+(key==UiKey::Right?1:count-1))%count;changed();}
+            else {
+                edit.edit_value=(edit.edit_value+(key==UiKey::Right?1:count-1))%count;changed();
+                if(edit.page==SettingsPage::Alarm && selection_==AlarmSoundRow) {
+                    action(ActionKind::PreviewAlarm);action_.alarm_settings=data_.storage.alarm.settings;
+                    action_.alarm_settings.tone=static_cast<alarm::Tone>(edit.edit_value);
+                    action_.alarm_identity=data_.storage.alarm.identity;
+                }
+            }
             return;
         }
     }
@@ -778,9 +806,6 @@ void UiModel::settingsKey(UiKey key) {
         if(key==UiKey::Up){--selection_;changed();}else if(key==UiKey::Down){++selection_;changed();}
         else if(key==UiKey::Enter && !data_.storage.busy && !data_.storage.nvs_error) {
             if(selection_==AlarmReloadRow && logMapAvailable(data_))action(ActionKind::ReloadAlarm);
-            else if(data_.storage.alarm.usable()) {
-                if(selection_==AlarmTestRow)action(ActionKind::TestAlarm);
-            }
         }
         return;
     }
@@ -860,7 +885,7 @@ void UiModel::settingsKey(UiKey key) {
         else if (key == UiKey::Down) { ++selection_; changed(); }
         else if (key == UiKey::Enter && !data_.storage.busy) {
             if (selection_ == 2 && screen_resources_.settings.usb_mode && usbEntryAllowed(data_)) {
-                dialog_.open(DialogKind::EnterUsbMode); changed();
+                dialog_.open(screen_resources_.settings.usb_mode==2?DialogKind::EnterWifiMode:DialogKind::EnterUsbMode); changed();
             } else if (selection_ == SettingsSystemResetRow) {
                 screen_resources_.settings.page = SettingsPage::Reset; selection_ = 0; changed();
             }
@@ -971,6 +996,12 @@ void UiModel::acceptDialog(DialogKind kind) {
         case DialogKind::ResetSettings:
             action(ActionKind::ResetSettings); action_.settings = defaultSettings();
             break;
+        case DialogKind::RegenerateWifi:
+            action(ActionKind::Storage);action_.storage_operation=StorageOperation::RegenerateWifi;break;
+        case DialogKind::EnterWifiMode:case DialogKind::ExitWifiMode:
+            action(ActionKind::Storage);
+            action_.storage_operation=kind==DialogKind::EnterWifiMode?StorageOperation::EnterWifiMode:StorageOperation::ExitWifiMode;
+            break;
         case DialogKind::EnterUsbMode: case DialogKind::ExitUsbMode:
             action(ActionKind::Storage);
             action_.storage_operation = kind == DialogKind::EnterUsbMode ? StorageOperation::EnterUsbMode : StorageOperation::ExitUsbMode;
@@ -1035,7 +1066,7 @@ void UiModel::tick(uint32_t now_ms) {
     // Keep a requested scan visible; the inactivity interval starts at completion.
     // Explicit S still enters Background through the normal key handler.
     if(screen_==ScreenId::LogStatistics && data_.browse().loading) {last_input_ms_=now_ms;return;}
-    if (screen_ == ScreenId::Boot || screen_ == ScreenId::UsbStorage || switchingMode(data_) || data_.datasets().applying ||
+    if (screen_ == ScreenId::Boot || screen_ == ScreenId::UsbStorage || screen_==ScreenId::WifiManagement || switchingMode(data_) || data_.datasets().applying ||
         (screen_==ScreenId::Logs && data_.browse().deleting)) return;
     if (data_.message[0] && now_ms - data_.message_at_ms >= 3000u) {
         data_.message[0] = '\0';

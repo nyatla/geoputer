@@ -11,13 +11,13 @@
 
 namespace geoputer {
 
-enum class ScreenId : uint8_t { LivePlace, Settings, Boot, GpsLogger, Logs, LogPoint, UsbStorage, Map, Menu, LogProperties, LogStatistics };
+enum class ScreenId : uint8_t { LivePlace, Settings, Boot, GpsLogger, Logs, LogPoint, UsbStorage, Map, Menu, LogProperties, LogStatistics, WifiManagement };
 inline bool isLogBrowser(ScreenId screen) { return screen==ScreenId::Logs || screen==ScreenId::LogPoint || screen==ScreenId::LogProperties || screen==ScreenId::LogStatistics; }
 enum class DisplayMode : uint8_t { Background, View };
 enum class LogAction : uint8_t { Start, Pause, Resume, Stop };
 struct BatteryStatus { int8_t percent = -1; bool charging = false; bool charge_known = false; };
 
-enum class ActionKind : uint8_t { None, ChangeScreen, SaveSettings, ResetSettings, Storage, Sleep, Wake, Logging, Browse, Dataset, UsbExport, Maintenance, RestartLogger, MapScale, SaveAlarm, ReloadAlarm, TestAlarm, SilenceAlarm };
+enum class ActionKind : uint8_t { None, ChangeScreen, SaveSettings, ResetSettings, Storage, Sleep, Wake, Logging, Browse, Dataset, UsbExport, Maintenance, RestartLogger, MapScale, SaveAlarm, ReloadAlarm, PreviewAlarm, SilenceAlarm };
 enum class UsbPage : uint8_t { Menu, WaitEject, Files, Format, Progress, Complete, Error, Busy };
 enum class UsbAction : uint8_t { Begin, Start, Publish, Older, Newer };
 enum class BrowseAction : uint8_t { OpenFile, Older, Newer, Reload, Point, Delete, Playback, PausePlayback, OpenPoint, Text, Map, Statistics, Recalculate, ReplayFaster, ReplaySlower, ReplayForward, ReplayReverse };

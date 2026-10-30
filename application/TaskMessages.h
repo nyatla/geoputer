@@ -41,6 +41,7 @@ enum class MessageKind : uint8_t {
     StorageError,
     DatasetOperation,
     DatasetProgress,
+    WifiStorageChanged, StopWifi, RegenerateWifi,
     UsbStorageChanged,
     UsbExportOperation,
     RequestMap, ReleaseMap, CancelMap, MapCompleted,

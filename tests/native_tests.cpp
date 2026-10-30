@@ -12,6 +12,7 @@ void testGps();
 void testSettings();
 void testPlace();
 void testBoot();
+void testWifiMode();
 void testDatasets();
 void testDatasetBorrowing();
 void testDatasetSelection();
@@ -394,6 +395,7 @@ int main() {
         testSettingsLanguage();
         testDialogs();
         testUsbMode();
+        testWifiMode();
         testExport();
         testPlace();
         testWordBookCache();

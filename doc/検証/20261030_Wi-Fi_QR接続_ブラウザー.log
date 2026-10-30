@@ -1,0 +1,6 @@
+PASS responsive browser 320px: no overflow, pagination, text edit/dirty cancel, mkdir, browse, raw upload/replace, delete cancel, status, exit
+PASS responsive browser 390px: no overflow, pagination, text edit/dirty cancel, mkdir, browse, raw upload/replace, delete cancel, status, exit
+PASS responsive browser 768px: no overflow, pagination, text edit/dirty cancel, mkdir, browse, raw upload/replace, delete cancel, status, exit
+PASS responsive browser 1280px: no overflow, pagination, text edit/dirty cancel, mkdir, browse, raw upload/replace, delete cancel, status, exit
+PASS captive guide 320px: readable URL, no overflow, explicit manager link
+PASS captive guide 390px: readable URL, no overflow, explicit manager link

@@ -6,14 +6,16 @@ void put(uint8_t* p,uint32_t v){for(unsigned i=0;i<4;++i)p[i]=v>>(8*i);}
 uint32_t get(const uint8_t* p){return uint32_t(p[0])|uint32_t(p[1])<<8|uint32_t(p[2])<<16|uint32_t(p[3])<<24;}
 }
 void AlarmFile::encode(const alarm::Profile& p,uint8_t (&b)[Bytes]) {
-    std::memset(b,0,sizeof(b));std::memcpy(b,"RGAL",4);b[4]=1;b[5]=Bytes;b[6]=p.dataset;b[7]=p.depth;
-    put(b+8,p.identity);b[12]=p.settings.enabled;b[13]=p.settings.level;b[14]=unsigned(p.settings.mode);
-    b[15]=p.settings.width;b[16]=unsigned(p.settings.tone);b[17]=p.settings.duration;put(b+60,crc(b,60));
+    std::memset(b,0,sizeof(b));std::memcpy(b,"RGAL",4);b[4]=2;b[5]=Bytes;b[6]=p.dataset;b[7]=p.depth;
+    put(b+8,p.identity);b[12]=p.settings.enabled;b[13]=p.settings.level;b[14]=unsigned(p.settings.judgement);
+    b[15]=0;b[16]=unsigned(p.settings.tone);b[17]=p.settings.duration;put(b+60,crc(b,60));
 }
 bool AlarmFile::decode(const uint8_t (&b)[Bytes],alarm::Profile& p) {
-    if(std::memcmp(b,"RGAL",4)||b[4]!=1||b[5]!=Bytes||b[6]!=p.dataset||b[7]!=p.depth||get(b+8)!=p.identity||b[12]>1||get(b+60)!=crc(b,60))return false;
+    if(std::memcmp(b,"RGAL",4)||(b[4]!=1 && b[4]!=2)||b[5]!=Bytes||b[6]!=p.dataset||b[7]!=p.depth||get(b+8)!=p.identity||b[12]>1||get(b+60)!=crc(b,60))return false;
     for(unsigned i=18;i<60;++i)if(b[i])return false;
-    alarm::Settings s{b[12]!=0,b[13],static_cast<alarm::Mode>(b[14]),b[15],static_cast<alarm::Tone>(b[16]),b[17]};
+    // Version 1 used the same three enum numbers plus a metre-width choice.
+    if((b[4]==1 && b[15]>5) || (b[4]==2 && b[15]!=0))return false;
+    alarm::Settings s{b[12]!=0,b[13],static_cast<alarm::Judgement>(b[14]),static_cast<alarm::Tone>(b[16]),b[17]};
     if(!alarm::valid(s,p.depth))return false;
     p.settings=s;return true;
 }
@@ -45,16 +47,16 @@ alarm::Profile AlarmFile::load(uint8_t n,uint8_t depth,uint32_t identity) {
     if(!n || !alarm::valid(p.settings,depth)) {p.state=alarm::State::DataError;return p;}
     const auto target=path(n,"_alert.dat");const int found=exists(target);
     if(found<0){p.state=alarm::State::IoError;return p;}
-    bool corrupt=false;
+    bool corrupt=false,upgrade=false;
     if(found) {
         ReadFile file(drive_,&slot_);uint64_t bytes=0;uint8_t record[Bytes];
         if(!file.openRead(target)||!file.size(bytes)){p.state=alarm::State::IoError;return p;}
         if(bytes==Bytes) {
             if(!file.read(record,sizeof(record))){p.state=alarm::State::IoError;return p;}
-            corrupt=!decode(record,p);
+            corrupt=!decode(record,p);upgrade=!corrupt && record[4]==1;
         } else corrupt=true;
         if(!file.close()){p.state=alarm::State::IoError;return p;}
-        if(!corrupt){p.state=alarm::State::Ready;return p;}
+        if(!corrupt){p.state=alarm::State::Ready;if(upgrade && !save(p))p.state=alarm::State::IoError;return p;}
         if(!remove(target)){p.state=alarm::State::IoError;return p;}
     }
     p.settings={};p.state=corrupt?alarm::State::Repaired:alarm::State::Created;

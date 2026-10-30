@@ -38,11 +38,12 @@ public:
     bool takeRedraw();
     bool notificationPending() const { return notification_pending_; }
     void notificationSent() { notification_pending_ = false; }
-    bool systemUsbMode() const { return screen_resources_.settings.usb_mode; }
+    uint8_t systemUsbMode() const { return screen_resources_.settings.usb_mode; }
     bool editing() const { return screen_resources_.settings.editing; }
     bool editDirty() const;
     uint8_t editValue() const { return screen_resources_.settings.edit_value; }
-    void setAudioActive(bool active) {if(active!=audio_active_){audio_active_=active;redraw_=true;}}
+    void setAudioActive(bool active) {if(active!=audio_active_){audio_active_=active;redraw_=true;}if(!active)audio_preview_=false;}
+    void setAudioPreview(bool preview) {if(preview!=audio_preview_){audio_preview_=preview;redraw_=true;}}
     bool confirming() const { return dialog_.active(); }
     bool confirmChoice() const { return dialog_.selected(); }
     const ChoiceDialog& dialog() const { return dialog_; }
@@ -57,6 +58,7 @@ public:
     }
     bool viewingLicenses() const { return screen_ == ScreenId::Settings && screen_resources_.settings.page == SettingsPage::Licenses; }
     bool cardInfo() const { return screen_resources_.settings.card_info; }
+    WifiPage wifiPage()const{return screen_resources_.wifi_page;}
     UsbPage usbPage() const { return screen_resources_.usb.page; }
     uint8_t usbFile() const { return screen_resources_.usb.file; }
     const DisplayClock& clock() const { return clock_; }
@@ -128,7 +130,7 @@ private:
 
 
 
-    bool audio_active_=false;
+    bool audio_active_=false,audio_preview_=false;
     bool early_maintenance_key_ = false;
     RecordingState gps_dialog_state_ = RecordingState::Stopped;
     UiData data_{};

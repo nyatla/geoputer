@@ -10,12 +10,12 @@ bool loadBootMode(BootMode& mode) {
     uint8_t record[4]{};
     if (nvs.getBytesLength("boot_mode") != sizeof(record) ||
         nvs.getBytes("boot_mode", record, sizeof(record)) != sizeof(record) ||
-        record[0] != 'M' || record[1] != 1 || record[2] > 1 || record[3] != (record[2] ^ 0xa5)) return false;
+        record[0] != 'M' || record[1] != 1 || record[2] > 2 || record[3] != (record[2] ^ 0xa5)) return false;
     mode = static_cast<BootMode>(record[2]);
     return true;
 }
 bool saveBootMode(BootMode mode) {
-    if (mode != BootMode::GpsLogger && mode != BootMode::UsbStorage) return false;
+    if (mode != BootMode::GpsLogger && mode != BootMode::UsbStorage && mode != BootMode::WifiManagement) return false;
     Preferences nvs;
     if (!nvs.begin("geoputer", false)) return false;
     const auto value = static_cast<uint8_t>(mode);

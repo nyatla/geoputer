@@ -20,6 +20,7 @@ inline constexpr auto f_write=::sd_fatfs_f_write;
 inline constexpr auto f_lseek=::sd_fatfs_f_lseek;
 inline constexpr auto f_sync=::sd_fatfs_f_sync;
 inline constexpr auto f_stat=::sd_fatfs_f_stat;
+inline constexpr auto f_mkdir=::sd_fatfs_f_mkdir;
 inline constexpr auto f_unlink=::sd_fatfs_f_unlink;
 inline constexpr auto f_rename=::sd_fatfs_f_rename;
 inline constexpr auto f_mount=::sd_fatfs_f_mount;

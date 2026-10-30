@@ -39,6 +39,7 @@ public:
     // Code zero includes uncovered cells and undefined regions, as PlaceLookup
     // already treats both as NotFound. No point/file reads are made on a hit.
     uint32_t readWgsPoint(double longitude, double latitude,BorrowedReadBuffer* work=nullptr);
+    uint32_t readGridPoint(int x,int y,BorrowedReadBuffer* work=nullptr);
     bool isCached(double longitude, double latitude) const;
     void invalidate() { stats_.valid = false; if (observer_) observer_->cacheState(RgCacheState::Unprepared); }
     const MapCacheStats& stats() const { return stats_; }

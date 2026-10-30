@@ -11,7 +11,7 @@ void Application::prepareLogScreen(ScreenId target,ScreenId previous) {
     if(browse_waiting_) browse_cancel_=true;
     if(isLogBrowser(previous) && !isLogBrowser(target))browse_release_generation_=generation_;
     if(!isLogBrowser(target))return;
-    auto& logs=screen_resources_.logs();
+    auto& logs=screenResources().logs();
     logs.need=false;logs.request={};logs.single=false;
     if(target==ScreenId::Logs && !isLogBrowser(previous)) {
         logs.request.kind=LogReadKind::List;logs.request.direction=LogListDirection::Newest;logs.need=true;
@@ -23,16 +23,16 @@ void Application::prepareLogScreen(ScreenId target,ScreenId previous) {
 }
 
 bool Application::showCachedPoint() {
-    if(!screen_resources_.hasLogs())return false;
-    auto& logs=screen_resources_.logs();
+    if(!screenResources().hasLogs())return false;
+    auto& logs=screenResources().logs();
     auto& view=data_.editBrowse();
     if(!logs.cache_count || view.target<logs.cache_start || view.target-logs.cache_start>=logs.cache_count) return false;
     GpsFix fix{};
     if(!decodeLogRecord(logs.records[view.target-logs.cache_start],fix)) return false;
     view.point=fix; view.index=view.target;view.point_loaded=true;
     logs.next_at=taskTimeMs()+replay::intervalMs(view);
-    if(place_flow_.pending())place_flow_.refresh();
-    if(!place_flow_.sameCell(fix,data_.dataset.unit_inv_x,data_.dataset.unit_inv_y)) {
+    if(gpsMode().place_flow_.pending())gpsMode().place_flow_.refresh();
+    if(!gpsMode().place_flow_.sameCell(fix,data_.dataset.unit_inv_x,data_.dataset.unit_inv_y)) {
         const auto state=!data_.settings.dataset?PlaceState::Unselected:
             datasetInactive(data_.dataset.state)?data_.dataset.state:PlaceState::Waiting;
         // A new cell invalidates the lookup, not the last completed label.
@@ -45,13 +45,13 @@ bool Application::showCachedPoint() {
     return true;
 }
 bool Application::operateBrowser(const UiAction& action) {
-    if(!screen_resources_.hasLogs())return false;
-    auto& logs=screen_resources_.logs();
+    if(!screenResources().hasLogs())return false;
+    auto& logs=screenResources().logs();
     auto& view=data_.editBrowse();
     auto setPointMode=[&](bool map_mode) {
         if(view.map_mode==map_mode)return true;
         view.map_mode=map_mode;view.playing=false;
-        if(map_request_.token)map_cancel_=true;
+        if(gpsMode().map_request_.token)gpsMode().map_cancel_=true;
         ++view.revision;++data_.revision;ui_data_dirty_=true;return true;
     };
     switch(action.browse_action) {
@@ -153,9 +153,9 @@ void Application::processBrowser() {
         if(sendSpeculative(storage_.inbox(),release)!=SpeculativeResult::Queued)return;
         browse_release_generation_=0;
     }
-    if(!screen_resources_.hasLogs())return;
-    auto& logs=screen_resources_.logs();
-    if(!logs.need || map_request_.token || place_flow_.pending() || place_borrow_.token || data_.storage.busy || browse_waiting_ || (!isLogBrowser(screen_) && !usbSelecting()) || mode_!=DisplayMode::View ||
+    if(!screenResources().hasLogs())return;
+    auto& logs=screenResources().logs();
+    if(!logs.need || (!usb_mode_ && (gpsMode().map_request_.token || gpsMode().place_flow_.pending() || gpsMode().place_borrow_.token)) || data_.storage.busy || browse_waiting_ || (!isLogBrowser(screen_) && !usbSelecting()) || mode_!=DisplayMode::View ||
        static_cast<int32_t>(taskTimeMs()-logs.retry_at)<0) return;
     auto read=logs.request;
     if(++browse_token_==0) ++browse_token_;
@@ -180,8 +180,8 @@ void Application::completeBrowser(const LogReadReply& reply) {
     if(reply.request.token!=browse_waiting_) return;
     const bool transitioning=browse_cancel_;
     browse_waiting_=0; browse_cancel_=false;
-    if(transitioning || !screen_resources_.hasLogs() || reply.request.screen_generation!=generation_ || (!isLogBrowser(screen_) && !usbSelecting())) return;
-    auto& logs=screen_resources_.logs();
+    if(transitioning || !screenResources().hasLogs() || reply.request.screen_generation!=generation_ || (!isLogBrowser(screen_) && !usbSelecting())) return;
+    auto& logs=screenResources().logs();
     auto& view=data_.editBrowse();
     if(reply.request.kind==LogReadKind::Delete && screen_==ScreenId::Logs) {
         view.deleting=false; view.error=reply.error;
@@ -242,15 +242,15 @@ void Application::completeBrowser(const LogReadReply& reply) {
 }
 
 void Application::processReplay() {
-    if(!screen_resources_.hasLogs() || !viewingLogPoint(screen_))return;
-    auto& view=data_.editBrowse();auto& logs=screen_resources_.logs();
+    if(!screenResources().hasLogs() || !viewingLogPoint(screen_))return;
+    auto& view=data_.editBrowse();auto& logs=screenResources().logs();
     if(!view.playing)return;
     if(view.loading || !view.point_loaded) {logs.next_at=taskTimeMs()+replay::intervalMs(view);return;}
     if(mode_!=DisplayMode::View || !view.map_mode || view.error!=LogReadError::None || data_.map.error!=map::Error::None) {
         view.playing=false;++data_.revision;ui_data_dirty_=true;return;
     }
-    if(browse_waiting_ || place_flow_.pending() || place_borrow_.token ||
-       map_request_.token || data_.map.busy || data_.place_state==PlaceState::Waiting ||
+    if(browse_waiting_ || gpsMode().place_flow_.pending() || gpsMode().place_borrow_.token ||
+       gpsMode().map_request_.token || data_.map.busy || data_.place_state==PlaceState::Waiting ||
        data_.place_state==PlaceState::Searching) {
         logs.next_at=taskTimeMs()+replay::intervalMs(view);return;
     }

@@ -1,0 +1,241 @@
+LoRa cold-SLEEP and reset fallback safety tests passed
+PASS: ADV held-key warm reset, matrix snapshot, FIFO polling, duplicate/release, overflow and I2C failure
+PASS: fixed keyboard limits (0/1/3/56/clamp), all 56 held at boot, excess/duplicate/release, Fn/Shift, FIFO recovery, both built-in readers; zero polling allocations and frees
+PASS: queue/sync, UI/settings/GPS, UTF-8/place search, Boot, JST clock, Shinonome and full license navigation, RG/SD lamps and binary log recovery
+PASS: USB ownership, repeat mounts, reconnect gating, sync retry, inflight IO drain and device-side exit
+PASS: build metadata JST/date boundary, Git clean/dirty/untracked/unknown and generated C++ header
+PASS: INI C++ allocations=0; 16/17 languages, duplicates, long IDs/names, direct UTF-8 output, switching, reset and failures
+PASS: alarm boundaries/hierarchy, three region thresholds, adjacent cell grids, v1 migration, tone-change previews, sound durations/cap/wrap, file repair/transaction failures, NVS migration, UI and dark-screen borrowing
+[AUDIO] ready=1 managed=0
+[AUDIO] play tone=0 volume=1 managed=0
+[AUDIO] idle managed=0
+[AUDIO] play tone=1 volume=2 managed=0
+[AUDIO] idle managed=0
+[AUDIO] play tone=2 volume=3 managed=0
+[AUDIO] idle managed=0
+[AUDIO] play tone=3 volume=4 managed=0
+[AUDIO] idle managed=0
+[AUDIO] play tone=4 volume=5 managed=0
+[AUDIO] idle managed=0
+[POWER] audio=STANDBY (DAC/output)
+[POWER] audio=CLOCK WARM
+[AUDIO] play tone=0 volume=2 managed=1
+[POWER] audio=READY
+[AUDIO] idle managed=1
+[POWER] audio=STANDBY (DAC/output)
+[POWER] audio=CLOCK WARM
+[AUDIO] play tone=1 volume=2 managed=1
+[POWER] audio=READY
+[AUDIO] idle managed=1
+[POWER] audio=STANDBY (DAC/output)
+[POWER] audio=CLOCK WARM
+[AUDIO] play tone=2 volume=2 managed=1
+[POWER] audio=READY
+[AUDIO] idle managed=1
+[POWER] audio=STANDBY (DAC/output)
+[POWER] audio=CLOCK WARM
+[AUDIO] play tone=3 volume=2 managed=1
+[POWER] audio=READY
+[AUDIO] idle managed=1
+[POWER] audio=STANDBY (DAC/output)
+[POWER] audio=CLOCK WARM
+[AUDIO] play tone=4 volume=2 managed=1
+[POWER] audio=READY
+[AUDIO] idle managed=1
+[POWER] audio=STANDBY (DAC/output)
+[POWER] audio=CLOCK WARM
+[AUDIO] play tone=0 volume=2 managed=1
+[POWER] audio=READY
+[AUDIO] idle managed=1
+[POWER] audio=STANDBY (DAC/output)
+[POWER] audio=CLOCK WARM
+[AUDIO] play tone=1 volume=2 managed=1
+[POWER] audio=READY
+[AUDIO] idle managed=1
+[POWER] audio=STANDBY (DAC/output)
+[POWER] audio=CLOCK WARM
+[AUDIO] play tone=2 volume=2 managed=1
+[POWER] audio=READY
+[AUDIO] idle managed=1
+[POWER] audio=STANDBY (DAC/output)
+[POWER] audio=CLOCK WARM
+[AUDIO] play tone=3 volume=2 managed=1
+[POWER] audio=READY
+[AUDIO] idle managed=1
+[POWER] audio=STANDBY (DAC/output)
+[POWER] audio=CLOCK WARM
+[AUDIO] play tone=4 volume=2 managed=1
+[POWER] audio=READY
+[AUDIO] idle managed=1
+[POWER] audio=STANDBY (DAC/output)
+[POWER] audio=CLOCK WARM
+[AUDIO] play tone=0 volume=2 managed=1
+[POWER] audio=READY
+[AUDIO] idle managed=1
+[POWER] audio=STANDBY (DAC/output)
+[POWER] audio=CLOCK WARM
+[AUDIO] play tone=1 volume=2 managed=1
+[POWER] audio=READY
+[AUDIO] idle managed=1
+[POWER] audio=STANDBY (DAC/output)
+[POWER] audio=CLOCK WARM
+[AUDIO] play tone=2 volume=2 managed=1
+[POWER] audio=READY
+[AUDIO] idle managed=1
+[POWER] audio=STANDBY (DAC/output)
+[POWER] audio=CLOCK WARM
+[AUDIO] play tone=3 volume=2 managed=1
+[POWER] audio=READY
+[AUDIO] idle managed=1
+[POWER] audio=STANDBY (DAC/output)
+[POWER] audio=CLOCK WARM
+[AUDIO] play tone=4 volume=2 managed=1
+[POWER] audio=READY
+[AUDIO] idle managed=1
+[POWER] audio=STANDBY (DAC/output)
+[POWER] audio=CLOCK WARM
+[AUDIO] play tone=0 volume=2 managed=1
+[POWER] audio=READY
+[AUDIO] idle managed=1
+[POWER] audio=STANDBY (DAC/output)
+[POWER] audio=CLOCK WARM
+[AUDIO] play tone=1 volume=2 managed=1
+[POWER] audio=READY
+[AUDIO] idle managed=1
+[POWER] audio=STANDBY (DAC/output)
+[POWER] audio=CLOCK WARM
+[AUDIO] play tone=2 volume=2 managed=1
+[POWER] audio=READY
+[AUDIO] idle managed=1
+[POWER] audio=STANDBY (DAC/output)
+[POWER] audio=CLOCK WARM
+[AUDIO] play tone=3 volume=2 managed=1
+[POWER] audio=READY
+[AUDIO] idle managed=1
+[POWER] audio=STANDBY (DAC/output)
+[POWER] audio=CLOCK WARM
+[AUDIO] play tone=4 volume=2 managed=1
+[POWER] audio=READY
+[AUDIO] idle managed=1
+[POWER] audio=STANDBY (DAC/output)
+[POWER] audio=CLOCK WARM
+[AUDIO] play tone=0 volume=2 managed=1
+[POWER] audio=READY
+[AUDIO] idle managed=1
+[POWER] audio=STANDBY (DAC/output)
+[POWER] audio=CLOCK WARM
+[AUDIO] play tone=1 volume=2 managed=1
+[POWER] audio=READY
+[AUDIO] idle managed=1
+[POWER] audio=STANDBY (DAC/output)
+[POWER] audio=CLOCK WARM
+[AUDIO] play tone=2 volume=2 managed=1
+[POWER] audio=READY
+[AUDIO] idle managed=1
+[POWER] audio=STANDBY (DAC/output)
+[POWER] audio=CLOCK WARM
+[AUDIO] play tone=3 volume=2 managed=1
+[POWER] audio=READY
+[AUDIO] idle managed=1
+[POWER] audio=STANDBY (DAC/output)
+[POWER] audio=CLOCK WARM
+[AUDIO] play tone=4 volume=2 managed=1
+[POWER] audio=READY
+[AUDIO] idle managed=1
+[POWER] audio=STANDBY (DAC/output)
+[POWER] audio=CLOCK WARM
+[AUDIO] play tone=0 volume=2 managed=1
+[POWER] audio=READY
+[AUDIO] idle managed=1
+[POWER] audio=STANDBY (DAC/output)
+[POWER] audio=CLOCK WARM
+[AUDIO] play tone=1 volume=2 managed=1
+[POWER] audio=READY
+[AUDIO] idle managed=1
+[POWER] audio=STANDBY (DAC/output)
+[POWER] audio=CLOCK WARM
+[AUDIO] play tone=2 volume=2 managed=1
+[POWER] audio=READY
+[AUDIO] idle managed=1
+[POWER] audio=STANDBY (DAC/output)
+[POWER] audio=CLOCK WARM
+[AUDIO] play tone=3 volume=2 managed=1
+[POWER] audio=READY
+[AUDIO] idle managed=1
+[POWER] audio=STANDBY (DAC/output)
+[POWER] audio=CLOCK WARM
+[AUDIO] play tone=4 volume=2 managed=1
+[POWER] audio=READY
+[AUDIO] idle managed=1
+[POWER] audio=STANDBY (DAC/output)
+[POWER] audio=CLOCK WARM
+[AUDIO] play tone=0 volume=2 managed=1
+[POWER] audio=READY
+[AUDIO] idle managed=1
+[POWER] audio=STANDBY (DAC/output)
+[POWER] audio=CLOCK WARM
+[AUDIO] play tone=1 volume=2 managed=1
+[POWER] audio=READY
+[AUDIO] idle managed=1
+[POWER] audio=STANDBY (DAC/output)
+[POWER] audio=CLOCK WARM
+[AUDIO] play tone=2 volume=2 managed=1
+[POWER] audio=READY
+[AUDIO] idle managed=1
+[POWER] audio=STANDBY (DAC/output)
+[POWER] audio=CLOCK WARM
+[AUDIO] play tone=3 volume=2 managed=1
+[POWER] audio=READY
+[AUDIO] idle managed=1
+[POWER] audio=STANDBY (DAC/output)
+[POWER] audio=CLOCK WARM
+[AUDIO] play tone=4 volume=2 managed=1
+[POWER] audio=READY
+[AUDIO] idle managed=1
+[POWER] audio=STANDBY (DAC/output)
+[POWER] audio=CLOCK WARM
+[AUDIO] play tone=0 volume=2 managed=1
+[POWER] audio=READY
+[AUDIO] idle managed=1
+[POWER] audio=STANDBY (DAC/output)
+[POWER] audio=CLOCK WARM
+[AUDIO] play tone=1 volume=2 managed=1
+[POWER] audio=READY
+[AUDIO] idle managed=1
+[POWER] audio=STANDBY (DAC/output)
+[POWER] audio=CLOCK WARM
+[AUDIO] play tone=2 volume=2 managed=1
+[POWER] audio=READY
+[AUDIO] idle managed=1
+[POWER] audio=STANDBY (DAC/output)
+[POWER] audio=CLOCK WARM
+[AUDIO] play tone=3 volume=2 managed=1
+[POWER] audio=READY
+[AUDIO] idle managed=1
+[POWER] audio=STANDBY (DAC/output)
+[POWER] audio=CLOCK WARM
+[AUDIO] play tone=4 volume=2 managed=1
+[POWER] audio=READY
+[AUDIO] idle managed=1
+[POWER] audio=STANDBY (DAC/output)
+[POWER] audio=CLOCK WARM
+[POWER] audio=READY
+[POWER] audio=STANDBY (DAC/output)
+[POWER] audio=CLOCK WARM
+[AUDIO] play tone=1 volume=1 managed=1
+[POWER] audio=READY
+[AUDIO] idle managed=1
+[POWER] audio=STANDBY (DAC/output)
+[POWER] audio=CLOCK WARM
+[AUDIO] play tone=0 volume=1 managed=1
+[POWER] audio=READY
+[AUDIO] play tone=1 volume=2 managed=1
+[AUDIO] idle managed=1
+[POWER] audio=STANDBY (DAC/output)
+[POWER] audio=ERROR
+[AUDIO] idle managed=1
+[POWER] audio=UNUSED STANDBY
+PASS: all power levels, forty managed auditions, clock-first wake/DAC settle, DMA drain, None restore, USB audio exclusion, mute, hard cap and I2C failure; driver retained
+MODE SIZES host: app_gps=2496 app_usb=656 gps_mode=174096 storage_gps=171600 storage_usb=1296 mode_union=174104 Application=218272
+PASS: empty startup, one-time mode construction, shared addresses, opposite-mode rejection, active-only destruction and stable GPS loans
+PASS: independent GPX/KML XML parsing, coordinate order, UTC/leap day, missing fields and CSV units

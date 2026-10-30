@@ -51,6 +51,7 @@ void UiTask::handle(const UiRequest& request, bool ready) {
                 break;
             case MessageKind::ControlAudio:
                 result.status=audio_.command(request.payload.audio,taskTimeMs())?OperationStatus::Ok:OperationStatus::Unavailable;
+                if(result.status==OperationStatus::Ok)model_.setAudioPreview(request.payload.audio.play && request.payload.audio.preview);
                 model_.setAudioActive(audio_.active());break;
             case MessageKind::GetUiContent:
                 result.status = OperationStatus::Ok;
@@ -111,7 +112,8 @@ void UiTask::run() {
         model_.keyPressed(UiKey::Escape, taskTimeMs());
         Console.println("[UI] startup ESC held; maintenance latched");
     }
-    UiRenderer renderer(M5Cardputer.Display);
+    wifi::QrCode wifi_qr; // Lifetime matches this UI loop; no heap or display buffer.
+    UiRenderer renderer(M5Cardputer.Display,&wifi_qr);
     const bool ready = renderer.begin(config::UiColorDepth, frame_buffer_.data, sizeof(frame_buffer_.data));
     Console.println(ready ? "[UI] ready (240x135)" : "[UI] initialization failed");
     uint8_t was_viewer=0;
@@ -215,7 +217,11 @@ void UiTask::run() {
         was_left = left; was_right = right; was_enter = enter; was_any = any; was_tab=tab;
         if (!up && !down) repeat_at = 0;
         notifyContentChanged();
-        if (ready && model_.takeRedraw()) renderer.draw(model_);
+        if (ready && model_.takeRedraw()) {
+            if(model_.snapshot().screen==ScreenId::WifiManagement && model_.wifiPage()!=WifiPage::Text)
+                wifi_qr.update(model_.data().storage.wifi,model_.wifiPage());
+            renderer.draw(model_);
+        }
         // Rendering/SD-driven updates can exceed 10 ms. An absolute deadline
         // would then run catch-up iterations without blocking and starve IDLE.
         // Always yield after a UI iteration, including slow full-screen draws.

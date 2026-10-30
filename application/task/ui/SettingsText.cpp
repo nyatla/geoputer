@@ -19,8 +19,8 @@ const char* settingsRootLabel(UiLanguage language, unsigned row) {
         {"バージョン情報", "About"}, {"ライセンス情報", "Licenses"}, {"アラート", "Alerts"}};
     return at(language, values, row);
 }
-const char* settingsModeValue(UiLanguage language, bool usb) {
-    return usb ? "USB" : language == UiLanguage::Japanese ? "GPSロガー" : "GPS logger";
+const char* settingsModeValue(UiLanguage language, uint8_t usb) {
+    return usb==2 ? "Wi-Fi" : usb ? "USB" : language == UiLanguage::Japanese ? "GPSロガー" : "GPS logger";
 }
 const char* settingsSystemLabel(UiLanguage language, unsigned row) {
     static const Translation values[] = {{"モード", "Mode"}, {"GPS接続", "GPS source"},

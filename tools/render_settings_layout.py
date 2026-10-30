@@ -242,8 +242,10 @@ int main(int argc,char** argv){
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--license-baseline", type=Path, help="Compare license frames captured before this change")
+    parser.add_argument("--output", type=Path, default=ROOT / "doc/画面・操作/settings")
     args = parser.parse_args()
-    output = ROOT / "doc/画面・操作/settings"
+    output = args.output
+    output.mkdir(parents=True, exist_ok=True)
     enum_source = (M5GFX / "v1/misc/enum.hpp").read_text()
     renderer = (ROOT / "application/task/ui/UiRenderer.cpp").read_text() + (ROOT / "application/task/ui/UiCanvas.h").read_text()
     colors = []

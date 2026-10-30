@@ -1,0 +1,219 @@
+Processing cardputer-adv (platform: espressif32@6.12.0; board: esp32-s3-devkitc-1; framework: arduino)
+--------------------------------------------------------------------------------
+Verbose mode can be enabled via `-v, --verbose` option
+[BUILD INFO] 638d7980+dirty 2026-10-30 19:08:19 JST
+CONFIGURATION: https://docs.platformio.org/page/boards/espressif32/esp32-s3-devkitc-1.html
+PLATFORM: Espressif 32 (6.12.0) > Espressif ESP32-S3-DevKitC-1-N8 (8 MB QD, No PSRAM)
+HARDWARE: ESP32S3 240MHz, 320KB RAM, 8MB Flash
+DEBUG: Current (esp-builtin) On-board (esp-builtin) External (cmsis-dap, esp-bridge, esp-prog, iot-bus-jtag, jlink, minimodule, olimex-arm-usb-ocd, olimex-arm-usb-ocd-h, olimex-arm-usb-tiny-h, olimex-jtag-tiny, tumpa)
+PACKAGES: 
+ - framework-arduinoespressif32 @ 3.20017.241212+sha.dcc1105b 
+ - tool-esptoolpy @ 2.40900.250804 (4.9.0) 
+ - toolchain-riscv32-esp @ 8.4.0+2021r2-patch5 
+ - toolchain-xtensa-esp32s3 @ 8.4.0+2021r2-patch5
+LDF: Library Dependency Finder -> https://bit.ly/configure-pio-ldf
+LDF Modes: Finder ~ chain, Compatibility ~ soft
+Found 39 compatible libraries
+Scanning dependencies...
+Dependency Graph
+|-- M5Cardputer @ 1.1.1
+|-- SD_FatFs @ 0.2.0
+|-- M5Unified @ 0.2.26
+|-- M5GFX @ 0.2.33
+|-- IRremote @ 4.7.1
+|-- Preferences @ 2.0.0
+|-- SPI @ 2.0.0
+|-- SD @ 2.0.0
+|-- DNSServer @ 2.0.0
+|-- WebServer @ 2.0.0
+Building in release mode
+Compiling .pio/build/cardputer-adv/src/Alarm.cpp.o
+Compiling .pio/build/cardputer-adv/src/Application.cpp.o
+Compiling .pio/build/cardputer-adv/src/BootMode.cpp.o
+Compiling .pio/build/cardputer-adv/src/DatasetBrowser.cpp.o
+Compiling .pio/build/cardputer-adv/src/LogBrowser.cpp.o
+Compiling .pio/build/cardputer-adv/src/MapView.cpp.o
+Compiling .pio/build/cardputer-adv/src/OperatingMode.cpp.o
+Compiling .pio/build/cardputer-adv/src/Settings.cpp.o
+Compiling .pio/build/cardputer-adv/src/WifiApplication.cpp.o
+Compiling .pio/build/cardputer-adv/src/hardware/AdvKeyboardReader.cpp.o
+Compiling .pio/build/cardputer-adv/src/hardware/AudioOutput.cpp.o
+Compiling .pio/build/cardputer-adv/src/hardware/LoraSafety.cpp.o
+Compiling .pio/build/cardputer-adv/src/main.cpp.o
+Compiling .pio/build/cardputer-adv/src/power/AudioPower.cpp.o
+Compiling .pio/build/cardputer-adv/src/task/gps/GpsReceiver.cpp.o
+Compiling .pio/build/cardputer-adv/src/task/gps/GpsTask.cpp.o
+Compiling .pio/build/cardputer-adv/src/task/gps/NmeaParser.cpp.o
+Compiling .pio/build/cardputer-adv/src/task/storage/SettingsStore.cpp.o
+Compiling .pio/build/cardputer-adv/src/task/storage/StorageCard.cpp.o
+Compiling .pio/build/cardputer-adv/src/task/storage/StorageTask.cpp.o
+Compiling .pio/build/cardputer-adv/src/task/storage/UsbExport.cpp.o
+Compiling .pio/build/cardputer-adv/src/task/storage/WifiStorage.cpp.o
+Compiling .pio/build/cardputer-adv/src/task/storage/alarm/AlarmFile.cpp.o
+Compiling .pio/build/cardputer-adv/src/task/storage/dataset/DatasetCatalog.cpp.o
+Compiling .pio/build/cardputer-adv/src/task/storage/dataset/DatasetIndex.cpp.o
+Compiling .pio/build/cardputer-adv/src/task/storage/dataset/DatasetMetadata.cpp.o
+Compiling .pio/build/cardputer-adv/src/task/storage/export/LogExporter.cpp.o
+Compiling .pio/build/cardputer-adv/src/task/storage/galuchat/CachedMapReader.cpp.o
+Compiling .pio/build/cardputer-adv/src/task/storage/galuchat/DiskIndexedMapReader.cpp.o
+Compiling .pio/build/cardputer-adv/src/task/storage/galuchat/DiskIndexedWordBookReader.cpp.o
+Compiling .pio/build/cardputer-adv/src/task/storage/galuchat/MapSource.cpp.o
+Compiling .pio/build/cardputer-adv/src/task/storage/galuchat/PlaceLookup.cpp.o
+Compiling .pio/build/cardputer-adv/src/task/storage/galuchat/TextEncoding.cpp.o
+Compiling .pio/build/cardputer-adv/src/task/storage/log/LogReader.cpp.o
+Compiling .pio/build/cardputer-adv/src/task/storage/log/LogWriter.cpp.o
+Compiling .pio/build/cardputer-adv/src/task/storage/usb/UsbStorage.cpp.o
+Compiling .pio/build/cardputer-adv/src/task/ui/LicenseText.cpp.o
+Compiling .pio/build/cardputer-adv/src/task/ui/PixelFont.cpp.o
+Compiling .pio/build/cardputer-adv/src/task/ui/SettingsText.cpp.o
+Compiling .pio/build/cardputer-adv/src/task/ui/Shinonome.cpp.o
+Compiling .pio/build/cardputer-adv/src/task/ui/UiModel.cpp.o
+Compiling .pio/build/cardputer-adv/src/task/ui/UiRenderer.cpp.o
+Compiling .pio/build/cardputer-adv/src/task/ui/UiTask.cpp.o
+Compiling .pio/build/cardputer-adv/src/task/ui/UsbRenderer.cpp.o
+Compiling .pio/build/cardputer-adv/src/utils/Console.cpp.o
+Compiling .pio/build/cardputer-adv/src/wifi/WifiCredentials.cpp.o
+Compiling .pio/build/cardputer-adv/src/wifi/WifiFiles.cpp.o
+Compiling .pio/build/cardputer-adv/src/wifi/WifiQrCode.cpp.o
+Compiling .pio/build/cardputer-adv/src/wifi/WifiService.cpp.o
+Building .pio/build/cardputer-adv/bootloader.bin
+Generating partitions .pio/build/cardputer-adv/partitions.bin
+esptool.py v4.9.0
+Creating esp32s3 image...
+Merged 1 ELF section
+Successfully created esp32s3 image.
+Compiling .pio/build/cardputer-adv/lib5ed/SPI/SPI.cpp.o
+Compiling .pio/build/cardputer-adv/lib51d/Wire/Wire.cpp.o
+Compiling .pio/build/cardputer-adv/libff5/M5GFX@0.2.33/M5GFX.cpp.o
+Compiling .pio/build/cardputer-adv/libff5/M5GFX@0.2.33/lgfx/Fonts/IPA/lgfx_font_japan.c.o
+Compiling .pio/build/cardputer-adv/libff5/M5GFX@0.2.33/lgfx/Fonts/efont/lgfx_efont_cn.c.o
+Archiving .pio/build/cardputer-adv/lib5ed/libSPI.a
+Indexing .pio/build/cardputer-adv/lib5ed/libSPI.a
+Compiling .pio/build/cardputer-adv/libff5/M5GFX@0.2.33/lgfx/Fonts/efont/lgfx_efont_ja.c.o
+Compiling .pio/build/cardputer-adv/libff5/M5GFX@0.2.33/lgfx/Fonts/efont/lgfx_efont_kr.c.o
+Archiving .pio/build/cardputer-adv/lib51d/libWire.a
+Indexing .pio/build/cardputer-adv/lib51d/libWire.a
+Compiling .pio/build/cardputer-adv/libff5/M5GFX@0.2.33/lgfx/Fonts/efont/lgfx_efont_tw.c.o
+Compiling .pio/build/cardputer-adv/libff5/M5GFX@0.2.33/lgfx/utility/lgfx_miniz.c.o
+Compiling .pio/build/cardputer-adv/libff5/M5GFX@0.2.33/lgfx/utility/lgfx_pngle.c.o
+Compiling .pio/build/cardputer-adv/libff5/M5GFX@0.2.33/lgfx/utility/lgfx_qoi.c.o
+Compiling .pio/build/cardputer-adv/libff5/M5GFX@0.2.33/lgfx/utility/lgfx_qrcode.c.o
+Compiling .pio/build/cardputer-adv/libff5/M5GFX@0.2.33/lgfx/utility/lgfx_tjpgd.c.o
+Compiling .pio/build/cardputer-adv/libff5/M5GFX@0.2.33/lgfx/v1/LGFXBase.cpp.o
+Compiling .pio/build/cardputer-adv/libff5/M5GFX@0.2.33/lgfx/v1/lgfx_fonts.cpp.o
+Compiling .pio/build/cardputer-adv/libff5/M5GFX@0.2.33/lgfx/v1/lgfx_v1.cpp.o
+Compiling .pio/build/cardputer-adv/libff5/M5GFX@0.2.33/lgfx/v1/lgfx_v1_panel.cpp.o
+Compiling .pio/build/cardputer-adv/libff5/M5GFX@0.2.33/lgfx/v1/lgfx_v1_platforms.cpp.o
+Compiling .pio/build/cardputer-adv/libff5/M5GFX@0.2.33/lgfx/v1/lgfx_v1_touch.cpp.o
+Compiling .pio/build/cardputer-adv/libff5/M5GFX@0.2.33/lgfx/v1/panel/Panel_M5HDMI.cpp.o
+Compiling .pio/build/cardputer-adv/lib51d/M5Unified/M5Unified.cpp.o
+Compiling .pio/build/cardputer-adv/lib0d1/M5Cardputer/M5Cardputer.cpp.o
+Compiling .pio/build/cardputer-adv/lib0d1/M5Cardputer/utility/Adafruit_TCA8418/Adafruit_TCA8418.cpp.o
+Compiling .pio/build/cardputer-adv/lib0d1/M5Cardputer/utility/Keyboard/Keyboard.cpp.o
+Compiling .pio/build/cardputer-adv/lib0d1/M5Cardputer/utility/Keyboard/KeyboardReader/IOMatrix.cpp.o
+Compiling .pio/build/cardputer-adv/lib0d1/M5Cardputer/utility/Keyboard/KeyboardReader/TCA8418.cpp.o
+Compiling .pio/build/cardputer-adv/lib197/SD_FatFs/sd_fatfs/device.c.o
+Compiling .pio/build/cardputer-adv/lib197/SD_FatFs/sd_fatfs/esp32_vfs.c.o
+Compiling .pio/build/cardputer-adv/lib197/SD_FatFs/sd_fatfs/ff.c.o
+Compiling .pio/build/cardputer-adv/lib197/SD_FatFs/sd_fatfs/ffunicode.c.o
+Compiling .pio/build/cardputer-adv/libadf/Preferences/Preferences.cpp.o
+Compiling .pio/build/cardputer-adv/lib4ff/FS/FS.cpp.o
+Compiling .pio/build/cardputer-adv/lib4ff/FS/vfs_api.cpp.o
+Compiling .pio/build/cardputer-adv/lib6a1/SD/SD.cpp.o
+Archiving .pio/build/cardputer-adv/lib197/libSD_FatFs.a
+Compiling .pio/build/cardputer-adv/lib6a1/SD/sd_diskio.cpp.o
+Compiling .pio/build/cardputer-adv/lib6a1/SD/sd_diskio_crc.c.o
+Indexing .pio/build/cardputer-adv/lib197/libSD_FatFs.a
+Compiling .pio/build/cardputer-adv/libaa2/WiFi/WiFi.cpp.o
+Compiling .pio/build/cardputer-adv/libaa2/WiFi/WiFiAP.cpp.o
+Compiling .pio/build/cardputer-adv/libaa2/WiFi/WiFiClient.cpp.o
+Archiving .pio/build/cardputer-adv/libadf/libPreferences.a
+Indexing .pio/build/cardputer-adv/libadf/libPreferences.a
+Compiling .pio/build/cardputer-adv/libaa2/WiFi/WiFiGeneric.cpp.o
+Compiling .pio/build/cardputer-adv/libaa2/WiFi/WiFiMulti.cpp.o
+Compiling .pio/build/cardputer-adv/libaa2/WiFi/WiFiSTA.cpp.o
+Archiving .pio/build/cardputer-adv/lib4ff/libFS.a
+Compiling .pio/build/cardputer-adv/libaa2/WiFi/WiFiScan.cpp.o
+Indexing .pio/build/cardputer-adv/lib4ff/libFS.a
+Compiling .pio/build/cardputer-adv/libaa2/WiFi/WiFiServer.cpp.o
+Archiving .pio/build/cardputer-adv/libff5/libM5GFX@0.2.33.a
+Compiling .pio/build/cardputer-adv/libaa2/WiFi/WiFiUdp.cpp.o
+Archiving .pio/build/cardputer-adv/lib6a1/libSD.a
+Indexing .pio/build/cardputer-adv/lib6a1/libSD.a
+Compiling .pio/build/cardputer-adv/lib2d6/DNSServer/DNSServer.cpp.o
+Compiling .pio/build/cardputer-adv/lib5d0/WebServer/Parsing.cpp.o
+Compiling .pio/build/cardputer-adv/lib5d0/WebServer/WebServer.cpp.o
+Compiling .pio/build/cardputer-adv/lib5d0/WebServer/detail/mimetable.cpp.o
+Compiling .pio/build/cardputer-adv/FrameworkArduino/Esp.cpp.o
+Archiving .pio/build/cardputer-adv/lib0d1/libM5Cardputer.a
+Compiling .pio/build/cardputer-adv/FrameworkArduino/FirmwareMSC.cpp.o
+Compiling .pio/build/cardputer-adv/FrameworkArduino/FunctionalInterrupt.cpp.o
+Compiling .pio/build/cardputer-adv/FrameworkArduino/HWCDC.cpp.o
+Compiling .pio/build/cardputer-adv/FrameworkArduino/HardwareSerial.cpp.o
+Compiling .pio/build/cardputer-adv/FrameworkArduino/IPAddress.cpp.o
+Compiling .pio/build/cardputer-adv/FrameworkArduino/IPv6Address.cpp.o
+Compiling .pio/build/cardputer-adv/FrameworkArduino/MD5Builder.cpp.o
+Compiling .pio/build/cardputer-adv/FrameworkArduino/Print.cpp.o
+Archiving .pio/build/cardputer-adv/libaa2/libWiFi.a
+Archiving .pio/build/cardputer-adv/lib2d6/libDNSServer.a
+Indexing .pio/build/cardputer-adv/lib0d1/libM5Cardputer.a
+Indexing .pio/build/cardputer-adv/lib2d6/libDNSServer.a
+Compiling .pio/build/cardputer-adv/FrameworkArduino/Stream.cpp.o
+Compiling .pio/build/cardputer-adv/FrameworkArduino/StreamString.cpp.o
+Compiling .pio/build/cardputer-adv/FrameworkArduino/Tone.cpp.o
+Indexing .pio/build/cardputer-adv/libaa2/libWiFi.a
+Compiling .pio/build/cardputer-adv/FrameworkArduino/USB.cpp.o
+Compiling .pio/build/cardputer-adv/FrameworkArduino/USBCDC.cpp.o
+Compiling .pio/build/cardputer-adv/FrameworkArduino/USBMSC.cpp.o
+Compiling .pio/build/cardputer-adv/FrameworkArduino/WMath.cpp.o
+Compiling .pio/build/cardputer-adv/FrameworkArduino/WString.cpp.o
+Compiling .pio/build/cardputer-adv/FrameworkArduino/base64.cpp.o
+Compiling .pio/build/cardputer-adv/FrameworkArduino/cbuf.cpp.o
+Compiling .pio/build/cardputer-adv/FrameworkArduino/esp32-hal-adc.c.o
+Archiving .pio/build/cardputer-adv/lib5d0/libWebServer.a
+Compiling .pio/build/cardputer-adv/FrameworkArduino/esp32-hal-bt.c.o
+Compiling .pio/build/cardputer-adv/FrameworkArduino/esp32-hal-cpu.c.o
+Compiling .pio/build/cardputer-adv/FrameworkArduino/esp32-hal-dac.c.o
+Compiling .pio/build/cardputer-adv/FrameworkArduino/esp32-hal-gpio.c.o
+Indexing .pio/build/cardputer-adv/lib5d0/libWebServer.a
+Compiling .pio/build/cardputer-adv/FrameworkArduino/esp32-hal-i2c-slave.c.o
+Compiling .pio/build/cardputer-adv/FrameworkArduino/esp32-hal-i2c.c.o
+Compiling .pio/build/cardputer-adv/FrameworkArduino/esp32-hal-ledc.c.o
+Compiling .pio/build/cardputer-adv/FrameworkArduino/esp32-hal-matrix.c.o
+Compiling .pio/build/cardputer-adv/FrameworkArduino/esp32-hal-misc.c.o
+Compiling .pio/build/cardputer-adv/FrameworkArduino/esp32-hal-psram.c.o
+Compiling .pio/build/cardputer-adv/FrameworkArduino/esp32-hal-rgb-led.c.o
+Compiling .pio/build/cardputer-adv/FrameworkArduino/esp32-hal-rmt.c.o
+Compiling .pio/build/cardputer-adv/FrameworkArduino/esp32-hal-sigmadelta.c.o
+Compiling .pio/build/cardputer-adv/FrameworkArduino/esp32-hal-spi.c.o
+Compiling .pio/build/cardputer-adv/FrameworkArduino/esp32-hal-time.c.o
+Compiling .pio/build/cardputer-adv/FrameworkArduino/esp32-hal-timer.c.o
+Compiling .pio/build/cardputer-adv/FrameworkArduino/esp32-hal-tinyusb.c.o
+Compiling .pio/build/cardputer-adv/FrameworkArduino/esp32-hal-touch.c.o
+Compiling .pio/build/cardputer-adv/FrameworkArduino/esp32-hal-uart.c.o
+Compiling .pio/build/cardputer-adv/FrameworkArduino/firmware_msc_fat.c.o
+Compiling .pio/build/cardputer-adv/FrameworkArduino/libb64/cdecode.c.o
+Compiling .pio/build/cardputer-adv/FrameworkArduino/libb64/cencode.c.o
+Compiling .pio/build/cardputer-adv/FrameworkArduino/main.cpp.o
+Compiling .pio/build/cardputer-adv/FrameworkArduino/stdlib_noniso.c.o
+Compiling .pio/build/cardputer-adv/FrameworkArduino/wiring_pulse.c.o
+Compiling .pio/build/cardputer-adv/FrameworkArduino/wiring_shift.c.o
+Archiving .pio/build/cardputer-adv/lib51d/libM5Unified.a
+Indexing .pio/build/cardputer-adv/lib51d/libM5Unified.a
+Archiving .pio/build/cardputer-adv/libFrameworkArduino.a
+Indexing .pio/build/cardputer-adv/libFrameworkArduino.a
+Indexing .pio/build/cardputer-adv/libff5/libM5GFX@0.2.33.a
+Linking .pio/build/cardputer-adv/firmware.elf
+Retrieving maximum program size .pio/build/cardputer-adv/firmware.elf
+Checking size .pio/build/cardputer-adv/firmware.elf
+Advanced Memory Usage is available via "PlatformIO Home > Project Inspect"
+RAM:   [========= ]  86.0% (used 281908 bytes from 327680 bytes)
+Flash: [=====     ]  54.0% (used 1803781 bytes from 3342336 bytes)
+Building .pio/build/cardputer-adv/firmware.bin with action:
+  "$PYTHONEXE" "$OBJCOPY" --chip esp32s3 elf2image --flash_mode ${__get_board_flash_mode(__env__)} --flash_freq ${__get_board_f_image(__env__)} --flash_size 8MB --elf-sha256-offset 0xb0 -o $TARGET $SOURCES
+Building .pio/build/cardputer-adv/firmware.bin
+esptool.py v4.9.0
+Creating esp32s3 image...
+Merged 2 ELF sections
+Successfully created esp32s3 image.
+======================== [SUCCESS] Took 482.92 seconds ========================

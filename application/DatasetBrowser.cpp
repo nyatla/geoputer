@@ -4,7 +4,7 @@
 
 namespace geoputer {
 bool Application::datasetChangeReady() const {
-    return datasetLogStopped(data_.recording,data_.storage.log) && !log_pending_ && !log_control_.action_id && !log_accepting_;
+    return datasetLogStopped(data_.recording,data_.storage.log) && !gpsMode().log_pending_ && !gpsMode().log_control_.action_id && !gpsMode().log_accepting_;
 }
 bool Application::datasetUiCommand(MessageKind kind,const DatasetCompletion& completion,map::BufferLease* buffer,const IndexProgress* progress) {
     UiRequest command{};command.kind=kind;
@@ -16,16 +16,16 @@ bool Application::datasetUiCommand(MessageKind kind,const DatasetCompletion& com
 }
 bool Application::requestDataset(DatasetRequest request) {
     if(screen_!=ScreenId::Settings || request.purpose>DatasetPurpose::Verify || request.action>DatasetAction::Clear || request.number>99)return false;
-    if(dataset_applying_ || storage_operation_id_) {message("STORAGE BUSY");return false;}
+    if(gpsMode().dataset_applying_ || storage_operation_id_) {message("STORAGE BUSY");return false;}
     request.screen_generation=generation_;request.token=0;request.buffer={};
     if(datasetMutation(request.action) && !datasetChangeReady()) {
         datasetUiCommand(MessageKind::DatasetReadError,{request,DatasetError::NotStopped});message("STOP LOGGER FIRST");return false;
     }
     // Only control information is queued. A newer read supersedes the old
     // publication, but cannot revoke Storage's outstanding write loan.
-    dataset_next_=request;dataset_pending_=true;
-    if(dataset_borrow_.token)dataset_discard_=true;
-    else dataset_applying_=datasetMutation(request.action);
+    gpsMode().dataset_next_=request;gpsMode().dataset_pending_=true;
+    if(gpsMode().dataset_borrow_.token)gpsMode().dataset_discard_=true;
+    else gpsMode().dataset_applying_=datasetMutation(request.action);
     processDataset();return true;
 }
 bool Application::operateDataset(const UiAction& action) {
@@ -55,51 +55,51 @@ bool Application::operateDataset(const UiAction& action) {
     return requestDataset(request);
 }
 void Application::completeDataset(const DatasetCompletion& completion) {
-    if(!dataset_queued_ || !sameDatasetRequest(dataset_borrow_,completion.request))return;
+    if(!gpsMode().dataset_queued_ || !sameDatasetRequest(gpsMode().dataset_borrow_,completion.request))return;
     // No UI synchronous call here: notifications are also drained inside a sync wait.
-    dataset_error_=completion.error;dataset_ready_=true;
+    gpsMode().dataset_error_=completion.error;gpsMode().dataset_ready_=true;
 }
 void Application::processDataset() {
-    if(dataset_progress_dirty_) {
-        if(dataset_borrow_.token && dataset_borrow_.screen_generation==generation_ && screen_==ScreenId::Settings)
-            datasetUiCommand(MessageKind::UpdateDatasetProgress,{},nullptr,&dataset_progress_);
-        dataset_progress_dirty_=false;
+    if(gpsMode().dataset_progress_dirty_) {
+        if(gpsMode().dataset_borrow_.token && gpsMode().dataset_borrow_.screen_generation==generation_ && screen_==ScreenId::Settings)
+            datasetUiCommand(MessageKind::UpdateDatasetProgress,{},nullptr,&gpsMode().dataset_progress_);
+        gpsMode().dataset_progress_dirty_=false;
     }
-    if(dataset_borrow_.token && dataset_ready_) {
-        const DatasetCompletion completion{dataset_borrow_,dataset_error_};
+    if(gpsMode().dataset_borrow_.token && gpsMode().dataset_ready_) {
+        const DatasetCompletion completion{gpsMode().dataset_borrow_,gpsMode().dataset_error_};
         bool published=false;
-        if(!dataset_discard_ && dataset_queued_ && dataset_borrow_.screen_generation==generation_ && screen_==ScreenId::Settings)
+        if(!gpsMode().dataset_discard_ && gpsMode().dataset_queued_ && gpsMode().dataset_borrow_.screen_generation==generation_ && screen_==ScreenId::Settings)
             published=datasetUiCommand(MessageKind::CommitDatasetRead,completion);
-        if(!published && !datasetUiCommand(MessageKind::DiscardDatasetRead,completion)) {dataset_discard_=true;return;}
-        if(dataset_queued_ && datasetMutation(dataset_borrow_.action)) {
-            if(dataset_error_==DatasetError::None) {
-                if(dataset_borrow_.action==DatasetAction::Apply || dataset_borrow_.action==DatasetAction::Clear) {
-                    dataset_check_needed_=true;refreshPlace();message("SETTINGS SAVED");
-                } else if(dataset_borrow_.number==data_.settings.dataset)dataset_check_needed_=true;
-            } else message(dataset_error_==DatasetError::NotStopped?"STOP LOGGER FIRST":"DATASET CHANGE FAILED");
+        if(!published && !datasetUiCommand(MessageKind::DiscardDatasetRead,completion)) {gpsMode().dataset_discard_=true;return;}
+        if(gpsMode().dataset_queued_ && datasetMutation(gpsMode().dataset_borrow_.action)) {
+            if(gpsMode().dataset_error_==DatasetError::None) {
+                if(gpsMode().dataset_borrow_.action==DatasetAction::Apply || gpsMode().dataset_borrow_.action==DatasetAction::Clear) {
+                    gpsMode().dataset_check_needed_=true;refreshPlace();message("SETTINGS SAVED");
+                } else if(gpsMode().dataset_borrow_.number==data_.settings.dataset)gpsMode().dataset_check_needed_=true;
+            } else message(gpsMode().dataset_error_==DatasetError::NotStopped?"STOP LOGGER FIRST":"DATASET CHANGE FAILED");
         }
-        dataset_borrow_={};dataset_waiting_=0;dataset_ready_=dataset_queued_=dataset_discard_=false;
-        dataset_applying_=dataset_pending_ && datasetMutation(dataset_next_.action);
+        gpsMode().dataset_borrow_={};gpsMode().dataset_waiting_=0;gpsMode().dataset_ready_=gpsMode().dataset_queued_=gpsMode().dataset_discard_=false;
+        gpsMode().dataset_applying_=gpsMode().dataset_pending_ && datasetMutation(gpsMode().dataset_next_.action);
     }
-    if(dataset_borrow_.token || !dataset_pending_)return;
-    if(screen_!=ScreenId::Settings || dataset_next_.screen_generation!=generation_) {dataset_pending_=dataset_applying_=false;return;}
-    if(mode_!=DisplayMode::View || data_.storage.busy || map_request_.token || place_borrow_.token || browse_waiting_)return;
-    DatasetRequest request=dataset_next_;
+    if(gpsMode().dataset_borrow_.token || !gpsMode().dataset_pending_)return;
+    if(screen_!=ScreenId::Settings || gpsMode().dataset_next_.screen_generation!=generation_) {gpsMode().dataset_pending_=gpsMode().dataset_applying_=false;return;}
+    if(mode_!=DisplayMode::View || data_.storage.busy || gpsMode().map_request_.token || gpsMode().place_borrow_.token || browse_waiting_)return;
+    DatasetRequest request=gpsMode().dataset_next_;
     if(datasetMutation(request.action) && !datasetChangeReady()) {
-        dataset_pending_=dataset_applying_=false;datasetUiCommand(MessageKind::DatasetReadError,{request,DatasetError::NotStopped});return;
+        gpsMode().dataset_pending_=gpsMode().dataset_applying_=false;datasetUiCommand(MessageKind::DatasetReadError,{request,DatasetError::NotStopped});return;
     }
-    if(++dataset_token_==0)++dataset_token_;
-    request.token=dataset_token_;
+    if(++gpsMode().dataset_token_==0)++gpsMode().dataset_token_;
+    request.token=gpsMode().dataset_token_;
     if(!datasetUiCommand(MessageKind::BeginDatasetRead,{request,DatasetError::None},&request.buffer))return;
-    dataset_pending_=false;dataset_borrow_=request;dataset_waiting_=request.token;
-    dataset_applying_=datasetMutation(request.action);
-    dataset_ready_=dataset_discard_=false;dataset_queued_=true;dataset_error_=DatasetError::None;
+    gpsMode().dataset_pending_=false;gpsMode().dataset_borrow_=request;gpsMode().dataset_waiting_=request.token;
+    gpsMode().dataset_applying_=datasetMutation(request.action);
+    gpsMode().dataset_ready_=gpsMode().dataset_discard_=false;gpsMode().dataset_queued_=true;gpsMode().dataset_error_=DatasetError::None;
     StorageRequest command{};command.kind=MessageKind::DatasetOperation;command.payload.dataset=request;
     SyncReturn result{};
     if(!callTask(TaskId::Storage,storage_.inbox(),command,result) || result.status!=OperationStatus::Ok) {
         // Rejected before writing: return the loan, then retry the same control request.
-        dataset_queued_=false;dataset_ready_=dataset_discard_=true;dataset_next_=request;
-        dataset_next_.buffer={};dataset_next_.token=0;dataset_pending_=true;return;
+        gpsMode().dataset_queued_=false;gpsMode().dataset_ready_=gpsMode().dataset_discard_=true;gpsMode().dataset_next_=request;
+        gpsMode().dataset_next_.buffer={};gpsMode().dataset_next_.token=0;gpsMode().dataset_pending_=true;return;
     }
     applyStorage(result.storage);
 }

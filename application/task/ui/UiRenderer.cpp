@@ -120,11 +120,20 @@ void UiRenderer::drawDialog(const UiModel& model, UiLanguage language) {
             detail = settingsLabel(language, SettingsLabel::KeepSd);
             accept = settingsLabel(language, SettingsLabel::Confirm);
             break;
+        case DialogKind::EnterWifiMode:
         case DialogKind::EnterUsbMode:
             title = japanese ? "保存して再起動？" : "Save and restart?";
-            detail = dialog.actionEnabled() ? "USB" : systemModeBlockText(model.data(), model.systemUsbMode(), language);
+            detail = dialog.actionEnabled() ? (dialog.kind()==DialogKind::EnterWifiMode?"Wi-Fi":"USB") : systemModeBlockText(model.data(), model.systemUsbMode(), language);
             accept = japanese ? "再起動" : "Restart";
             break;
+        case DialogKind::RegenerateWifi:
+            title=japanese?"パスワード再生成？":"Renew password?";
+            detail=japanese?"接続を切り再起動します":"Disconnect and restart Wi-Fi";
+            accept=japanese?"再生成":"Renew";break;
+        case DialogKind::ExitWifiMode:
+            title=japanese?"Wi-Fiを終了？":"Exit Wi-Fi mode?";
+            detail=japanese?"転送を中断して再起動":"Stop transfers and restart";
+            accept=japanese?"終了":"Exit";break;
         case DialogKind::ExitUsbMode:
             title = japanese ? "USBモードを終了？" : "Exit USB mode?";
             detail = japanese ? "PCの保存完了後に終了" : "Finish PC saves first";
@@ -185,9 +194,10 @@ void UiRenderer::draw(const UiModel& model) {
     frame_.setDimmed(model.confirming());
     frame_.fillSprite(TFT_BLACK);
     const bool live = content.screen == ScreenId::LivePlace || showingMap(content.screen,data);
-    const bool view_header = live || content.screen == ScreenId::GpsLogger || isLogBrowser(content.screen) || content.screen == ScreenId::Settings;
+    const bool view_header = live || content.screen == ScreenId::GpsLogger || isLogBrowser(content.screen) || content.screen == ScreenId::Settings || content.screen==ScreenId::WifiManagement;
     frame_.drawFastHLine(0, view_header ? ViewHeaderBottom : 22, 240, live ? TFT_WHITE : TFT_DARKGREY);
     frame_.drawFastHLine(0, live ? LivePlaceLayout::FooterTop : 118, 240, live ? TFT_WHITE : TFT_DARKGREY);
+    if(content.screen==ScreenId::WifiManagement) {drawWifi(model);present(model,language);return;}
     if (content.screen == ScreenId::UsbStorage) {
         drawUsb(model);
         present(model,language); return;
@@ -615,7 +625,7 @@ void UiRenderer::drawSettings(const UiModel& model, const UiSnapshot& content, c
         std::snprintf(line, sizeof(line), "%u/%u", content.selected_setting + 1u, SettingsRootCount);
         text(4, LivePlaceLayout::LogY, line);
     } else if (content.page == SettingsPage::System) {
-        const bool usb = model.editing() ? model.editValue() != 0 : model.systemUsbMode();
+        const uint8_t usb = model.editing() ? model.editValue() : model.systemUsbMode();
         const char* reason = systemModeBlockText(data, model.systemUsbMode(), language);
         for (unsigned row = 0; row < SettingsSystemCount; ++row) {
             const int y = SettingsLayout::FirstRowY + row * SettingsLayout::RowStep;
@@ -815,6 +825,44 @@ void UiRenderer::drawMap(const UiModel& model) {
         for(int i=8;i<=10;++i) {pixel(cx-i,cy,color);pixel(cx+i,cy,color);pixel(cx,cy-i,color);pixel(cx,cy+i,color);}
         pixel(cx,cy,TFT_WHITE);
     }
+}
+
+void UiRenderer::drawWifi(const UiModel& model) {
+    const auto& data=model.data();const auto& wifi=data.storage.wifi;const auto page=model.wifiPage();
+    const bool ja=data.settings.language==UiLanguage::Japanese;
+    text(4,ViewHeaderTextY,"WI-FI FILES");
+    char number[8];std::snprintf(number,sizeof(number),"%u/3",static_cast<unsigned>(page)+1);text(128,ViewHeaderTextY,number,TFT_LIGHTGREY);
+    if(page==WifiPage::Text) {
+        text(4,25,"SSID",TFT_LIGHTGREY);font_.draw(frame_,4,36,wifi.ssid,TextRole::Ascii8x16,TFT_CYAN);
+        text(4,56,"PASSWORD",TFT_LIGHTGREY);font_.draw(frame_,4,67,wifi.password,TextRole::Ascii8x16,TFT_WHITE);
+        text(4,88,wifi.url,TFT_CYAN);
+        char state[40];std::snprintf(state,sizeof(state),"%s / %u CLIENT / %s",wifiPhaseName(wifi.phase),wifi.clients,
+            data.storage.card_state==CardState::Mounted?"SD OK":"NO SD");
+        text(4,103,wifi.error!=WifiError::None?wifiErrorName(wifi.error):data.message[0] && wifi.phase!=WifiPhase::Failed?data.message:state,wifi.phase==WifiPhase::Failed?TFT_RED:TFT_LIGHTGREY);
+        return;
+    }
+    if(wifi_qr_ && wifi_qr_->valid()) {
+        constexpr int left=4,top=18;
+        frame_.fillRect(left,top,wifi::QrCode::Area,wifi::QrCode::Area,TFT_WHITE);
+        const auto cell=wifi_qr_->cell(),offset=wifi_qr_->offset();
+        for(unsigned y=0;y<wifi_qr_->size();++y)for(unsigned x=0;x<wifi_qr_->size();++x)
+            if(wifi_qr_->dark(x,y))frame_.fillRect(left+offset+x*cell,top+offset+y*cell,cell,cell,TFT_BLACK);
+    } else {text(12,55,wifi.phase==WifiPhase::Starting?"WAITING":"NO QR",TFT_LIGHTGREY);}
+    const bool network=page==WifiPage::ConnectionQr;
+    text(110,25,network?"CONNECT QR":"WEB QR",TFT_CYAN);
+    font_.draw(frame_,110,40,network?(ja?"QRで接続":"Scan to join"):(ja?"管理画面":"Open browser"),
+        ja?TextRole::UiLarge:TextRole::Ascii8x16,TFT_WHITE);
+    if(network) {
+        text(110,64,"SSID",TFT_LIGHTGREY);
+        char prefix[16]{};std::strncpy(prefix,wifi.ssid,15);font_.draw(frame_,110,74,prefix,TextRole::Ascii8x16,TFT_WHITE);
+        if(std::strlen(wifi.ssid)>15)font_.draw(frame_,110,90,wifi.ssid+15,TextRole::Ascii8x16,TFT_WHITE);
+    } else {
+        text(110,65,"HTTP",TFT_LIGHTGREY);
+        const auto* host=std::strstr(wifi.url,"://");font_.draw(frame_,110,77,host?host+3:wifi.url,TextRole::Ascii8x16,TFT_WHITE);
+        text(110,95,wifi.portal?"PORTAL READY":"SCAN TO OPEN",TFT_LIGHTGREY);
+    }
+    const auto* state=wifi.phase==WifiPhase::Stopping?"RESTARTING...":wifi.phase==WifiPhase::Failed?"ERROR / TEXT >":wifi.clients?"CONNECTED":"NOT CONNECTED";
+    text(110,109,state,wifi.phase==WifiPhase::Failed?TFT_RED:wifi.clients?TFT_GREEN:TFT_LIGHTGREY);
 }
 
 }  // namespace geoputer

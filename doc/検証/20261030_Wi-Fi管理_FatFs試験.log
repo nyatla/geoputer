@@ -1,0 +1,1 @@
+PASS Wi-Fi files: real FAT32/UTF-8, traversal, chunked binary writes, stale edit rejection, abort, sync failure, overwrite recovery, recursive deletion/cancel

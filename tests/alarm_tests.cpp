@@ -1,4 +1,5 @@
 #include "alarm/AlarmEngine.h"
+#include "alarm/CellNeighborhood.h"
 #include "task/storage/alarm/AlarmFile.h"
 #include "task/ui/UiModel.h"
 #include "task/ui/AlarmText.h"
@@ -11,25 +12,33 @@ void check(bool ok,const char* message){if(!ok)throw std::runtime_error(message)
 alarm::Region region(uint32_t a,uint32_t b=20) {alarm::Region r;r.depth=2;r.path[0]=a;r.path[1]=b;return r;}
 alarm::Observation observation(uint32_t code,unsigned agree=9) {return {region(code),uint8_t(agree),9};}
 void engineTests() {
-    alarm::Settings s;s.enabled=true;s.level=2;s.mode=alarm::Mode::Every;alarm::Engine engine;
-    check(!engine.observe(observation(1),s,0),"first position only establishes baseline");
-    check(engine.observe(observation(2,1),s,1) && engine.observe(observation(1,1),s,2),"every mode reports each center crossing");
-    check(!alarm::same(region(1),region(2)),"same lower component in a different parent remains a different region");
-    engine.reset();s.mode=alarm::Mode::Relieved;engine.observe(observation(1),s,0);
-    check(engine.observe(observation(2,1),s,1),"relief reports first crossing immediately, not seven-point majority");
-    for(unsigned i=2;i<100;++i)check(!engine.observe(observation(i%2+1,1),s,i),"A/B oscillation remains suppressed");
-    engine.observe(observation(2),s,100);engine.observe(observation(1),s,1000);
-    check(!engine.observe(observation(2),s,3100),"settling in opposite region restarts release timer");
-    check(!engine.observe(observation(2),s,6100),"stable nine points quietly rearm");
-    check(engine.observe(observation(1,1),s,6101),"a new crossing can notify after leaving boundary");
-    check(engine.observe(observation(3,1),s,6102),"a third region is a new boundary");
-    engine.reset();s.mode=alarm::Mode::Confirmed;engine.observe(observation(1),s,0);
-    check(!engine.observe(observation(2,8),s,1) && engine.observe(observation(2),s,2),"confirmed mode waits for all nine points");
-    check(!engine.observe({},s,3),"missing region cannot trigger an alert");
-    engine.reset();s.mode=alarm::Mode::Relieved;engine.observe(observation(1),s,0);engine.observe(observation(2,1),s,1);
-    engine.observe(observation(2),s,10);engine.unavailable();
-    engine.observe(observation(2),s,5000);
-    check(!engine.observe(observation(1,1),s,5001),"GPS interruption cannot count as continuous stable time");
+    alarm::Settings s;s.enabled=true;s.level=2;s.judgement=alarm::Judgement::Immediate;alarm::Engine engine;
+    check(!engine.observe(observation(1),s),"first position quietly establishes baseline");
+    check(engine.observe(observation(2,1),s) && engine.observe(observation(1,1),s),"immediate reports each center region crossing");
+    check(!engine.observe(observation(1),s),"moving cells within the same region is not a crossing");
+    check(!alarm::same(region(1),region(2)),"parent identity remains part of a selected hierarchy region");
+    engine.reset();s.judgement=alarm::Judgement::Standard;engine.observe(observation(1),s);
+    for(unsigned i=0;i<100;++i)check(!engine.observe(observation(i%2+1,6),s),"six votes and boundary oscillation never change the accepted region");
+    check(engine.observe(observation(2,7),s),"standard changes at seven of nine cells without waiting for a timer");
+    check(!engine.observe(observation(2),s) && !engine.observe(observation(1,6),s),"duplicate candidate and weak return crossing stay quiet");
+    check(engine.observe(observation(1,7),s),"return crossing requires the same seven-cell threshold");
+    check(engine.observe(observation(3,8),s),"third region uses the same threshold");
+    check(!engine.observe({},s) && !engine.observe(observation(1,6),s),"loss does not fabricate a region or lower the threshold");
+    check(engine.observe(observation(1,7),s),"recovered samples can establish a real crossing");
+    engine.reset();s.judgement=alarm::Judgement::Confirmed;engine.observe(observation(1),s);
+    check(!engine.observe(observation(2,8),s) && engine.observe(observation(2),s),"confirmed waits for all nine cells");
+    auto bad=observation(3);bad.valid_points=8;check(!engine.observe(bad,s),"invalid vote totals cannot trigger");
+    bad=observation(3,8);bad.valid_points=8;check(!engine.observe(bad,s),"missing cell does not reduce confirmed denominator");
+    s.enabled=false;check(!engine.observe(observation(3),s),"disabled notifications stay silent");
+    alarm::Cell cell;
+    for(int unit:{512,4096,8192,100000})for(int y=-1;y<=1;++y)for(int x=-1;x<=1;++x) {
+        check(alarm::neighborCell(20*unit,70*unit,x,y,unit,unit*2,cell) && cell.x==20*unit+x && cell.y==70*unit+y,
+              "neighbors are exactly one source cell for all resolutions and latitude");
+    }
+    check(alarm::neighborCell(1800,100,1,0,10,20,cell) && cell.x==-1799,"east neighbor wraps across date line");
+    check(alarm::neighborCell(-1800,100,-1,0,10,20,cell) && cell.x==1799,"west neighbor wraps across date line");
+    check(!alarm::neighborCell(0,1800,0,1,10,20,cell) && !alarm::neighborCell(0,-1800,0,-1,10,20,cell),"neighbors beyond either pole are unavailable");
+    check(!alarm::neighborCell(0,0,1,0,0,20,cell),"invalid map resolution is rejected");
 }
 void soundTests() {
     alarm::SoundSession sound;sound.start(alarm::Tone::Double,3,1,0);
@@ -43,6 +52,8 @@ void soundTests() {
     sound.start(alarm::Tone::Single,3,1,0xfffffff0u);
     check(sound.active(uint32_t(0xfffffff0u+9999)) && !sound.active(uint32_t(0xfffffff0u+10000)),"audio timer handles tick wrap");
 }
+uint32_t fileCrc(const uint8_t* p,size_t count) {uint32_t c=~0u;while(count--){c^=*p++;for(int i=0;i<8;++i)c=(c>>1)^(0xedb88320u&uint32_t(-int32_t(c&1)));}return ~c;}
+void checksum(uint8_t (&b)[AlarmFile::Bytes]) {const auto c=fileCrc(b,60);for(unsigned i=0;i<4;++i)b[60+i]=c>>(8*i);}
 void fileTests(const char* root) {
     namespace fs=std::filesystem;fs::create_directories(fs::path(root)/"01");ReadFileSlot slot;
     AlarmFile file(0,slot,nullptr,root);auto p=file.load(1,4,123);
@@ -51,6 +62,16 @@ void fileTests(const char* root) {
     auto loaded=file.load(1,4,123);check(loaded.state==alarm::State::Ready && alarm::same(loaded.settings,p.settings),"profile round trip");
     uint8_t encoded[AlarmFile::Bytes];AlarmFile::encode(p,encoded);
     for(unsigned i=0;i<sizeof(encoded);++i) {encoded[i]^=1;auto bad=p;check(!AlarmFile::decode(encoded,bad),"any damaged byte fails checksum or header");encoded[i]^=1;}
+    for(unsigned judgement=0;judgement<3;++judgement) {
+        AlarmFile::encode(p,encoded);encoded[4]=1;encoded[14]=judgement;encoded[15]=5;checksum(encoded);
+        {std::ofstream out(fs::path(root)/"01/_alert.dat",std::ios::binary|std::ios::trunc);out.write(reinterpret_cast<char*>(encoded),sizeof(encoded));}
+        auto legacy=file.load(1,4,123);
+        check(legacy.state==alarm::State::Ready && legacy.settings.judgement==static_cast<alarm::Judgement>(judgement) &&
+              legacy.settings.enabled==p.settings.enabled && legacy.settings.tone==p.settings.tone,"v1 preserves notification/tone and maps the three judgement choices");
+        std::ifstream in(fs::path(root)/"01/_alert.dat",std::ios::binary);in.read(reinterpret_cast<char*>(encoded),sizeof(encoded));
+        check(encoded[4]==2 && encoded[15]==0 && AlarmFile::decode(encoded,legacy),"legacy migration publishes valid version 2 with reserved zero width");
+    }
+    encoded[15]=1;checksum(encoded);auto badReserved=p;check(!AlarmFile::decode(encoded,badReserved),"v2 rejects a nonzero removed-width field even with valid CRC");
     auto changed=file.load(1,3,456);check(changed.state==alarm::State::Repaired && !changed.settings.enabled,"replaced dataset and invalid hierarchy use same corrupt/OFF policy");
     {std::ofstream bad(fs::path(root)/"01/_alert.dat",std::ios::binary|std::ios::trunc);bad<<"broken";}
     auto repaired=file.load(1,3,456);check(repaired.state==alarm::State::Repaired && !repaired.settings.enabled,"truncated file reports repair and generates OFF");
@@ -95,6 +116,20 @@ void uiTests() {
     check(!model.editing() && model.snapshot().page==SettingsPage::Alarm,"alarm Escape restores the item without leaving its page");
     model.keyPressed(UiKey::Right,27);model.keyPressed(UiKey::Down,28);
     check(model.snapshot().action.kind==ActionKind::SaveAlarm && model.snapshot().action.alarm_settings.enabled && model.snapshot().action.alarm_identity==123,"alarm editing produces file save command rather than NVS settings");
+    check(AlarmRows==6 && alarmChoices(2,4)==3 && !std::strcmp(alarmLabel(2,true),"区域判定"),"one three-choice region judgement row, no width/test rows");
+    char text[32];alarmValueText(2,1,4,true,text,sizeof(text));check(!std::strcmp(text,"標準"),"standard has a word label rather than a numeric threshold");
+    UiModel sound;sound.setScreen({ScreenId::Settings,DisplayMode::View,1,data,0,ActionResult::None});
+    for(unsigned i=0;i<settingsRootIndex(SettingsRootItem::Alarm);++i)sound.keyPressed(UiKey::Down,40+i);
+    sound.keyPressed(UiKey::Enter,50);for(unsigned i=0;i<AlarmSoundRow;++i)sound.keyPressed(UiKey::Down,51+i);
+    check(sound.snapshot().action.kind==ActionKind::None,"opening alerts and selecting sound do not play");
+    auto ack=[&]{const auto id=sound.snapshot().action.action_id;check(sound.updateContent({DisplayMode::View,1,data,id,ActionResult::Applied})==OperationStatus::Ok,"acknowledge tone preview");};
+    sound.keyPressed(UiKey::Right,60);
+    check(sound.snapshot().action.kind==ActionKind::PreviewAlarm && sound.snapshot().action.alarm_settings.tone==alarm::Tone::Rising && sound.editDirty(),"tone switch previews the candidate while notification is OFF without saving");
+    ack();sound.setAudioPreview(true);sound.setAudioActive(true);sound.keyPressed(UiKey::Right,61);
+    check(sound.snapshot().action.kind==ActionKind::PreviewAlarm && sound.snapshot().action.alarm_settings.tone==alarm::Tone::Falling,"preview playback does not consume next tone key as silence");
+    ack();sound.keyPressed(UiKey::Escape,62);check(!sound.editing() && sound.snapshot().action.kind==ActionKind::None,"Escape cancels candidate rather than storing it");
+    sound.keyPressed(UiKey::Right,63);ack();sound.keyPressed(UiKey::Down,64);
+    check(sound.snapshot().action.kind==ActionKind::SaveAlarm && sound.snapshot().action.alarm_settings.tone==alarm::Tone::Rising,"leaving tone row commits the auditioned candidate once");
     UiModel dark;dark.setScreen({ScreenId::Settings,DisplayMode::Background,1,data,0,ActionResult::None});
     PlaceRequest q{1,12,{35.68,140.02,0,true}};q.token=51;q.dataset_generation=data.dataset.generation;q.alarm_sample=true;q.work_bytes=config::IndexReadBufferBytes;
     map::BufferLease buffer{};check(dark.beginPlaceSearch(q,buffer)==OperationStatus::Ok,"background alert borrows existing UI back area");q.buffer=buffer;
@@ -104,6 +139,6 @@ void uiTests() {
 }
 int main(int argc,char** argv) {
     try {check(argc==2,"test root required");engineTests();soundTests();fileTests(argv[1]);settingsTests();uiTests();
-        std::puts("PASS: alarm boundaries/hierarchy, suppression and rearm, nine-point entry, sound durations/cap/wrap, file repair/transaction failures, NVS migration, UI and dark-screen borrowing");
+        std::puts("PASS: alarm boundaries/hierarchy, three region thresholds, adjacent cell grids, v1 migration, tone-change previews, sound durations/cap/wrap, file repair/transaction failures, NVS migration, UI and dark-screen borrowing");
     } catch(const std::exception& e){std::fprintf(stderr,"FAIL: %s\n",e.what());return 1;}
 }

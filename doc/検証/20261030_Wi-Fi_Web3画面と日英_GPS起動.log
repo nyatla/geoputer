@@ -1,0 +1,9 @@
+[GPS] NO FIX
+[GPS] FIX
+[UI] clock=18:44:22 JST (initial GPS time)
+[APP] screen=LivePlace generation=2 action=0 stack_free=3604
+[APP] place=千葉県 習志野市 / 袖ケ浦三丁目 (DATASET READY)
+[APP] screen=Menu generation=3 action=1 stack_free=2676
+[MODE-MEM] mode=GPS fixed_gps=175744 fixed_usb=3032 fixed_wifi=6912 union=175752 app=219936 sd_fil=552 heap=43288 min_heap=42768 largest=32756 internal=43288 stack_free=2676
+[APP] screen=LivePlace generation=4 action=2 stack_free=2676
+[APP] place=千葉県 習志野市 / 袖ケ浦三丁目 (DATASET READY)

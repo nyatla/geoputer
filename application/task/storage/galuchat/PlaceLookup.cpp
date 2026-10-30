@@ -1,4 +1,5 @@
 #include "PlaceLookup.h"
+#include "../../../alarm/CellNeighborhood.h"
 #include "TextEncoding.h"
 #include "PlaceLineOutput.h"
 #include "ObservedFileReader.h"
@@ -180,24 +181,26 @@ void PlaceLookup::observeAlarmInto(const PlaceRequest& request,PlaceResult& resu
         result.state=open(work);result.dataset=selected_.info;
         if(result.state!=PlaceState::Ready || !alarm::valid(settings,wordbook_->pathDepth()))return;
         const double latitude=request.fix.latitude,longitude=request.fix.longitude;
-        const double cosine=std::cos(latitude*3.14159265358979323846/180.0);
-        if(std::abs(latitude)>=90 || std::abs(longitude)>180 || std::abs(cosine)<1e-6) {result.state=PlaceState::NoFix;return;}
-        const double dy=alarm::Widths[settings.width]/111319.49079327358,dx=dy/cosine;
-        const auto center=map_->readWgsPoint(longitude,latitude,work);
+        if(std::abs(latitude)>90 || std::abs(longitude)>180) {result.state=PlaceState::NoFix;return;}
+        const int invx=map_->unitInvX(),invy=map_->unitInvY();
+        const int cx=galuchat::detail::roundedInt(longitude*invx,"alarm longitude cell");
+        const int cy=galuchat::detail::roundedInt(latitude*invy,"alarm latitude cell");
+        const auto center=map_->readGridPoint(cx,cy,work);
         if(!wordbook_->readRegionPath(center,settings.level,result.alarm.center,work))return;
+        result.region_code=center;
         result.alarm.valid_points=result.alarm.agreeing=1;
+        if(settings.judgement==alarm::Judgement::Immediate)return;
         for(int y=-1;y<=1;++y)for(int x=-1;x<=1;++x) {
             if(!x && !y)continue;
-            const auto lat=latitude+y*dy;if(std::abs(lat)>90)continue;
-            double lon=longitude+x*dx;lon=std::remainder(lon,360.0);
-            const auto code=map_->readWgsPoint(lon,lat,work);if(!code)continue;
+            alarm::Cell cell;
+            if(!alarm::neighborCell(cx,cy,x,y,invx,invy,cell))continue;
+            const auto code=map_->readGridPoint(cell.x,cell.y,work);if(!code)continue;
             if(code==center){++result.alarm.valid_points;++result.alarm.agreeing;continue;}
             alarm::Region region;
             if(wordbook_->readRegionPath(code,settings.level,region,work)) {
                 ++result.alarm.valid_points;if(alarm::same(region,result.alarm.center))++result.alarm.agreeing;
             }
         }
-        result.region_code=center;
     } catch(...) {result.state=PlaceState::DataError;result.alarm={};}
 }
 } // namespace geoputer

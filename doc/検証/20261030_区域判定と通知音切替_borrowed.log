@@ -1,0 +1,3 @@
+N03-20260101-grid-8192-10000.remap.wgsmapset.glc
+PASS: real nine-point hierarchy samples, levels=5, C++ allocations=0, no display-wordbook lookups
+PASS: real place scratch/result, 7 queries, allocations=0 cpp_bytes=0, cache/name/code equality, per-call loans and exception cleanup

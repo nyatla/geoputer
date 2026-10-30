@@ -1,0 +1,116 @@
+[GPS] UART ready RX=15 TX=13 baud=115200
+[APP] logger state=1 accepted=0 saved=0 dropped=0
+[GPS] FIX
+[APP] logger state=3 accepted=1 saved=0 dropped=0
+[APP] logger state=1 accepted=1 saved=1 dropped=0
+[APP] logger state=0 accepted=2 saved=1 dropped=0
+[APP] logger state=1 accepted=0 saved=0 dropped=0
+[APP] logger state=0 accepted=1 saved=0 dropped=0
+[APP] logger state=0 accepted=1 saved=1 dropped=0
+[APP] screen=Map generation=2 action=0 stack_free=8192
+[APP] place=FIRST AREA /  (DATASET READY)
+[APP] place=SECOND AREA /  (DATASET READY)
+[APP] place=THIRD AREA /  (DATASET READY)
+[APP] screen=Settings generation=3 action=0 stack_free=8192
+[APP] screen=Map generation=4 action=0 stack_free=8192
+PASS: shared current-place lookup on map, changed-cell dispatch, same-cell suppression and map-job exclusion
+[APP] screen=Settings generation=5 action=0 stack_free=8192
+[APP] screen=Logs generation=6 action=0 stack_free=8192
+[APP] screen=Settings generation=7 action=0 stack_free=8192
+PASS: UI dataset loans, App control-only state, stale/superseded results, retryable returns and init scratch contention
+[APP] screen=Logs generation=8 action=0 stack_free=8192
+[APP] screen=LogProperties generation=9 action=0 stack_free=8192
+[APP] screen=Logs generation=10 action=0 stack_free=8192
+PASS: exclusive UI page payloads, delayed dataset/log responses and retained browser hierarchy
+[APP] screen=Map generation=11 action=0 stack_free=8192
+[APP] screen=Logs generation=12 action=0 stack_free=8192
+[APP] screen=LogProperties generation=13 action=0 stack_free=8192
+[APP] screen=LogPoint generation=14 action=0 stack_free=8192
+[APP] screen=Map generation=15 action=0 stack_free=8192
+[APP] screen=Logs generation=16 action=0 stack_free=8192
+[APP] screen=Map generation=17 action=0 stack_free=8192
+[APP] screen=Logs generation=18 action=0 stack_free=8192
+[APP] screen=Map generation=19 action=0 stack_free=8192
+[APP] screen=Logs generation=20 action=0 stack_free=8192
+[APP] screen=Map generation=21 action=0 stack_free=8192
+[APP] screen=Logs generation=22 action=0 stack_free=8192
+[APP] screen=Map generation=23 action=0 stack_free=8192
+[APP] screen=Logs generation=24 action=0 stack_free=8192
+[APP] screen=Map generation=25 action=0 stack_free=8192
+[APP] screen=Logs generation=26 action=0 stack_free=8192
+[APP] screen=Map generation=27 action=0 stack_free=8192
+[APP] screen=Logs generation=28 action=0 stack_free=8192
+[APP] screen=Map generation=29 action=0 stack_free=8192
+[APP] screen=Logs generation=30 action=0 stack_free=8192
+[APP] screen=Map generation=31 action=0 stack_free=8192
+[APP] screen=Logs generation=32 action=0 stack_free=8192
+[APP] screen=Map generation=33 action=0 stack_free=8192
+[APP] screen=Logs generation=34 action=0 stack_free=8192
+[APP] screen=Map generation=35 action=0 stack_free=8192
+[APP] screen=Logs generation=36 action=0 stack_free=8192
+[APP] screen=Map generation=37 action=0 stack_free=8192
+[APP] screen=Logs generation=38 action=0 stack_free=8192
+[APP] screen=Map generation=39 action=0 stack_free=8192
+[APP] screen=Logs generation=40 action=0 stack_free=8192
+[APP] screen=Map generation=41 action=0 stack_free=8192
+[APP] screen=Logs generation=42 action=0 stack_free=8192
+[APP] screen=Map generation=43 action=0 stack_free=8192
+[APP] screen=Logs generation=44 action=0 stack_free=8192
+[APP] screen=Map generation=45 action=0 stack_free=8192
+[APP] screen=Logs generation=46 action=0 stack_free=8192
+[APP] screen=Map generation=47 action=0 stack_free=8192
+[APP] screen=Logs generation=48 action=0 stack_free=8192
+[APP] screen=Map generation=49 action=0 stack_free=8192
+[APP] screen=Logs generation=50 action=0 stack_free=8192
+[APP] screen=Map generation=51 action=0 stack_free=8192
+[APP] screen=Logs generation=52 action=0 stack_free=8192
+[APP] screen=Map generation=53 action=0 stack_free=8192
+[APP] screen=Logs generation=54 action=0 stack_free=8192
+[APP] screen=Map generation=55 action=0 stack_free=8192
+[APP] screen=Logs generation=56 action=0 stack_free=8192
+[APP] screen=Map generation=57 action=0 stack_free=8192
+[APP] screen=Logs generation=58 action=0 stack_free=8192
+[APP] screen=Map generation=59 action=0 stack_free=8192
+[APP] screen=Logs generation=60 action=0 stack_free=8192
+[APP] screen=Map generation=61 action=0 stack_free=8192
+[APP] screen=Logs generation=62 action=0 stack_free=8192
+[APP] screen=Map generation=63 action=0 stack_free=8192
+[APP] screen=Logs generation=64 action=0 stack_free=8192
+[APP] screen=Map generation=65 action=0 stack_free=8192
+[APP] screen=Logs generation=66 action=0 stack_free=8192
+[APP] screen=Map generation=67 action=0 stack_free=8192
+[APP] screen=Logs generation=68 action=0 stack_free=8192
+[APP] screen=Map generation=69 action=0 stack_free=8192
+[APP] screen=Logs generation=70 action=0 stack_free=8192
+[APP] screen=Map generation=71 action=0 stack_free=8192
+[APP] screen=Logs generation=72 action=0 stack_free=8192
+[APP] screen=Map generation=73 action=0 stack_free=8192
+[APP] screen=Logs generation=74 action=0 stack_free=8192
+[APP] screen=Map generation=75 action=0 stack_free=8192
+PASS: screen resource handoff, worker cancellation after leave, stale map/record results, rejected transition and repeated union reuse
+[APP] screen=Logs generation=76 action=0 stack_free=8192
+[APP] screen=LogProperties generation=77 action=0 stack_free=8192
+[APP] screen=LogPoint generation=78 action=0 stack_free=8192
+[APP] place=HISTORICAL REGION /  (DATASET READY)
+[APP] place=CURRENT REGION / CURRENT DISTRICT (DATASET READY)
+[MAP] scale=1/2
+[MAP] scale=1/1
+[APP] screen=LogStatistics generation=79 action=28 stack_free=8192
+[APP] screen=LogPoint generation=80 action=29 stack_free=8192
+[APP] screen=LogStatistics generation=81 action=0 stack_free=8192
+[APP] screen=Map generation=82 action=0 stack_free=8192
+[APP] screen=LogPoint generation=83 action=0 stack_free=8192
+[APP] logger state=1 accepted=0 saved=0 dropped=0
+[GPS] FIX
+[APP] logger state=0 accepted=1 saved=0 dropped=0
+PASS: log viewer modes, historical map and names, cursor tracking, skips, cache boundaries, replay timing, end/error/modal/screen-off pause and dataset constraints
+[APP] screen=Logs generation=84 action=0 stack_free=8192
+[APP] screen=LogProperties generation=85 action=0 stack_free=8192
+[APP] screen=Logs generation=86 action=33 stack_free=8192
+[APP] screen=LogProperties generation=87 action=0 stack_free=8192
+PASS: direct text entry, automatic initial batch, empty/header-error completion and Esc-to-list
+[APP] screen=Settings generation=2 action=0 stack_free=8192
+PASS: production App alarms use live GPS on dark replay screen, async ownership, quiet baseline, cell thresholds/mute/wake, SD failure and audition
+[APP] screen=UsbStorage generation=1 action=0 stack_free=8192
+PASS: USB App screen entry, local file list, async completion, ignored GPS/GIS events and restart without inactive-union access
+PASS: production App logging, GPS pause/stop/restart, fresh epochs, async close, filename, failures and wake

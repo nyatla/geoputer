@@ -1,0 +1,3 @@
+PASS: ja, 24 scenes, native font pixels and text bounds
+PASS: en, 24 scenes, native font pixels and text bounds
+PASS: license framebuffers are unchanged across languages

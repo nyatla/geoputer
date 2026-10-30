@@ -167,6 +167,8 @@ void testMapCache() {
     geoputer::CodeCacheBuffer tooLarge_pixels{};auto tooLarge=test_index::cache(tooLarge_pixels,std::make_shared<test_storage::File>(overflow),overflow);
     throws([&] { tooLarge.readWgsPoint(10, 5); }, "out-of-range codes cannot silently truncate");
     check(!tooLarge.stats().valid, "code overflow leaves no valid cache");
+    check(cache.readGridPoint(100,100)==1 && cache.readGridPoint(101,100)==2 && cache.readGridPoint(100,101)==3 && cache.readGridPoint(101,101)==4,
+          "integer cell access agrees with WGS sampling without another coordinate rounding");
     std::cout << "PASS: cache boundaries, zero hits/no map I/O, invalidation, partial read failures, overlaps and uint32 range\n";
 }
 
