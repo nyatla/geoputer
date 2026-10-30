@@ -16,7 +16,7 @@ const char* at(UiLanguage language, const Translation (&table)[N], unsigned row)
 
 const char* settingsRootLabel(UiLanguage language, unsigned row) {
     static const Translation values[] = {{"動作設定", "Operation"}, {"システム設定", "System settings"}, {"ストレージ操作", "Storage"},
-        {"バージョン情報", "About"}, {"ライセンス情報", "Licenses"}};
+        {"バージョン情報", "About"}, {"ライセンス情報", "Licenses"}, {"アラート", "Alerts"}};
     return at(language, values, row);
 }
 const char* settingsModeValue(UiLanguage language, bool usb) {
@@ -38,7 +38,7 @@ const char* systemModeBlockText(const UiData& data, bool changed, UiLanguage lan
 const char* settingsOperationLabel(UiLanguage language, unsigned row) {
     static const Translation values[] = {{"表示言語", "Language"}, {"記録間隔", "Log interval"},
         {"SD保存間隔", "SD flush interval"}, {"消灯時間", "Screen timeout"}, {"明るさ", "Brightness"},
-        {"データセット", "Dataset"}, {"GPS接続", "GPS source"}};
+        {"データセット", "Dataset"}, {"音量", "Volume"}, {"省電力", "Power saving"}, {"GPS接続", "GPS source"}};
     return row < OperationRowCount ? at(language, values, row) : "--";
 }
 const char* settingsStorageLabel(UiLanguage language, unsigned row) {
@@ -92,6 +92,12 @@ void settingsValueText(UiLanguage language, unsigned row, uint8_t choice, char* 
             if(choice) std::snprintf(out, size, "%02u", choice);
             else std::snprintf(out, size, "%s", language == UiLanguage::English ? "None" : "未選択");
             break;
+        case SettingId::Volume: std::snprintf(out,size,"%u",choice+1u);break;
+        case SettingId::PowerSaving: {
+            static constexpr const char* ja[]={"しない","通常","最大限"};
+            static constexpr const char* en[]={"Off","Normal","Maximum"};
+            std::snprintf(out,size,"%s",language==UiLanguage::Japanese?ja[choice]:en[choice]);break;
+        }
         case SettingId::GpsMode: std::snprintf(out, size, "%s", choice ?
             (language == UiLanguage::English ? "External" : "外付け") :
             (language == UiLanguage::English ? "Mesh Kit" : "MESH")); break;

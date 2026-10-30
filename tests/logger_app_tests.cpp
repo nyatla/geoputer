@@ -15,6 +15,7 @@ namespace {
 Application* app=nullptr;
 std::vector<MessageKind> calls;
 bool fail_open=false,hold_place_queries=false;
+unsigned audio_starts=0,audio_stops=0;
 AppNotification late_dataset{};bool deliver_dataset_on_ui_send=false;
 StorageRequest last_read{};
 ReadFileSlot map_backend_file;MapBuildJob map_backend(map_backend_file);map::CodeImageBuffer shared_map_pixels{};map::MapSession live_session(shared_map_pixels),log_session(shared_map_pixels);
@@ -38,6 +39,10 @@ void route(QueueHandle_t queue) {
         else if(command.kind==MessageKind::SetUiScreen) {
             result.status=reject_screen?OperationStatus::Unavailable:app->ui_.model_.setScreen(command.payload.screen);
             reject_screen=false;
+        }
+        else if(command.kind==MessageKind::ControlAudio) {
+            if(command.payload.audio.play)++audio_starts;else ++audio_stops;
+            app->ui_.model_.setAudioActive(command.payload.audio.play);result.status=OperationStatus::Ok;
         }
         else if(command.kind==MessageKind::BeginDatasetRead)result.status=app->ui_.model_.beginDatasetRead(command.payload.dataset.request,result.map_buffer);
         else if(command.kind==MessageKind::CommitDatasetRead)result.status=app->ui_.model_.commitDatasetRead(command.payload.dataset);
@@ -556,6 +561,51 @@ int main(){
     app->completeBrowser(invalid);
     check(!app->data_.browse().loading && app->data_.browse().error==LogReadError::Header && !app->screen_resources_.logs().need,"invalid headers retain a visible error without entering an action menu");
     std::puts("PASS: direct text entry, automatic initial batch, empty/header-error completion and Esc-to-list");
+    // A fresh App exercises live alerts while a historical point is displayed
+    // and the display is dark. No test substitutes the App scheduling logic.
+    static Application alarm_instance;app=&alarm_instance;
+    check(app->results_.initialize() && app->notifications_.initialize() && app->ui_.initialize() && app->gps_.initialize() && app->storage_.initialize(),"alarm App queues");
+    app->screen_=ScreenId::LogPoint;app->generation_=1;app->mode_=DisplayMode::Background;
+    app->data_.settings=defaultSettings();app->data_.settings.dataset=1;
+    app->data_.dataset.state=PlaceState::Ready;app->data_.storage.card_state=CardState::Mounted;
+    app->data_.gps.fix={35.68,140.02,0,true};app->data_.gps.reception=GpsReception::Fix;app->data_.gps.sample_seq=100;
+    auto& alarm_profile=app->data_.storage.alarm;alarm_profile.dataset=1;alarm_profile.depth=2;alarm_profile.identity=77;
+    alarm_profile.revision=1;alarm_profile.state=alarm::State::Ready;alarm_profile.settings.enabled=true;alarm_profile.settings.duration=3;
+    auto& history=app->data_.editBrowse();history.summary.records=20;history.point_loaded=true;history.point={80.,12.,0,true};
+    std::strcpy(app->data_.place[0],"HISTORY LABEL");
+    auto& alarm_ui=app->ui_.model_;alarm_ui.setScreen({app->screen_,DisplayMode::Background,1,app->data_,0,ActionResult::None});
+    auto alarmSample=[&](uint32_t region,unsigned agreeing) {
+        hold_place_queries=true;app->processAlarm();StorageRequest query{};
+        check(app->storage_.inbox().receive(query) && query.kind==MessageKind::SearchPlace && query.payload.place_request.alarm_sample &&
+              query.payload.place_request.fix.latitude==app->data_.gps.fix.latitude,"background alarm samples actual GPS instead of replay point");
+        hold_place_queries=false;
+        auto& result=*placeResultMemory(query.payload.place_request);result={};result.request=query.payload.place_request;
+        result.state=PlaceState::Ready;result.dataset=app->data_.dataset;result.alarm.center.depth=1;
+        result.alarm.center.path[0]=region;result.alarm.valid_points=9;result.alarm.agreeing=agreeing;
+        AppNotification completed{};completed.source=TaskId::Storage;completed.kind=MessageKind::ReadCompleted;
+        auto& body=completed.payload.storage_completion;body.request_id=query.request_id;body.snapshot=app->data_.storage;
+        body.snapshot.revision=app->data_.storage.revision+1;body.read_kind=StorageReadKind::Place;body.place=placeCompletion(result);
+        app->handleNotification(completed);check(app->place_completion_ready_,"alarm async result is staged without a display search token");
+        app->processPlace();check(!app->place_borrow_.token && !std::strcmp(app->data_.place[0],"HISTORY LABEL"),"alarm returns UI loan without replacing replay labels");
+    };
+    alarmSample(1,9);check(!audio_starts,"first live position establishes quiet alarm baseline");
+    ++app->data_.gps.sample_seq;alarmSample(2,1);check(audio_starts==1 && app->alarm_audio_owned_,"first boundary crossing starts audio immediately in dark-screen mode");
+    alarm_ui.keyPressed(UiKey::OpenMap,host_tick);app->readUiContent();
+    check(!app->alarm_audio_owned_ && audio_stops==1 && app->mode_==DisplayMode::View && app->screen_==ScreenId::LogPoint,"first key silences and wakes without executing map shortcut");
+    ++app->data_.gps.sample_seq;alarmSample(1,1);check(audio_starts==1,"silence preserves A/B boundary suppression");
+    ++app->data_.gps.sample_seq;alarmSample(3,1);check(audio_starts==2,"third region can trigger another live alarm");
+    app->data_.storage.card_state=CardState::NoCard;app->processAlarm();check(!app->alarm_audio_owned_ && audio_stops==2,"SD unavailable stops sounding alarm");
+    app->data_.storage.card_state=CardState::Mounted;alarm_profile.settings.enabled=false;++alarm_profile.revision;app->processAlarm();
+    check(app->playAlarm(alarm_profile.settings,true),"audition works while notifications are OFF");
+    host_tick+=alarm::SoundSession::cycleMs(alarm_profile.settings.tone)+1;app->processAlarm();
+    check(!app->alarm_audio_owned_,"audition ends after one pattern");
+    app->data_.settings.power_level=power::Level::Normal;
+    check(app->playAlarm(alarm_profile.settings,true),"managed audition accepted");
+    host_tick+=alarm::SoundSession::cycleMs(alarm_profile.settings.tone)+1;app->processAlarm();
+    check(app->alarm_audio_owned_,"App preserves managed one-shot during bounded preparation budget");
+    host_tick+=power::AudioPreparationBudgetMs;app->processAlarm();
+    check(!app->alarm_audio_owned_,"managed audition watchdog ends after pattern and preparation budget");
+    std::puts("PASS: production App alarms use live GPS on dark replay screen, async ownership, quiet baseline, suppression/mute/wake, SD failure and audition");
     hostQueueHook=nullptr;std::filesystem::remove_all(directory);
     std::puts("PASS: production App logging, GPS pause/stop/restart, fresh epochs, async close, filename, failures and wake");
 }

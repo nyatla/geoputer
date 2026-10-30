@@ -1,6 +1,7 @@
 #pragma once
 
 #include "TaskMessages.h"
+#include "alarm/AlarmEngine.h"
 #include "AppScreenResources.h"
 #include "map/MapTracking.h"
 #include "utils/SyncClient.h"
@@ -19,6 +20,13 @@ public:
     void runOnce();
 
 private:
+    void processAlarm();
+    void requestAlarmSample();
+    void completeAlarmSample();
+    bool alarmAvailable()const;
+    bool playAlarm(const alarm::Settings&,bool preview=false);
+    void stopAlarm();
+    [[gnu::noinline]] bool audioCommand(const alarm::AudioCommand&);
     void processMap();
     bool changeMapScale(uint8_t scale);
     void completeMap(const map::FrameInfo& info);
@@ -105,6 +113,11 @@ private:
     bool map_session_close_=false,map_session_ready_=false;
     uint32_t map_token_=0xa0000000u;
     bool map_cancel_=false,map_storage_owned_=false;
+    alarm::Engine alarm_engine_;
+    alarm::SoundSession alarm_sound_;
+    uint32_t alarm_profile_revision_=0,alarm_identity_=0,alarm_sample_seq_=0;
+    uint8_t alarm_dataset_=0;
+    bool alarm_audio_owned_=false,alarm_preview_=false;
     PlaceSearchFlow place_flow_;
     // Loan ownership survives screen replacement and accepted async work.
     PlaceRequest place_borrow_{};

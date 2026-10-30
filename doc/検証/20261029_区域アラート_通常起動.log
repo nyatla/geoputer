@@ -1,0 +1,18 @@
+[LORA] SLEEP status=0x2A (TX/RX disabled)
+[STORAGE] NVS=ready SD=MOUNTED spi_hz=25000000 spi_actual_hz=20000000
+[MEMORY] messages ui=1456 gps=16 storage=144 notify=848 return=336 sd_files=3 frame_bpp=4
+[APP] selected boot mode started
+[GPS] UART ready RX=15 TX=13 baud=115200
+[ALARM] dataset=02 depth=4 state=CREATED / OFF enabled=0
+[BOOT] DISPLAY: 240X135
+[BOOT] TASKS/QUEUES: 4T/5Q
+[BOOT] NVS SETTINGS: LOADED
+[BOOT] SD CARD: FAT32
+[BOOT] GPS UART: UART OK
+[BOOT] GALUCHAT DATA: OPEN OK
+[BOOT] Ready
+[GPS] NO FIX
+[GPS] FIX
+[UI] clock=23:28:14 JST (initial GPS time)
+[APP] screen=LivePlace generation=2 action=0 stack_free=3896
+[APP] place=千葉県 習志野市 / 袖ケ浦三丁目 (DATASET READY)

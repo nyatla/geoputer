@@ -1,0 +1,16 @@
+[APP] selected boot mode started
+[POWER] audio=STANDBY (DAC/output)
+[GPS] UART ready RX=15 TX=13 baud=115200
+[ALARM] dataset=02 depth=4 state=READY enabled=0
+[BOOT] DISPLAY: 240X135
+[BOOT] TASKS/QUEUES: 4T/5Q
+[BOOT] NVS SETTINGS: LOADED
+[BOOT] SD CARD: FAT32
+[BOOT] GPS UART: UART OK
+[BOOT] GALUCHAT DATA: OPEN OK
+[BOOT] Ready
+[GPS] NO FIX
+[GPS] FIX
+[UI] clock=11:15:07 JST (initial GPS time)
+[APP] screen=LivePlace generation=2 action=0 stack_free=4024
+[APP] place=千葉県 習志野市 / 袖ケ浦三丁目 (DATASET READY)

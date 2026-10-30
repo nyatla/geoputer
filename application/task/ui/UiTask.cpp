@@ -49,6 +49,9 @@ void UiTask::handle(const UiRequest& request, bool ready) {
                 result.status=model_.commitMapFrame(request.payload.map);
                 if(result.status==OperationStatus::Ok)reportMapHeap("ui-commit",request.payload.map.request.token);
                 break;
+            case MessageKind::ControlAudio:
+                result.status=audio_.command(request.payload.audio,taskTimeMs())?OperationStatus::Ok:OperationStatus::Unavailable;
+                model_.setAudioActive(audio_.active());break;
             case MessageKind::GetUiContent:
                 result.status = OperationStatus::Ok;
                 result.content = model_.snapshot();  // Immutable result copy, not an action acknowledgement.
@@ -82,10 +85,11 @@ void UiTask::notifyContentChanged() {
 void UiTask::run() {
     // LCD, keyboard and their M5Stack driver state are only accessed by this task.
     auto config = M5.config();
-    config.internal_spk = false;
+    config.internal_spk = power_manager_.current().audio_available;
     config.internal_mic = false;
     // Keep the board's automatic keyboard update off: this task owns polling.
     M5Cardputer.begin(config, false);
+    audio_.begin(power_manager_.current(),taskTimeMs());
     if (M5.getBoard() == m5::board_t::board_M5CardputerADV) {
         auto reader = std::make_unique<AdvKeyboardReader>(M5Cardputer.Keyboard.maxKeys());
         auto* state = reader.get();
@@ -128,6 +132,9 @@ void UiTask::run() {
             sendReturn();  // Return after copying/accepting, before rendering.
         }
         update_board();
+        power_manager_.configure(model_.data().settings.power_level,power_manager_.mode());
+        audio_.setPowerPolicy(power_manager_.current());
+        audio_.tick(taskTimeMs());model_.setAudioActive(audio_.active());
         const auto& keys = M5Cardputer.Keyboard.keysState();
         // Normalize physical keys before detecting edges; adding/removing Fn
         // while holding a navigation key must not create another press.

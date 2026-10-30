@@ -4,6 +4,7 @@
 #include <cstddef>
 #include "../../map/MapTypes.h"
 #include "../../Config.h"
+#include "../../alarm/AlarmTypes.h"
 #include "../gps/GpsTypes.h"
 #include "ReadWorkspace.h"
 #include "galuchat/WordBookWorkspace.h"
@@ -46,6 +47,8 @@ struct PlaceRequest {
     uint32_t sample_seq;
     GpsFix fix;
     uint32_t token = 0, dataset_generation = 0;
+    bool alarm_sample=false;
+    uint32_t alarm_revision=0;
     map::BufferLease buffer{};
     size_t work_bytes = 0;
 };
@@ -57,6 +60,7 @@ struct PlaceResult {
     char lines[2][config::PlaceResultLineBytes]; // Direct output, still clipped to display width.
     char detail[80];   // Diagnostic copy, never a pointer into the SDK.
     DatasetInfo dataset;
+    alarm::Observation alarm{};
 };
 
 // The reply is first; only it is initialized. Scratch lives after the reply,
@@ -90,7 +94,7 @@ static_assert(offsetof(PlaceReadWorkspace,reader)>=sizeof(PlaceResult),"Scratch 
 static_assert(sizeof(PlaceReadWorkspace)<=map::BoundaryBytes,"Place scratch and result must fit the UI back image");
 inline bool samePlaceRequest(const PlaceRequest& a,const PlaceRequest& b) {
     return a.token==b.token && a.screen_generation==b.screen_generation && a.sample_seq==b.sample_seq &&
-        a.dataset_generation==b.dataset_generation && a.work_bytes==b.work_bytes && map::sameBuffer(a.buffer,b.buffer);
+        a.dataset_generation==b.dataset_generation && a.alarm_sample==b.alarm_sample && a.alarm_revision==b.alarm_revision && a.work_bytes==b.work_bytes && map::sameBuffer(a.buffer,b.buffer);
 }
 
 

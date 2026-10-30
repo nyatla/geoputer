@@ -5,14 +5,15 @@
 #include <cstddef>
 #include <cstdint>
 #include "Config.h"
+#include "power/PowerManager.h"
 
 namespace geoputer {
 
 enum class UiLanguage : uint8_t { Japanese, English };
-enum class SettingId : uint8_t { Language, LogInterval, FlushInterval, ScreenTimeout, Brightness, Dataset, GpsMode, Count };
+enum class SettingId : uint8_t { Language, LogInterval, FlushInterval, ScreenTimeout, Brightness, Dataset, Volume, PowerSaving, GpsMode, Count };
 constexpr unsigned SettingCount = static_cast<unsigned>(SettingId::Count);
 constexpr unsigned OperationRowCount = static_cast<unsigned>(SettingId::GpsMode);
-constexpr bool settingEditable(unsigned index) { return index < static_cast<unsigned>(SettingId::Dataset); }
+constexpr bool settingEditable(unsigned index) { return index < static_cast<unsigned>(SettingId::Dataset) || index==static_cast<unsigned>(SettingId::Volume) || index==static_cast<unsigned>(SettingId::PowerSaving); }
 
 struct Settings {
     uint8_t log_interval;
@@ -23,6 +24,8 @@ struct Settings {
     uint8_t gps_mode;
     UiLanguage language;
     char wordbook_language[config::DatasetLanguageBytes]{}; // Empty means the dataset default at first boot.
+    power::Level power_level=power::Level::None;
+    uint8_t volume=1; // Shared system volume, UI levels 1..5.
 };
 
 constexpr Settings defaultSettings() { return {0, 2, 1, 1, 0, 0, UiLanguage::Japanese}; }

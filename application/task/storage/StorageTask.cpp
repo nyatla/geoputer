@@ -8,6 +8,7 @@
 #include <SD.h>
 #include "StorageCard.h"
 #include "StorageFs.h"
+#include "alarm/AlarmFile.h"
 #include <esp_heap_caps.h>
 #include <cstring>
 #include <algorithm>
@@ -91,6 +92,7 @@ bool StorageTask::formatCard() {
 }
 
 void StorageTask::configureDataset() {
+    state_.alarm={};
     screen_resources_.clearMaps();
     place_lookup_.configure(state_.settings.dataset,
                             state_.settings.wordbook_language);
@@ -254,9 +256,12 @@ void StorageTask::handle(const StorageRequest& request) {
         const bool sd_operation = request.kind == MessageKind::OperateStorage &&
                                   (command.operation == StorageOperation::Remount || command.operation == StorageOperation::Unmount ||
                                    (command.operation == StorageOperation::Format && command.confirmed));
+        const bool alarm_operation=!usb_mode_ && !has_read_ && state_.card_state==CardState::Mounted && selected_dataset_.ready() &&
+            request.kind==MessageKind::OperateStorage && command.settings.dataset==state_.settings.dataset &&
+            (command.operation==StorageOperation::SaveAlarm || command.operation==StorageOperation::ReloadAlarm);
         const bool mode_operation = request.kind == MessageKind::OperateStorage && command.confirmed && nvs_ready_ &&
             (command.operation == (usb_mode_ ? StorageOperation::ExitUsbMode : StorageOperation::EnterUsbMode));
-        if ((!usb_mode_ && saving && nvs_ready_) ||
+        if (alarm_operation || (!usb_mode_ && saving && nvs_ready_) ||
             (((!usb_mode_ && sd_operation) || mode_operation) && !has_read_ && !log_writer_.hasRetainedSession() &&
               (!usb_mode_ || (usb_work_==UsbWork::None && state_.export_job.phase==ExportPhase::Idle)))) {
             job_ = command; job_request_id_ = request.request_id;
@@ -405,7 +410,8 @@ void StorageTask::completeJob() {
             else {
                 auto& bytes=placeReaderMemory(place_request_);
                 BorrowedReadBuffer work(bytes.data(),bytes.size());
-                place_lookup_.searchInto(place_request_,place,&work,&placeWordBookMemory(place_request_));
+                if(place_request_.alarm_sample)place_lookup_.observeAlarmInto(place_request_,place,state_.alarm.settings,&work);
+                else place_lookup_.searchInto(place_request_,place,&work,&placeWordBookMemory(place_request_));
             }
         } else { place.request = place_request_; place.state = PlaceState::NoCard; place.dataset = place_lookup_.datasetInfo(); place.dataset.state = PlaceState::NoCard; }
         if(datasetUnavailable(place.state)) {
@@ -417,9 +423,12 @@ void StorageTask::completeJob() {
         if (dataset_job && place.state == PlaceState::Ready && !state_.settings.wordbook_language[0])
             std::snprintf(state_.settings.wordbook_language, sizeof(state_.settings.wordbook_language), "%s",
                           place_lookup_.selectedLanguage().data());
+        if(dataset_job && place.state==PlaceState::Ready)loadAlarmProfile();
     } else if (load_job) ok = loadSettings();
     else switch (job_.operation) {
         case StorageOperation::SaveSettings: ok = saveSettings(job_.settings); break;
+        case StorageOperation::SaveAlarm:ok=saveAlarmProfile();break;
+        case StorageOperation::ReloadAlarm:loadAlarmProfile();ok=state_.alarm.usable();break;
         case StorageOperation::Remount: mountCard(); ok = state_.card_state == CardState::Mounted; break;
         case StorageOperation::Unmount:
             closeCard(); state_.card_state = CardState::Unmounted;
@@ -709,3 +718,29 @@ void StorageTask::run() {
 }
 
 }  // namespace geoputer
+
+namespace geoputer {
+void StorageTask::loadAlarmProfile() {
+    const auto revision=state_.alarm.revision+1;
+    state_.alarm={};state_.alarm.revision=revision;
+    if(usb_mode_ || !nvs_ready_ || state_.nvs_error || state_.card_state!=CardState::Mounted || !selected_dataset_.ready())return;
+    using namespace index_format;
+    uint32_t identity=2166136261u;
+    for(auto b:selected_dataset_.map_index.header)identity=(identity^b)*16777619u;
+    for(auto b:selected_dataset_.book_index.header)identity=(identity^b)*16777619u;
+    const auto depth=get16(selected_dataset_.book_index.header.data()+Wordbook::Depth);
+    state_.alarm=AlarmFile(drive_,screen_resources_.work.files().primary(),this).load(selected_dataset_.number,depth,identity);
+    state_.alarm.revision=revision;
+    Console.printf("[ALARM] dataset=%02u depth=%u state=%s enabled=%u\n",state_.alarm.dataset,state_.alarm.depth,alarm::stateName(state_.alarm.state),state_.alarm.settings.enabled);
+}
+bool StorageTask::saveAlarmProfile() {
+    if(usb_mode_ || state_.card_state!=CardState::Mounted || !state_.alarm.usable() ||
+        job_.alarm_identity!=state_.alarm.identity || job_.settings.dataset!=state_.settings.dataset ||
+        !alarm::valid(job_.alarm_settings,state_.alarm.depth))return false;
+    auto next=state_.alarm;next.settings=job_.alarm_settings;
+    if(!AlarmFile(drive_,screen_resources_.work.files().primary(),this).save(next)) {
+        state_.alarm.settings.enabled=false;state_.alarm.state=alarm::State::IoError;++state_.alarm.revision;return false;
+    }
+    next.state=alarm::State::Ready;++next.revision;state_.alarm=next;return true;
+}
+} // namespace geoputer

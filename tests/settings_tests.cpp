@@ -98,9 +98,10 @@ void navigationAndEditing() {
     auto command = screen();
     ui.setScreen(command);
     for (unsigned i = 0; i < 10; ++i) ui.keyPressed(UiKey::Down, 10 + i);
-    check(ui.snapshot().selected_setting == SettingsRootCount-1, "Settings root has five entries");
+    check(ui.snapshot().selected_setting == SettingsRootCount-1, "Settings root includes alert settings");
+    ui.keyPressed(UiKey::Up,29); // Licenses precedes the new Alerts entry.
     ui.keyPressed(UiKey::Enter, 30);
-    check(ui.snapshot().page == SettingsPage::Licenses, "last root entry opens licenses");
+    check(ui.snapshot().page == SettingsPage::Licenses, "license entry opens licenses");
     ui.keyPressed(UiKey::Down, 40);
     check(ui.licenseOffset() == 1, "license body scrolls locally");
     ui.keyPressed(UiKey::Escape, 50);
@@ -110,10 +111,8 @@ void navigationAndEditing() {
     check(ui.snapshot().page == SettingsPage::Operation, "first entry opens operation settings");
     for (unsigned i = 0; i < 4; ++i) ui.keyPressed(UiKey::Down, 70 + i);
     ui.keyPressed(UiKey::Right, 80);
-    check(ui.snapshot().selected_setting == 4 && !ui.editing(), "left/right cannot navigate a menu");
-    ui.keyPressed(UiKey::Enter, 90);
-    ui.keyPressed(UiKey::Right, 100);
-    check(ui.editing() && ui.editValue() == 2, "brightness choice changes only in editing state");
+    check(ui.snapshot().selected_setting == 4 && ui.editing() && ui.editDirty() && ui.editValue()==2,
+          "Right changes the selected setting immediately without moving the row or saving");
     UpdateUiContent gps_update{};
     gps_update.mode = DisplayMode::View; gps_update.generation = 1; gps_update.data = command.data;
     gps_update.data.revision = 2;
@@ -140,6 +139,45 @@ void navigationAndEditing() {
     ui.keyPressed(UiKey::OpenSettings, 171);
     check(ui.snapshot().action.kind == ActionKind::ChangeScreen && ui.snapshot().action.target == ScreenId::Settings,
           "0 at Live requests Settings through App");
+}
+
+void directEditing() {
+    // Exercise every NVS scalar in both UI languages, including wrap/cancel/no-op saves.
+    for(const auto language:{UiLanguage::Japanese,UiLanguage::English})for(unsigned row=0;row<OperationRowCount;++row) {
+        if(!settingEditable(row))continue;
+        UiData data{};data.settings=defaultSettings();data.settings.language=language;
+        UiModel model;model.setScreen({ScreenId::Settings,DisplayMode::View,1,data,0,ActionResult::None});
+        uint32_t now=0;auto key=[&](UiKey k){model.keyPressed(k,++now);};
+        key(UiKey::Enter);for(unsigned n=0;n<row;++n)key(UiKey::Down);
+        const auto original=settingValue(data.settings,row);
+        const auto next=uint8_t((original+1)%settingChoices(row));
+        check(model.keyGuide().left && model.keyGuide().right,"scalar exposes Left/Right before editing");
+        key(UiKey::Enter);check(!model.editing() && model.snapshot().action.kind==ActionKind::None,"unchanged Enter never saves");
+        key(UiKey::Right);check(model.editDirty() && model.editValue()==next && model.snapshot().action.kind==ActionKind::None,"direct change is a local dirty preview");
+        if(!row) {key(UiKey::Up);check(model.editDirty() && model.snapshot().action.kind==ActionKind::None,"blocked movement at the first row does not confirm");}
+        key(UiKey::Left);check(!model.editDirty() && model.editValue()==original,"returning to the original choice clears dirty color");
+        key(UiKey::Enter);check(!model.editing() && model.snapshot().action.kind==ActionKind::None,"round trip does not save");
+        key(UiKey::Left);key(UiKey::Back);
+        check(!model.editDirty() && !model.editing() && model.snapshot().page==SettingsPage::Operation &&
+              model.snapshot().action.kind==ActionKind::None && sameSettings(model.data().settings,data.settings),"Del cancels only the dirty item");
+        key(UiKey::Right);key(row?UiKey::Up:UiKey::Down);
+        const auto saved=model.snapshot().action;
+        check(saved.kind==ActionKind::SaveSettings && settingValue(saved.settings,row)==next && !model.editing() &&
+              model.snapshot().selected_setting==(row?row-1:row+1),"moving to another row confirms exactly the departing field");
+        data.settings=saved.settings;++data.revision;
+        model.updateContent({DisplayMode::View,1,data,saved.action_id,ActionResult::Applied});
+        key(UiKey::Enter);check(model.snapshot().action.kind==ActionKind::None,"unchanged next item never repeats the save");
+    }
+    UiData data{};data.settings=defaultSettings();UiModel busy;
+    busy.setScreen({ScreenId::Settings,DisplayMode::View,1,data,0,ActionResult::None});
+    busy.keyPressed(UiKey::Enter,1);busy.keyPressed(UiKey::Right,2);
+    data.storage.busy=true;++data.revision;busy.updateContent({DisplayMode::View,1,data,0,ActionResult::None});
+    busy.keyPressed(UiKey::Down,3);busy.keyPressed(UiKey::Enter,4);
+    check(busy.editDirty() && busy.snapshot().selected_setting==0 && busy.snapshot().action.kind==ActionKind::None,
+          "busy storage cannot discard a draft by pretending to save it");
+    busy.keyPressed(UiKey::Escape,5);
+    check(!busy.editing() && busy.snapshot().page==SettingsPage::Operation,"cancel remains usable during storage work");
+    busy.keyPressed(UiKey::Escape,6);check(busy.snapshot().page==SettingsPage::Root,"second Escape returns to parent");
 }
 
 void destructiveConfirmationAndSleep() {
@@ -216,4 +254,4 @@ void destructiveConfirmationAndSleep() {
 }
 }  // namespace
 
-void testSettings() { codec(); persistenceAndBackendErrors(); navigationAndEditing(); destructiveConfirmationAndSleep(); }
+void testSettings() { codec(); persistenceAndBackendErrors(); navigationAndEditing(); directEditing(); destructiveConfirmationAndSleep(); }

@@ -10,6 +10,7 @@
 #include "LicenseText.h"
 #include "SettingsLayout.h"
 #include "SettingsText.h"
+#include "AlarmText.h"
 #include "LivePlaceLayout.h"
 #include "GpsPresentation.h"
 #include "PlacePresentation.h"
@@ -508,10 +509,31 @@ void UiRenderer::drawSettings(const UiModel& model, const UiSnapshot& content, c
                         content.page == SettingsPage::Operation ? "OPERATION" :
                         content.page == SettingsPage::System ? "SYSTEM" :
                         content.page == SettingsPage::Storage ? "STORAGE" :
+                        content.page == SettingsPage::Alarm ? "ALERTS" :
                         content.page == SettingsPage::Reset ? "RESET" :
                         content.page == SettingsPage::About ? "ABOUT" : "LICENSES";
     auto label = [&](SettingsLabel id) { return settingsLabel(language, id); };
     text(4, ViewHeaderTextY, title, TFT_LIGHTGREY);
+    if(content.page==SettingsPage::Alarm) {
+        const auto& profile=data.storage.alarm;
+        const auto first=SettingsLayout::firstVisible(content.selected_setting,AlarmRows);
+        for(unsigned visible=0;visible<SettingsLayout::VisibleRows && first+visible<AlarmRows;++visible) {
+            const auto row=first+visible;const int y=SettingsLayout::FirstRowY+visible*SettingsLayout::RowStep;
+            const bool selected=row==content.selected_setting;
+            const bool enabled=!data.storage.busy && !data.storage.nvs_error &&
+                (row==AlarmReloadRow?logMapAvailable(data):profile.usable());
+            const auto color=!enabled?TFT_DARKGREY:selected?(model.editDirty()?TFT_YELLOW:TFT_CYAN):TFT_WHITE;
+            item(4,y,selected?">":" ",TFT_CYAN);item(SettingsLayout::LabelX,y,alarmLabel(row,japanese),color);
+            char value[32];alarmValueText(row,selected&&model.editing()?model.editValue():alarmValue(profile.settings,row),profile.depth,japanese,value,sizeof(value));
+            // Keep long English choices from crossing the field label.
+            font_.draw(frame_,SettingsLayout::ValueRight-PixelFont::width(value,item_role),y,value,item_role,!enabled?TFT_DARKGREY:selected&&model.editDirty()?TFT_YELLOW:TFT_CYAN);
+        }
+        const char* state=data.storage.nvs_error?"NVS ERROR / ALERT OFF":
+            data.storage.busy?"STORAGE BUSY":alarm::stateName(profile.state);
+        char status[48];std::snprintf(status,sizeof(status),"DS%02u %s",settings.dataset,state);
+        notice(status,profile.usable() && !data.storage.nvs_error?TFT_LIGHTGREY:TFT_RED);
+        return;
+    }
     if (content.page == SettingsPage::Licenses) {
         std::snprintf(line,sizeof(line),"%lu/%lu",static_cast<unsigned long>(model.licenseOffset()+1),static_cast<unsigned long>(licenseLineCount()));
         valueText(80,sd_icon::HeaderRight,ViewHeaderTextY,line,TFT_LIGHTGREY);
@@ -558,7 +580,7 @@ void UiRenderer::drawSettings(const UiModel& model, const UiSnapshot& content, c
             const unsigned first=SettingsLayout::firstVisible(content.selected_setting,count);
             for (unsigned n=0;n<4 && first+n<count;++n) {
                 const unsigned row=first+n;const int y=27+n*20;
-                const auto color=row==count-1 && datasetSelectionBlock(data,true)!=DatasetError::None?TFT_DARKGREY:row==content.selected_setting?TFT_CYAN:TFT_WHITE;
+                const auto color=row==count-1 && datasetSelectionBlock(data,true)!=DatasetError::None?TFT_DARKGREY:row==content.selected_setting?(model.editDirty()?TFT_YELLOW:TFT_CYAN):TFT_WHITE;
                 item(4,y,row==content.selected_setting?">":" ",color);
                 const bool ascii=datasetDetailLine(view,row,japanese,line,sizeof(line));
                 font_.draw(frame_,20,y,line,ascii?TextRole::Ascii8x16:item_role,color);
@@ -598,12 +620,12 @@ void UiRenderer::drawSettings(const UiModel& model, const UiSnapshot& content, c
         for (unsigned row = 0; row < SettingsSystemCount; ++row) {
             const int y = SettingsLayout::FirstRowY + row * SettingsLayout::RowStep;
             const bool selected = row == content.selected_setting;
-            const auto color = row == 1 || (row == 2 && reason[0]) || (row == SettingsSystemResetRow && data.storage.busy) ? TFT_DARKGREY : selected ? TFT_CYAN : TFT_WHITE;
+            const auto color = row == 1 || (row == 2 && reason[0]) || (row == SettingsSystemResetRow && data.storage.busy) ? TFT_DARKGREY : selected ? (model.editDirty()?TFT_YELLOW:TFT_CYAN) : TFT_WHITE;
             item(4,y,selected ? ">" : " ",color);
             item(SettingsLayout::LabelX,y,settingsSystemLabel(language,row),color);
             if (row < 2) {
                 const char* value = row == 0 ? settingsModeValue(language,usb) : "MESH";
-                font_.draw(frame_,SettingsLayout::ValueRight-PixelFont::width(value,item_role),y,value,item_role,color);
+                font_.draw(frame_,SettingsLayout::ValueRight-PixelFont::width(value,item_role),y,value,item_role,row==1?TFT_DARKGREY:selected&&model.editDirty()?TFT_YELLOW:TFT_CYAN);
             }
         }
         const char* help = content.selected_setting == 1 ? (japanese ? "外付けGPSは未対応" : "External GPS unsupported") :
@@ -617,13 +639,13 @@ void UiRenderer::drawSettings(const UiModel& model, const UiSnapshot& content, c
             const unsigned row = first + visible;
             const int y = SettingsLayout::FirstRowY + visible * SettingsLayout::RowStep;
             const bool selected = row == content.selected_setting;
-            const uint16_t color = !settingEditable(row) && row != static_cast<unsigned>(SettingId::Dataset) ? TFT_DARKGREY : selected ? TFT_CYAN : TFT_WHITE;
+            const uint16_t color = !settingEditable(row) && row != static_cast<unsigned>(SettingId::Dataset) ? TFT_DARKGREY : selected ? (model.editDirty()?TFT_YELLOW:TFT_CYAN) : TFT_WHITE;
             item(4, y, selected ? ">" : " ", TFT_CYAN);
             item(SettingsLayout::LabelX, y, settingsOperationLabel(language, row), color);
             char value[24];
             settingsValueText(language, row, selected && model.editing() ? model.editValue() : settingValue(settings, row), value, sizeof(value));
             const auto value_role = row == static_cast<unsigned>(SettingId::Language) ? TextRole::Ascii8x16 : item_role;
-            font_.draw(frame_, SettingsLayout::ValueRight - PixelFont::width(value, value_role), y, value, value_role, color);
+            font_.draw(frame_, SettingsLayout::ValueRight - PixelFont::width(value, value_role), y, value, value_role, !settingEditable(row)?color:selected&&model.editDirty()?TFT_YELLOW:TFT_CYAN);
         }
         std::snprintf(line, sizeof(line), "%u/%u", content.selected_setting + 1u, OperationRowCount);
         text(4, LivePlaceLayout::LogY, line, TFT_WHITE);

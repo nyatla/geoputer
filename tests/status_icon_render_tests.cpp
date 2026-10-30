@@ -73,7 +73,7 @@ Mask render(ScreenId screen,int page,bool active,bool japanese,int depth,bool di
             const auto col=x-left;
             const auto c=shortcutCharacter(hint.key);bool ink=false;
             if(hint.key==UiKey::Escape)ink=y>=122 && y<134 && (escape_icon::Rows[y-122]&(0x800000u>>col));
-            else if(hint.key==UiKey::Enter)ink=y>=122 && y<134 && (enter_icon::Rows[y-122]&(0x8000u>>col));
+            else if(hint.key==UiKey::Enter)ink=y>=122 && y<134 && (enter_icon::Rows[y-122]&((1u<<(enter_icon::Width-1))>>col));
             else if(c)ink=y>=124 && y<132 && (font8x8_c64[(c-32)*8+col]&(1u<<(y-124)));
             else {
                 const int index=hint.key==UiKey::Up?0:hint.key==UiKey::Down?1:hint.key==UiKey::Left?2:3;
@@ -182,7 +182,7 @@ int main(int argc,char** argv) {
                 check(render(screen,0,active,ja,depth)==reference,"screen changes the card shape");++cases;
             }
             check(render(ScreenId::LogPoint,-1,active,ja,depth)==reference,"log map changes the card shape");++cases;
-            for(unsigned page=0;page<=static_cast<unsigned>(SettingsPage::System);++page) {
+            for(unsigned page=0;page<=static_cast<unsigned>(SettingsPage::Alarm);++page) {
                 check(render(ScreenId::Settings,page,active,ja,depth)==reference,"settings page changes the card shape");++cases;
             }
             for(unsigned page=0;page<=static_cast<unsigned>(UsbPage::Busy);++page) {

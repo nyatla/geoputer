@@ -40,7 +40,9 @@ public:
     void notificationSent() { notification_pending_ = false; }
     bool systemUsbMode() const { return screen_resources_.settings.usb_mode; }
     bool editing() const { return screen_resources_.settings.editing; }
+    bool editDirty() const;
     uint8_t editValue() const { return screen_resources_.settings.edit_value; }
+    void setAudioActive(bool active) {if(active!=audio_active_){audio_active_=active;redraw_=true;}}
     bool confirming() const { return dialog_.active(); }
     bool confirmChoice() const { return dialog_.selected(); }
     const ChoiceDialog& dialog() const { return dialog_; }
@@ -77,6 +79,8 @@ private:
     void gpsLoggerKey(UiKey key);
     void logBrowserKey(UiKey key);
     void settingsKey(UiKey key);
+    unsigned editableSettingChoices() const;
+    bool commitSettingEdit();
 
     void copyData(const UiData& data);
     void datasetChanged();
@@ -124,6 +128,7 @@ private:
 
 
 
+    bool audio_active_=false;
     bool early_maintenance_key_ = false;
     RecordingState gps_dialog_state_ = RecordingState::Stopped;
     UiData data_{};

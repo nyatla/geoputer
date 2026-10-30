@@ -1,5 +1,6 @@
 #include "UiModel.h"
 #include "../../LogReplay.h"
+#include "AlarmText.h"
 #include "PlacePresentation.h"
 #include "LicenseText.h"
 #include "SettingsLayout.h"
@@ -121,7 +122,8 @@ OperationStatus UiModel::updateDatasetProgress(const IndexProgress& progress) {
 
 OperationStatus UiModel::beginPlaceSearch(const PlaceRequest& request,map::BufferLease& buffer) {
     if(!request.token || request.screen_generation!=generation_ || request.dataset_generation!=data_.dataset.generation ||
-       mode_!=DisplayMode::View || (screen_!=ScreenId::LivePlace && screen_!=ScreenId::Map && !viewingLogPoint(screen_)))
+       (!request.alarm_sample && (mode_!=DisplayMode::View || (screen_!=ScreenId::LivePlace && screen_!=ScreenId::Map && !viewingLogPoint(screen_)))) ||
+       (request.alarm_sample && (data_.boot.maintenance || screen_==ScreenId::Boot || screen_==ScreenId::UsbStorage)))
         return OperationStatus::StaleContent;
     if(request.buffer.data || request.buffer.id || request.buffer.capacity ||
        request.work_bytes!=config::IndexReadBufferBytes)return OperationStatus::InvalidRequest;
@@ -142,6 +144,7 @@ OperationStatus UiModel::discardPlaceSearch(const PlaceRequest& request) {
     place_borrow_={};return OperationStatus::Ok;
 }
 OperationStatus UiModel::commitPlaceSearch(const PlaceRequest& request) {
+    if(request.alarm_sample)return OperationStatus::InvalidRequest;
     if(!place_borrow_.token || !samePlaceRequest(place_borrow_,request))return OperationStatus::StaleContent;
     if(request.screen_generation!=generation_ || request.dataset_generation!=data_.dataset.generation ||
        mode_!=DisplayMode::View || (screen_!=ScreenId::LivePlace && screen_!=ScreenId::Map && !viewingLogPoint(screen_)) ||
@@ -298,6 +301,7 @@ unsigned UiModel::selectionCount() const {
         case SettingsPage::System: return SettingsSystemCount;
         case SettingsPage::Storage: return 4;
         case SettingsPage::Reset: return 1;
+        case SettingsPage::Alarm:return AlarmRows;
         case SettingsPage::DatasetMenu: return 3;
         case SettingsPage::DatasetList: return data_.datasets().count;
         case SettingsPage::DatasetDetail:
@@ -351,12 +355,7 @@ UiKeyGuide UiModel::keyGuide() const {
         }
     } else if (screen_==ScreenId::Menu) list(MenuCount);
     else if (screen_==ScreenId::Settings && !screen_resources_.settings.card_info) {
-        if (screen_resources_.settings.editing) {
-            guide.horizontal=true;
-            guide.left=guide.right=!dataset_wait && (screen_resources_.settings.page==SettingsPage::System ||
-                (screen_resources_.settings.page==SettingsPage::Operation && settingChoices(selection_)>1) ||
-                (screen_resources_.settings.page==SettingsPage::DatasetDetail && !data_.datasets().loading && data_.datasets().error==DatasetError::None && data_.datasets().info.language_count>1));
-        } else if (screen_resources_.settings.page==SettingsPage::Licenses) {
+        if (screen_resources_.settings.page==SettingsPage::Licenses) {
             guide.vertical=guide.horizontal=true;
             guide.up=licenseTarget(UiKey::Up)!=screen_resources_.settings.license_offset;guide.down=licenseTarget(UiKey::Down)!=screen_resources_.settings.license_offset;
             guide.left=licenseTarget(UiKey::Left)!=screen_resources_.settings.license_offset;guide.right=licenseTarget(UiKey::Right)!=screen_resources_.settings.license_offset;
@@ -370,6 +369,12 @@ UiKeyGuide UiModel::keyGuide() const {
             list(ready?selectionCount():0);
             if (!ready) guide.up=guide.down=false;
         }
+    }
+    if(screen_==ScreenId::Settings && !screen_resources_.settings.card_info && screen_resources_.settings.page!=SettingsPage::Licenses) {
+        guide.horizontal=editableSettingChoices()>1;
+        guide.left=guide.right=guide.horizontal;
+        if(editDirty() && data_.storage.busy && screen_resources_.settings.page!=SettingsPage::System)
+            guide.up=guide.down=false;
     }
     if(showingMap(screen_,data_)) {
         guide.zoom_in=map::supportedScale(data_.map.scale) && data_.map.scale>1;
@@ -425,6 +430,7 @@ void UiModel::appendEnterShortcut(UiShortcutGuide& row,bool accepting) const {
         const auto& settings=screen_resources_.settings;
         if(!settings.card_info) switch(settings.page) {
             case SettingsPage::Licenses:return;
+            case SettingsPage::Alarm:if(selection_<AlarmTestRow && !editDirty())return;enabled=!data_.storage.busy && !data_.storage.nvs_error && (selection_==AlarmReloadRow?logMapAvailable(data_):data_.storage.alarm.usable());break;
             case SettingsPage::DatasetMenu:enabled=!data_.datasets().applying && datasetMenuBlock(data_,selection_)==DatasetError::None;break;
             case SettingsPage::DatasetList: {
                 const auto& view=data_.datasets();
@@ -437,25 +443,22 @@ void UiModel::appendEnterShortcut(UiShortcutGuide& row,bool accepting) const {
                 else if(view.error!=DatasetError::None) {
                     if(!datasetRecoverable(view.error))return;
                     enabled=datasetSelectionBlock(data_,true)==DatasetError::None;
-                } else if(!settings.editing) {
+                } else {
                     const auto count=selectionCount();
-                    if(count<2 || selection_<count-2)return;
+                    if(count<2 || selection_<count-2 || (selection_==count-2 && !editDirty()))return;
                     if(selection_==count-1)enabled=datasetSelectionBlock(data_,true)==DatasetError::None;
                 }
                 break;
             }
             case SettingsPage::DatasetIndex:enabled=!data_.datasets().applying && !data_.storage.busy;break;
             case SettingsPage::System:
-                if(!settings.editing) {
-                    if(selection_!=0 && selection_!=2 && selection_!=SettingsSystemResetRow)return;
-                    enabled=!data_.storage.busy && (selection_!=2 || (settings.usb_mode && usbEntryAllowed(data_)));
-                }
+                if(selection_==0 && !editDirty())return;
+                if(selection_!=0 && selection_!=2 && selection_!=SettingsSystemResetRow)return;
+                enabled=!data_.storage.busy && (selection_!=2 || (settings.usb_mode && usbEntryAllowed(data_)));
                 break;
             case SettingsPage::Operation:
-                if(!settings.editing && selection_!=static_cast<unsigned>(SettingId::Dataset)) {
-                    if(!settingEditable(selection_))return;
-                    enabled=!data_.storage.busy;
-                }
+                if(selection_!=static_cast<unsigned>(SettingId::Dataset) && !editDirty())return;
+                enabled=!data_.storage.busy;
                 break;
             case SettingsPage::Storage:case SettingsPage::Reset:enabled=!data_.storage.busy;break;
             default:break;
@@ -469,6 +472,7 @@ UiShortcutGuide UiModel::shortcutGuide() const {
     if(mode_==DisplayMode::Background)return row;
     const auto guide=keyGuide();
     const auto active=guide.accepting;
+    if(audio_active_) {row.key(UiKey::Escape,active);return row;}
     if(dialog_.active()) {
         row.key(UiKey::Escape,active);row.group();appendEnterShortcut(row,active);
         bool left=false,right=false;
@@ -537,6 +541,7 @@ void UiModel::keyPressed(UiKey key, uint32_t now_ms) {
         else if (!data_.boot.maintenance && data_.boot.complete && key == UiKey::Enter) action(ActionKind::ChangeScreen, ScreenId::LivePlace);
         return;
     }
+    if(audio_active_) {action(ActionKind::SilenceAlarm);return;}
     if (mode_ == DisplayMode::Background) { action(ActionKind::Wake); return; }
     if (dialog_.active()) {
         updateDialogState();
@@ -681,17 +686,111 @@ void UiModel::logBrowserKey(UiKey key) {
     return;
 }
 
+unsigned UiModel::editableSettingChoices() const {
+    if(screen_!=ScreenId::Settings || screen_resources_.settings.card_info)return 0;
+    const auto& settings=screen_resources_.settings;
+    switch(settings.page) {
+        case SettingsPage::Operation:
+            return !data_.storage.busy && settingEditable(selection_)?settingChoices(selection_):0;
+        case SettingsPage::System:return !data_.storage.busy && selection_==0?2:0;
+        case SettingsPage::Alarm:
+            return !data_.storage.busy && !data_.storage.nvs_error && data_.storage.alarm.usable()?
+                alarmChoices(selection_,data_.storage.alarm.depth):0;
+        case SettingsPage::DatasetDetail: {
+            const auto& view=data_.datasets();const auto count=selectionCount();
+            return !view.loading && !view.applying && view.error==DatasetError::None && count>=2 && selection_==count-2?
+                view.info.language_count:0;
+        }
+        default:return 0;
+    }
+}
+
+bool UiModel::editDirty() const {
+    const auto& settings=screen_resources_.settings;
+    if(!settings.editing)return false;
+    if(settings.page==SettingsPage::DatasetDetail)
+        return data_.datasets().loading || std::strcmp(settings.dataset.edit_original,data_.datasets().info.language)!=0;
+    return settings.edit_value!=settings.edit_original;
+}
+
+bool UiModel::commitSettingEdit() {
+    auto& settings=screen_resources_.settings;
+    if(!settings.editing)return true;
+    if(editDirty()) {
+        if(settings.page==SettingsPage::Operation) {
+            if(data_.storage.busy)return false;
+            Settings value=data_.settings;
+            if(!setSettingValue(value,selection_,settings.edit_value))return false;
+            if(!sameSettings(value,data_.settings)) {
+                action(ActionKind::SaveSettings);action_.settings=value;
+            }
+        } else if(settings.page==SettingsPage::Alarm) {
+            if(data_.storage.busy || data_.storage.nvs_error || !data_.storage.alarm.usable())return false;
+            if(settings.edit_value!=alarmValue(data_.storage.alarm.settings,selection_)) {
+                action(ActionKind::SaveAlarm);action_.alarm_settings=data_.storage.alarm.settings;
+                setAlarmValue(action_.alarm_settings,selection_,settings.edit_value);
+                action_.alarm_identity=data_.storage.alarm.identity;
+            }
+        } else if(settings.page==SettingsPage::System)settings.usb_mode=settings.edit_value!=0;
+        // Dataset language is a local candidate. Apply still owns persistence/restart.
+    }
+    settings.editing=false;changed();return true;
+}
+
 void UiModel::settingsKey(UiKey key) {
+    auto& edit=screen_resources_.settings;
+    if(edit.editing) {
+        if(key==UiKey::Escape) {
+            const bool dirty=editDirty();edit.editing=false;
+            if(dirty) {
+                if(edit.page==SettingsPage::DatasetDetail) {
+                    datasetAction(DatasetAction::CancelLanguage);
+                    std::strcpy(action_.settings.wordbook_language,edit.dataset.edit_original);
+                }
+                changed();return; // A second Escape leaves the page.
+            }
+        } else if(key==UiKey::Enter || key==UiKey::Up || key==UiKey::Down) {
+            if(!commitSettingEdit())return;
+            if(key==UiKey::Enter)return;
+        }
+    }
+    if(key==UiKey::Left || key==UiKey::Right) {
+        const auto count=editableSettingChoices();
+        if(count>1) {
+            if(!edit.editing) {
+                if(edit.page==SettingsPage::DatasetDetail)
+                    std::strcpy(edit.dataset.edit_original,data_.datasets().info.language);
+                else {
+                    edit.edit_original=edit.page==SettingsPage::System?edit.usb_mode:
+                        edit.page==SettingsPage::Alarm?alarmValue(data_.storage.alarm.settings,selection_):settingValue(data_.settings,selection_);
+                    edit.edit_value=edit.edit_original;
+                }
+                edit.editing=true;
+            }
+            if(edit.page==SettingsPage::DatasetDetail)datasetAction(DatasetAction::Language,key==UiKey::Right?1:0);
+            else {edit.edit_value=(edit.edit_value+(key==UiKey::Right?1:count-1))%count;changed();}
+            return;
+        }
+    }
+    if(screen_resources_.settings.page==SettingsPage::Alarm) {
+        auto& settings=screen_resources_.settings;
+        if(key==UiKey::Escape) {settings.page=SettingsPage::Root;selection_=settingsRootIndex(SettingsRootItem::Alarm);changed();return;}
+        if(key==UiKey::Up){--selection_;changed();}else if(key==UiKey::Down){++selection_;changed();}
+        else if(key==UiKey::Enter && !data_.storage.busy && !data_.storage.nvs_error) {
+            if(selection_==AlarmReloadRow && logMapAvailable(data_))action(ActionKind::ReloadAlarm);
+            else if(data_.storage.alarm.usable()) {
+                if(selection_==AlarmTestRow)action(ActionKind::TestAlarm);
+            }
+        }
+        return;
+    }
+
     if (screen_ == ScreenId::Settings && (screen_resources_.settings.page == SettingsPage::DatasetList || screen_resources_.settings.page == SettingsPage::DatasetDetail)) {
         const auto& view = data_.datasets();
         if (view.applying) return;
         if (key == UiKey::Escape) {
             if(dataset_borrow_.token)dataset_publishable_=false;
-            if (screen_resources_.settings.editing) {
-                screen_resources_.settings.editing = false; datasetAction(DatasetAction::CancelLanguage);
-                std::strcpy(action_.settings.wordbook_language,screen_resources_.settings.dataset.edit_original);
-            }
-            else if (screen_resources_.settings.page == SettingsPage::DatasetDetail) {
+            if (screen_resources_.settings.page == SettingsPage::DatasetDetail) {
                 screen_resources_.settings.page = SettingsPage::DatasetList; selection_ = 0;
                 datasetAction(DatasetAction::Open, screen_resources_.settings.dataset.list_start);
             } else { screen_resources_.settings.page = SettingsPage::DatasetMenu; selection_ = static_cast<uint8_t>(screen_resources_.settings.dataset.purpose); changed(); }
@@ -723,18 +822,10 @@ void UiModel::settingsKey(UiKey key) {
             return;
         }
         const unsigned count = selectionCount();
-        if (screen_resources_.settings.editing) {
-            if (key == UiKey::Enter) { screen_resources_.settings.editing = false; changed(); }
-            else if (key == UiKey::Left || key == UiKey::Right) datasetAction(DatasetAction::Language,key==UiKey::Right?1:0);
-            return;
-        }
         if (key == UiKey::Up) { --selection_; changed(); }
         if (key == UiKey::Down) { ++selection_; changed(); }
         if (key == UiKey::Enter) {
-            if (selection_ == count-2) {
-                std::strcpy(screen_resources_.settings.dataset.edit_original,view.info.language);screen_resources_.settings.editing = true; changed();
-            }
-            else if (selection_ == count-1 && datasetSelectionBlock(data_,true)==DatasetError::None) datasetAction(DatasetAction::Apply);
+            if (selection_ == count-1 && datasetSelectionBlock(data_,true)==DatasetError::None) datasetAction(DatasetAction::Apply);
         }
         return;
     }
@@ -763,36 +854,15 @@ void UiModel::settingsKey(UiKey key) {
         return;
     }
     if (screen_resources_.settings.page == SettingsPage::System) {
-        if (screen_resources_.settings.editing) {
-            if (key == UiKey::Escape) { screen_resources_.settings.editing = false; changed(); }
-            else if (key == UiKey::Left || key == UiKey::Right) { screen_resources_.settings.edit_value ^= 1; changed(); }
-            else if (key == UiKey::Enter) { screen_resources_.settings.usb_mode = screen_resources_.settings.edit_value != 0; screen_resources_.settings.editing = false; changed(); }
-        } else if (key == UiKey::Escape) {
+        if (key == UiKey::Escape) {
             screen_resources_.settings.usb_mode = false; screen_resources_.settings.page = SettingsPage::Root; selection_ = SettingsSystemRow; changed();
         } else if (key == UiKey::Up) { --selection_; changed(); }
         else if (key == UiKey::Down) { ++selection_; changed(); }
         else if (key == UiKey::Enter && !data_.storage.busy) {
-            if (!selection_) { screen_resources_.settings.edit_value = screen_resources_.settings.usb_mode; screen_resources_.settings.editing = true; changed(); }
-            else if (selection_ == 2 && screen_resources_.settings.usb_mode && usbEntryAllowed(data_)) {
+            if (selection_ == 2 && screen_resources_.settings.usb_mode && usbEntryAllowed(data_)) {
                 dialog_.open(DialogKind::EnterUsbMode); changed();
             } else if (selection_ == SettingsSystemResetRow) {
                 screen_resources_.settings.page = SettingsPage::Reset; selection_ = 0; changed();
-            }
-        }
-        return;
-    }
-    if (screen_resources_.settings.editing) {
-        if (key == UiKey::Escape) { screen_resources_.settings.editing = false; changed(); }
-        else if (key == UiKey::Left || key == UiKey::Right) {
-            const unsigned count = settingChoices(selection_);
-            screen_resources_.settings.edit_value = (screen_resources_.settings.edit_value + (key == UiKey::Right ? 1 : count - 1)) % count;
-            changed();
-        } else if (key == UiKey::Enter) {
-            Settings value = data_.settings;
-            if (setSettingValue(value, selection_, screen_resources_.settings.edit_value)) {
-                action(ActionKind::SaveSettings);
-                action_.settings = value;
-                screen_resources_.settings.editing = false;
             }
         }
         return;
@@ -828,15 +898,13 @@ void UiModel::settingsKey(UiKey key) {
             case SettingsRootItem::Storage: screen_resources_.settings.page = SettingsPage::Storage; break;
             case SettingsRootItem::Licenses: screen_resources_.settings.page = SettingsPage::Licenses; break;
             case SettingsRootItem::About: screen_resources_.settings.page = SettingsPage::About; break;
+            case SettingsRootItem::Alarm:screen_resources_.settings.page=SettingsPage::Alarm;break;
             default: return;
         }
         selection_ = 0; screen_resources_.settings.license_offset = 0;
         changed();
     } else if (screen_resources_.settings.page == SettingsPage::Operation && selection_ == static_cast<unsigned>(SettingId::Dataset)) {
         screen_resources_.settings.page = SettingsPage::DatasetMenu; selection_ = 0;changed();
-    } else if (screen_resources_.settings.page == SettingsPage::Operation && settingEditable(selection_) && !data_.storage.busy) {
-        screen_resources_.settings.edit_value = settingValue(data_.settings, selection_);
-        screen_resources_.settings.editing = true; changed();
     } else if (screen_resources_.settings.page == SettingsPage::Reset && !data_.storage.busy) {
         dialog_.open(DialogKind::ResetSettings); changed();
     } else if (screen_resources_.settings.page == SettingsPage::Storage && !data_.storage.busy) {

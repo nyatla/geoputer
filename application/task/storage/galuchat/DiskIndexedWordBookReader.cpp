@@ -187,6 +187,16 @@ void planComponent(const DatasetWordBookIndex& info,const ScopedReaderSource& so
 }
 } // namespace
 
+unsigned DiskIndexedWordBookReader::pathDepth()const {return get16(info_.header.data()+Wordbook::Depth);}
+bool DiskIndexedWordBookReader::readRegionPath(uint32_t code,unsigned level,alarm::Region& out,BorrowedReadBuffer* work)const {
+    out={};if(!code || code>get(info_.header.data()+Wordbook::RecordCount) || !level || level>pathDepth() || level>config::IndexMaxDepth)return false;
+    const auto book=book_.borrow(work),index=index_.borrow(work);
+    std::array<uint32_t,config::IndexMaxDepth> codes;
+    const auto depth=readPath(info_,index,book,codes,code);
+    if(level>depth)return false;
+    std::copy_n(codes.begin(),level,out.path.begin());out.depth=level;return true;
+}
+
 bool DiskIndexedWordBookReader::readPlaceLinesByCode(int64_t code,
     char (&lines)[2][config::PlaceResultLineBytes],const PlaceDisplayFormat& format,
     WordBookWorkspace& scratch,BorrowedReadBuffer* work) const {

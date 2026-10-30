@@ -40,11 +40,12 @@ void ui() {
     auto stageUsb = [&](UiModel& model) {
         openMode(model);
         check(model.snapshot().page == SettingsPage::System && !model.confirming(), "System opens a submenu");
-        model.keyPressed(UiKey::Enter,21); model.keyPressed(UiKey::Right,22);
-        check(model.editing() && model.editValue() == 1 && !model.systemUsbMode(), "mode preview stays local until Enter");
-        model.keyPressed(UiKey::Enter,23);
-        check(model.systemUsbMode() && model.snapshot().action.kind == ActionKind::None, "draft mode does not persist or reboot");
-        model.keyPressed(UiKey::Down,24); model.keyPressed(UiKey::Enter,25);
+        model.keyPressed(UiKey::Right,22);
+        check(model.editDirty() && model.editValue() == 1 && !model.systemUsbMode(), "mode changes directly and stays local until confirmed");
+        model.keyPressed(UiKey::Down,23);
+        check(model.systemUsbMode() && !model.editDirty() && model.snapshot().selected_setting==1 && model.snapshot().action.kind == ActionKind::None,
+              "moving from mode confirms the local candidate without persisting or rebooting");
+        model.keyPressed(UiKey::Enter,25);
         check(!model.editing() && model.snapshot().action.kind == ActionKind::None, "GPS source remains read-only");
         model.keyPressed(UiKey::Down,26);
     };

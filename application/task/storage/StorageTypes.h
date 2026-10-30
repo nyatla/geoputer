@@ -14,7 +14,7 @@ namespace geoputer {
 
 enum class SettingsState : uint8_t { Unavailable, Defaults, Loaded, Invalid, Saving, Saved, Failed };
 enum class CardState : uint8_t { Unknown, NoCard, Mounted, Unmounted, Unsupported, Failed };
-enum class StorageOperation : uint8_t { None, SaveSettings, Remount, Unmount, Format, EnterUsbMode, ExitUsbMode };
+enum class StorageOperation : uint8_t { None, SaveSettings, Remount, Unmount, Format, EnterUsbMode, ExitUsbMode, SaveAlarm, ReloadAlarm };
 enum class StorageReadKind : uint8_t { None, Settings, Place, Dataset, Log, LogBrowse, DatasetBrowser };
 
 struct StorageSnapshot {
@@ -39,6 +39,7 @@ struct StorageSnapshot {
     LogError log_result;
     UsbStorageView usb;
     ExportSnapshot export_job;
+    alarm::Profile alarm{};
 };
 
 struct StorageCommand {
@@ -46,6 +47,8 @@ struct StorageCommand {
     Settings settings;
     uint32_t operation_id;
     bool confirmed;
+    alarm::Settings alarm_settings{};
+    uint32_t alarm_identity=0;
 };
 
 // Text and diagnostic strings stay in the borrowed UI result, never the queue.

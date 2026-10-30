@@ -1,0 +1,33 @@
+[APP] screen=Menu generation=3 action=1 stack_free=3004
+[APP] screen=Settings generation=4 action=2 stack_free=3004
+[POWER] audio=STANDBY (DAC/output)
+[POWER] audio=CLOCK WARM
+[AUDIO] play tone=1 volume=2 managed=1
+[POWER] audio=READY
+[AUDIO] idle managed=1
+[POWER] audio=STANDBY (DAC/output)
+[POWER] audio=CLOCK WARM
+[AUDIO] play tone=1 volume=2 managed=1
+[POWER] audio=READY
+[AUDIO] idle managed=1
+[POWER] audio=STANDBY (DAC/output)
+[POWER] audio=CLOCK WARM
+[AUDIO] play tone=1 volume=2 managed=1
+[POWER] audio=READY
+[AUDIO] idle managed=1
+[POWER] audio=STANDBY (DAC/output)
+[POWER] audio=CLOCK WARM
+[AUDIO] play tone=1 volume=2 managed=1
+[POWER] audio=READY
+[AUDIO] idle managed=1
+[POWER] audio=STANDBY (DAC/output)
+[POWER] audio=CLOCK WARM
+[AUDIO] play tone=1 volume=2 managed=1
+[POWER] audio=READY
+[AUDIO] idle managed=1
+[POWER] audio=STANDBY (DAC/output)
+[POWER] audio=CLOCK WARM
+[AUDIO] play tone=1 volume=2 managed=1
+[POWER] audio=READY
+[AUDIO] idle managed=1
+[POWER] audio=STANDBY (DAC/output)

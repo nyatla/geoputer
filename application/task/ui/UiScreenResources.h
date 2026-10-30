@@ -19,7 +19,7 @@ struct UiSettingsResources {
     UiDatasetResources dataset;
     uint32_t license_offset=0;
     bool editing=false,card_info=false,usb_mode=false;
-    uint8_t edit_value=0;
+    uint8_t edit_value=0,edit_original=0;
 };
 struct UiUsbResources {
     UsbPage page=UsbPage::Menu,return_page=UsbPage::Menu;

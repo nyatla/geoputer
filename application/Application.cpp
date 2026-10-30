@@ -14,6 +14,7 @@ namespace geoputer {
 bool Application::begin(bool usb_mode) {
     usb_mode_ = usb_mode;
     if (!notifications_.initialize() || !results_.initialize() || !ui_.initialize()) return false;
+    ui_.setPowerMode(usb_mode?BootMode::UsbStorage:BootMode::GpsLogger);
     if (!ui_.start("UI", 8192, 1)) return false;
     data_.settings = defaultSettings();
     data_.map.scale = config::MapViewScale;
@@ -176,19 +177,23 @@ void Application::handleNotification(const AppNotification& event) {
         if (completed.read_kind == StorageReadKind::Place) {
             // Only stage completion here: this handler also runs while another
             // synchronous call is waiting. UI commands run later in processPlace.
-            if(place_queued_ && place_flow_.owns(completed.request_id) &&
+            if(place_queued_ && (place_borrow_.alarm_sample?completed.request_id==place_borrow_.token:place_flow_.owns(completed.request_id)) &&
                samePlaceRequest(place_borrow_,completed.place.request))place_completion_ready_=true;
             return;
         }
         if (completed.operation_id == storage_operation_id_) storage_operation_id_ = 0;
         if (!completed.snapshot.operation_ok) {
-            if (completed.snapshot.operation == StorageOperation::EnterUsbMode || completed.snapshot.operation == StorageOperation::ExitUsbMode)
+            if(completed.snapshot.operation==StorageOperation::SaveAlarm || completed.snapshot.operation==StorageOperation::ReloadAlarm)
+                message(alarm::stateName(completed.snapshot.alarm.state));
+            else if (completed.snapshot.operation == StorageOperation::EnterUsbMode || completed.snapshot.operation == StorageOperation::ExitUsbMode)
                 message("MODE SWITCH FAILED");
             else message(completed.snapshot.operation == StorageOperation::SaveSettings || completed.operation_id == 0
                         ? "SETTINGS ERROR" : "SD OPERATION FAILED");
         } else if (completed.snapshot.operation == StorageOperation::EnterUsbMode || completed.snapshot.operation == StorageOperation::ExitUsbMode) {
             restart_pending_ = true;
-        } else if (completed.snapshot.operation == StorageOperation::SaveSettings) message("SETTINGS SAVED");
+        } else if(completed.snapshot.operation==StorageOperation::SaveAlarm) message("ALERT SETTINGS SAVED");
+        else if(completed.snapshot.operation==StorageOperation::ReloadAlarm) message(alarm::stateName(completed.snapshot.alarm.state));
+        else if (completed.snapshot.operation == StorageOperation::SaveSettings) message("SETTINGS SAVED");
         else if (completed.snapshot.operation == StorageOperation::Unmount) message("SAFE TO REMOVE SD");
         else if (completed.snapshot.operation == StorageOperation::Format) { dataset_check_needed_ = true; message("FAT32 FORMAT COMPLETE"); refreshPlace(); }
         else if (completed.snapshot.operation == StorageOperation::Remount) { dataset_check_needed_ = true; message("SD MOUNTED"); refreshPlace(); }
@@ -262,6 +267,20 @@ void Application::readUiContent() {
     }
     if (action.action_id == last_processed_action_) {
         if (!publishUiContent(action.action_id, ActionResult::Applied)) ui_changed_ = true;
+        return;
+    }
+    if(action.kind==ActionKind::SilenceAlarm) {
+        stopAlarm();mode_=DisplayMode::View;
+        last_processed_action_=action.action_id;
+        if(!publishUiContent(action.action_id,ActionResult::Applied))ui_changed_=true;
+        return;
+    }
+    if(screen_==ScreenId::Settings && content.page==SettingsPage::Alarm && mode_==DisplayMode::View &&
+       (action.kind==ActionKind::SaveAlarm || action.kind==ActionKind::ReloadAlarm || action.kind==ActionKind::TestAlarm)) {
+        const bool accepted=action.kind==ActionKind::TestAlarm?
+            (data_.storage.alarm.usable() && playAlarm(data_.storage.alarm.settings,true)):operateStorage(action);
+        last_processed_action_=action.action_id;
+        if(!publishUiContent(action.action_id,accepted?ActionResult::Applied:ActionResult::Rejected))ui_changed_=true;
         return;
     }
     if(action.kind==ActionKind::MapScale) {
@@ -412,6 +431,7 @@ void Application::applyStorage(const StorageSnapshot& state) {
 bool Application::operateStorage(const UiAction& action) {
     if (dataset_applying_ || data_.storage.busy || storage_operation_id_) { message("STORAGE BUSY"); return false; }
     const bool saving = action.kind == ActionKind::SaveSettings || action.kind == ActionKind::ResetSettings;
+    const bool alarm_operation=action.kind==ActionKind::SaveAlarm || action.kind==ActionKind::ReloadAlarm;
     const auto value = action.kind == ActionKind::ResetSettings ? defaultSettings() : action.settings;
     if (action.kind == ActionKind::ResetSettings &&
         (data_.settings.dataset || data_.settings.wordbook_language[0])) {
@@ -422,10 +442,10 @@ bool Application::operateStorage(const UiAction& action) {
                    std::strcmp(value.wordbook_language, data_.settings.wordbook_language))) {
         message("SETTING NOT AVAILABLE"); return false;
     }
-    if (!saving && (data_.storage.log.open || data_.storage.log.closing || data_.storage.log.buffered || log_control_.action_id)) {
+    if (!saving && !alarm_operation && (data_.storage.log.open || data_.storage.log.closing || data_.storage.log.buffered || log_control_.action_id)) {
         message("STOP LOGGER FIRST"); return false;
     }
-    if (!saving && (action.storage_operation == StorageOperation::None ||
+    if (!saving && !alarm_operation && (action.storage_operation == StorageOperation::None ||
                     action.storage_operation == StorageOperation::SaveSettings ||
                     (action.storage_operation == StorageOperation::Format && !action.confirmed))) {
         message("INVALID SD OPERATION"); return false;
@@ -433,7 +453,11 @@ bool Application::operateStorage(const UiAction& action) {
     StorageRequest request{};
     request.kind = saving ? MessageKind::SaveSettings : MessageKind::OperateStorage;
     request.payload.storage_command = {saving ? StorageOperation::SaveSettings : action.storage_operation,
-                                       value, action.action_id, action.confirmed};
+                                       saving?value:data_.settings, action.action_id, action.confirmed};
+    if(alarm_operation) {
+        auto& command=request.payload.storage_command;command.operation=action.kind==ActionKind::SaveAlarm?StorageOperation::SaveAlarm:StorageOperation::ReloadAlarm;
+        command.alarm_settings=action.alarm_settings;command.alarm_identity=action.alarm_identity;
+    }
     SyncReturn result{};
     storage_operation_id_ = action.action_id;
     if (!callTask(TaskId::Storage, storage_.inbox(), request, result) || result.status != OperationStatus::Ok) {
@@ -511,6 +535,7 @@ bool Application::placeUiCommand(MessageKind kind,const PlaceRequest& request,ma
 
 void Application::processPlace() {
     if(!place_borrow_.token || !place_completion_ready_)return;
+    if(place_borrow_.alarm_sample) {completeAlarmSample();return;}
     if(!place_queued_) {
         if(!placeUiCommand(MessageKind::DiscardPlaceSearch,place_borrow_))return;
     } else {
@@ -782,6 +807,7 @@ void Application::runOnce() {
     processDataset();
     processPlace();
     if (restart_pending_) {
+        stopAlarm();
         message("RESTARTING...");
         publishUiContent();
         // The next boot may advertise a different set of USB interfaces.
@@ -806,6 +832,7 @@ void Application::runOnce() {
     }
     advanceBoot();
     processDatasetCheck();
+    processAlarm();
     processBrowser();
     requestPlace();
     processMap();
@@ -838,6 +865,7 @@ void Application::runOnce() {
         const TickType_t log_wait = pdMS_TO_TICKS(100);
         if (wait == portMAX_DELAY || wait > log_wait) wait = log_wait;
     }
+    if(alarm_audio_owned_ || (alarmAvailable() && alarm_sample_seq_!=data_.gps.sample_seq)) {if(wait==portMAX_DELAY || wait>pdMS_TO_TICKS(20))wait=pdMS_TO_TICKS(20);}
     if(dataset_pending_ || dataset_ready_ || dataset_progress_dirty_) {if(wait==portMAX_DELAY || wait>pdMS_TO_TICKS(20))wait=pdMS_TO_TICKS(20);}
     if(dataset_check_needed_ && !dataset_check_waiting_ && data_.storage.card_state == CardState::Mounted) { if(wait==portMAX_DELAY || wait>pdMS_TO_TICKS(50)) wait=pdMS_TO_TICKS(50); }
     if(browse_cancel_ || browse_release_generation_ || (screen_resources_.hasLogs() && screen_resources_.logs().need && !browse_waiting_)) { if(wait==portMAX_DELAY || wait>pdMS_TO_TICKS(50)) wait=pdMS_TO_TICKS(50); }

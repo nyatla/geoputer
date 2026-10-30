@@ -1,0 +1,26 @@
+[APP] place=千葉県 習志野市 / 袖ケ浦三丁目 (DATASET READY)
+[APP] place=千葉県 習志野市 / 袖ケ浦三丁目 (DATASET READY)
+[APP] place=千葉県 習志野市 / 袖ケ浦三丁目 (DATASET READY)
+[APP] place=千葉県 習志野市 / 袖ケ浦三丁目 (DATASET READY)
+[APP] screen=Map generation=3 action=1 stack_free=3004
+[APP] place=千葉県 習志野市 / 袖ケ浦三丁目 (DATASET READY)
+[APP] screen=LivePlace generation=4 action=2 stack_free=3004
+[APP] place=千葉県 習志野市 / 袖ケ浦三丁目 (DATASET READY)
+[APP] screen=Menu generation=5 action=3 stack_free=3004
+[APP] screen=Settings generation=6 action=4 stack_free=3004
+[AUDIO] play tone=3 volume=2
+[AUDIO] idle codec=ALWAYS ON
+[AUDIO] play tone=3 volume=2
+[AUDIO] idle codec=ALWAYS ON
+[AUDIO] play tone=3 volume=2
+[AUDIO] idle codec=ALWAYS ON
+[AUDIO] play tone=3 volume=2
+[AUDIO] idle codec=ALWAYS ON
+[AUDIO] play tone=3 volume=2
+[AUDIO] idle codec=ALWAYS ON
+[AUDIO] play tone=3 volume=2
+[AUDIO] idle codec=ALWAYS ON
+[AUDIO] play tone=4 volume=2
+[AUDIO] idle codec=ALWAYS ON
+[AUDIO] play tone=4 volume=2
+[AUDIO] idle codec=ALWAYS ON

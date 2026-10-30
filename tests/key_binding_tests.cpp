@@ -118,8 +118,8 @@ void testKeyBindings() {
     enter.keyPressed(UiKey::Enter,20);
     check(enter.viewingLicenses() && enterTone(enter)==-1,"license scrolling has no Enter action");
     UiModel settings;settings.setScreen({ScreenId::Settings,DisplayMode::View,1,data,0,ActionResult::None});
-    settings.keyPressed(UiKey::Enter,1);check(text(settings.shortcutGuide())=="@SG !^v","child omits numeric group");
-    settings.keyPressed(UiKey::Enter,2);check(text(settings.shortcutGuide())=="@SG !<>","editing has one local direction group");
+    settings.keyPressed(UiKey::Enter,1);check(text(settings.shortcutGuide())=="@SG <>^v","scalar advertises direct edit and row navigation without Enter");
+    settings.keyPressed(UiKey::Right,2);check(text(settings.shortcutGuide())=="@SG !<>^v","dirty scalar keeps row navigation and optional Enter confirmation");
     data.editBrowse().summary.records=100;data.editBrowse().target=10;data.dataset.state=PlaceState::Ready;data.settings.dataset=1;
     data.storage.log.open=false;
     UiModel point;point.setScreen({ScreenId::LogPoint,DisplayMode::View,1,data,0,ActionResult::None});

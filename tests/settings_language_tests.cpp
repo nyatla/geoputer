@@ -34,16 +34,16 @@ void testSettingsLanguage() {
     SettingsStore rebooted; Settings after_reboot{};
     check(rebooted.begin() && rebooted.load(after_reboot) == SettingsState::Loaded && sameSettings(restored, after_reboot),
           "reboot retains the selected language and original settings");
-    check(Preferences::records["geoputer/config"][2] == 3 && Preferences::records["geoputer/config"][3] == SettingCount,
+    check(Preferences::records["geoputer/config"][2] == 5 && Preferences::records["geoputer/config"][3] == SettingCount,
           "saved record carries the new version and field count");
     uint8_t record[SettingsRecordSize]; encodeSettings(restored, record);
     record[10] = 2; updateChecksum(record);
     check(!decodeSettings(record, sizeof(record), after_reboot) && sameSettings(after_reboot, restored),
           "invalid language is rejected even with a valid checksum, without changing active settings");
-    encodeSettings(restored, record); record[2] = 4; updateChecksum(record);
+    encodeSettings(restored, record); record[2] = 6; updateChecksum(record);
     check(!decodeSettings(record, sizeof(record), after_reboot), "unsupported future format is rejected");
-    encodeSettings(restored, record); record[11] = 1; updateChecksum(record);
-    check(!decodeSettings(record, sizeof(record), after_reboot), "reserved bytes remain validated");
+    encodeSettings(restored, record); record[11] = 5; updateChecksum(record);
+    check(!decodeSettings(record, sizeof(record), after_reboot), "invalid volume remains rejected");
 
     UiModel ui; UiData data{}; data.settings = defaultSettings();
     ui.setScreen({ScreenId::Settings, DisplayMode::View, 1, data, 0, ActionResult::None});
@@ -62,20 +62,23 @@ void testSettingsLanguage() {
           ui.snapshot().page == SettingsPage::Operation && ui.snapshot().action.kind == ActionKind::None,
           "App acknowledgement applies language immediately without losing selection or navigating away");
     for (unsigned n=0;n<20;++n) ui.keyPressed(UiKey::Down, 10+n);
-    check(ui.snapshot().selected_setting == 5, "Operation ends at Dataset without GPS source");
+    check(ui.snapshot().selected_setting == static_cast<unsigned>(SettingId::PowerSaving), "Operation includes power level without GPS source");
+    ui.keyPressed(UiKey::Up, 2); // Power saving -> Volume.
+
+    ui.keyPressed(UiKey::Up,29);
     ui.keyPressed(UiKey::Enter, 30);
     check(ui.snapshot().page == SettingsPage::DatasetMenu && !ui.editing(), "Dataset opens its submenu");
     check(std::strcmp(settingsRootLabel(UiLanguage::Japanese,SettingsSystemRow),"システム設定")==0 &&
           std::strcmp(settingsRootLabel(UiLanguage::English,SettingsSystemRow),"System settings")==0,
           "System is localized on the root menu");
-    check(OperationRowCount==6 && SettingCount==7 && std::strcmp(settingsOperationLabel(UiLanguage::English,OperationRowCount),"--")==0,
+    check(OperationRowCount==8 && SettingCount==9 && std::strcmp(settingsOperationLabel(UiLanguage::English,OperationRowCount),"--")==0,
           "moving GPS source preserves persisted setting IDs and record count");
     check(std::strcmp(settingsSystemLabel(UiLanguage::Japanese,0),"モード")==0 &&
           std::strcmp(settingsSystemLabel(UiLanguage::English,1),"GPS source")==0 &&
           std::strcmp(settingsSystemLabel(UiLanguage::Japanese,2),"保存して再起動")==0 &&
           std::strcmp(settingsSystemLabel(UiLanguage::Japanese,SettingsSystemResetRow),"初期化")==0 &&
           std::strcmp(settingsSystemLabel(UiLanguage::English,SettingsSystemResetRow),"Reset")==0 &&
-          SettingsRootCount==5 && SettingsSystemCount==4,
+          SettingsRootCount==6 && SettingsSystemCount==4,
           "System labels are localized");
     check(std::strcmp(ProductName,"ReverseGeoputer")==0 && std::strlen(ApplicationVersion)>0,
           "About identifies the application separately from OSS licenses");

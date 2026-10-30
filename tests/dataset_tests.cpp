@@ -195,7 +195,15 @@ void navigationAndGate() {
     data.editDatasets().loading=true;publish();
     model.keyPressed(UiKey::Escape,42);
     check(model.snapshot().action.dataset_action==DatasetAction::CancelLanguage && !std::strcmp(model.snapshot().action.settings.wordbook_language,"ja"),"Esc restores the pre-edit language draft without saving");
-    data.editDatasets().loading=false;std::strcpy(data.editDatasets().info.language,"ja");publish();model.keyPressed(UiKey::Down,43);model.keyPressed(UiKey::Enter,44);
+    data.editDatasets().loading=false;std::strcpy(data.editDatasets().info.language,"ja");publish();
+    model.keyPressed(UiKey::Right,43);
+    check(model.snapshot().action.dataset_action==DatasetAction::Language && model.editing(),"Wordbook language changes without an entry Enter");
+    std::strcpy(data.editDatasets().info.language,"en");publish();
+    check(model.editDirty(),"completed language preview remains dirty until row confirmation");
+    model.keyPressed(UiKey::Down,44);
+    check(!model.editing() && model.snapshot().selected_setting==count-1 && model.snapshot().action.kind==ActionKind::None &&
+          !std::strcmp(model.data().datasets().info.language,"en"),"row movement confirms the language candidate without applying or saving the dataset");
+    model.keyPressed(UiKey::Enter,44);
     check(model.snapshot().action.dataset_action==DatasetAction::Apply,"last detail row requests validated apply/restart");
     data.editDatasets().loading=data.editDatasets().applying=true;publish();model.keyPressed(UiKey::Escape,45);model.tick(100000);
     check(model.snapshot().page==SettingsPage::DatasetDetail && model.snapshot().action.kind==ActionKind::None,"committed apply cannot be cancelled or put to sleep");

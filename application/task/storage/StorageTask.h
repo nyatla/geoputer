@@ -53,6 +53,8 @@ private:
     void closeCard();
     bool formatCard();
     void configureDataset();
+    void loadAlarmProfile();
+    bool saveAlarmProfile();
     void releaseDataset(PlaceState reason);
     bool loadSettings();
     bool saveSettings(const Settings& value);

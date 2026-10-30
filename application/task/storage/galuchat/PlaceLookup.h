@@ -29,6 +29,7 @@ public:
     void setFiles(ReadFileSlots* files) {files_=files;} // Stable Storage owner; never a screen/job member.
     void setObserver(StorageObserver* observer) { observer_ = observer; }
     void searchInto(const PlaceRequest& request,PlaceResult& result,BorrowedReadBuffer* work,WordBookWorkspace* scratch);
+    void observeAlarmInto(const PlaceRequest&,PlaceResult&,const alarm::Settings&,BorrowedReadBuffer*);
     void configure(uint8_t number,std::string_view language = ""); // Zero disables lookup without file I/O.
     void setDrive(uint8_t drive) { drive_=drive; }
     std::string_view selectedLanguage() const { return selected_.language; }

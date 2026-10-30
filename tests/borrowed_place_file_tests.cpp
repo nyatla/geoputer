@@ -46,6 +46,26 @@ int main(int argc,char**argv){try{
     borrowed.prepareInto(prepared,init_work.available());track=false;
     check(!allocations && !four_k && !init_work.inUse() && !files.inUse(),"initialization sequentially borrows 4KiB for GLC/index/Wordbook and returns loans");
     check(own.prepare().state==PlaceState::Ready && prepared.state==PlaceState::Ready,"prepare real lookup pair, including direct destination");
+    // Nine-point alert monitoring uses only hierarchy identifiers, never the
+    // display string decoder or a second map image. Exercise every real depth.
+    map::MapFrameReceiver alarm_work;
+    const auto depth=index_format::get16(borrowed_dataset.book_index.header.data()+index_format::Wordbook::Depth);
+    const auto names_before=borrowed.wordBookCacheStats();
+    for(unsigned level=1;level<=depth;++level) {
+        PlaceRequest request{1,900+level,{35.681641,140.027194,0,true}};
+        request.token=900+level;request.alarm_sample=true;request.dataset_generation=borrowed.datasetInfo().generation;request.work_bytes=config::IndexReadBufferBytes;
+        check(alarm_work.beginWork(request.token,request.buffer),"lend same UI back for alarm sample");
+        auto* result=beginPlaceMemory(request);auto& bytes=placeReaderMemory(request);BorrowedReadBuffer work(bytes.data(),bytes.size());
+        alarm::Settings settings;settings.enabled=true;settings.level=level;
+        allocated=allocations=four_k=0;track=true;borrowed.observeAlarmInto(request,*result,settings,&work);track=false;
+        check(result->state==PlaceState::Ready && result->alarm.center.depth==level && result->alarm.valid_points>0 &&
+              result->alarm.agreeing>=1 && result->alarm.agreeing<=result->alarm.valid_points,"real nine-point lookup returns selected parent path and votes");
+        check(!allocations && !four_k && !work.inUse() && !files.inUse(),"alarm hierarchy lookup is heapless and returns FIL/buffer loans");
+        endPlaceMemory(request);check(alarm_work.returnWork(request.token,request.buffer),"return alarm workspace");
+    }
+    const auto names_after=borrowed.wordBookCacheStats();
+    check(names_before.hits==names_after.hits && names_before.misses==names_after.misses,"alarm path never generates or caches display strings");
+    std::cout<<"PASS: real nine-point hierarchy samples, levels="<<depth<<", C++ allocations=0, no display-wordbook lookups\n";
     ReadFile retained_log(0,&files.primary());check(retained_log.openRead((dir/"names.giswordbook").string()),"reserve primary FIL as a retained log read");
     map::MapFrameReceiver ui;size_t own_bytes=0,borrowed_bytes=0,own_count=0,borrowed_count=0;unsigned number=0;
     for(double offset:{0.,0.00001,0.03,0.06,0.03,0.,0.}) {

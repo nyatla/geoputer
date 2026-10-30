@@ -18,6 +18,7 @@ SCENE = r'''
 #include "dialog_preview_checks.h"
 #include "task/ui/SettingsLayout.h"
 #include "task/ui/SettingsText.h"
+#include "task/ui/AlarmText.h"
 #include "task/ui/Shinonome.h"
 #include "task/ui/LicenseText.h"
 using namespace geoputer;
@@ -54,10 +55,20 @@ int main(int argc,char** argv){
                     SettingsLabel::ResetScope,SettingsLabel::KeepSd})
         check(width(settingsLabel(language,label),english)<=232,"confirmation text exceeds screen");
     check(width(settingsLabel(language,SettingsLabel::ResetAction),english)<=216,"reset action exceeds screen");
+    for(unsigned row=0;row<6;++row)for(unsigned choice=0;choice<alarmChoices(row,32);++choice){
+        char value[32];alarmValueText(row,choice,32,!english,value,sizeof(value));
+        check(20+width(alarmLabel(row,!english),english)+8<=236-width(value,english),"alert field overlaps value");
+    }
     M5GFX display;UiRenderer renderer(display);check(renderer.begin(previewColorDepth()),"renderer init");
     UiModel ui;UiData data{};data.settings=defaultSettings();data.settings.language=language;
     if(!std::strcmp(mode,"timeout-never"))data.settings.screen_timeout=4;
     data.storage.settings_state=SettingsState::Defaults;
+    if(!std::strncmp(mode,"alarms",6)){
+        auto& a=data.storage.alarm;a.dataset=1;a.depth=5;a.identity=123;a.state=alarm::State::Ready;a.settings.enabled=true;
+        data.settings.dataset=1;data.dataset.state=PlaceState::Ready;
+        if(!std::strcmp(mode,"alarms-repaired")){a.state=alarm::State::Repaired;a.settings.enabled=false;}
+        if(!std::strcmp(mode,"alarms-unavailable")){a={};data.dataset.state=PlaceState::Unselected;data.settings.dataset=0;}
+    }
     if(!std::strcmp(mode,"mode-blocked"))data.recording.state=RecordingState::Recording;
     if(std::strcmp(mode,"license-baseline")){
         data.storage.card_state=CardState::Mounted;data.storage.fat_type=32;
@@ -65,7 +76,12 @@ int main(int argc,char** argv){
     }
     ui.setScreen({ScreenId::Settings,DisplayMode::View,1,data,0,ActionResult::None});
     auto key=[&](UiKey k){ui.keyPressed(k,1);};
-    if(!std::strcmp(mode,"mode")||!std::strcmp(mode,"mode-confirm")||!std::strcmp(mode,"mode-blocked")) {
+    if(!std::strncmp(mode,"alarms",6)){
+        for(unsigned n=0;n<settingsRootIndex(SettingsRootItem::Alarm);++n)key(UiKey::Down);
+        key(UiKey::Enter);
+        if(!std::strcmp(mode,"alarms-bottom"))for(unsigned n=0;n<AlarmRows-1;++n)key(UiKey::Down);
+        if(!std::strcmp(mode,"alarms-edit")){key(UiKey::Down);key(UiKey::Down);key(UiKey::Enter);key(UiKey::Right);}
+    }else if(!std::strcmp(mode,"mode")||!std::strcmp(mode,"mode-confirm")||!std::strcmp(mode,"mode-blocked")) {
         for(unsigned n=0;n<SettingsSystemRow;++n)key(UiKey::Down);
         key(UiKey::Enter);
         if(std::strcmp(mode,"mode")) {
@@ -74,7 +90,7 @@ int main(int argc,char** argv){
         }
     }else if(!std::strcmp(mode,"operation")||!std::strcmp(mode,"operation-bottom")||!std::strcmp(mode,"language-edit")||!std::strcmp(mode,"timeout-never")){
         key(UiKey::Enter);
-        if(!std::strcmp(mode,"operation-bottom"))for(unsigned n=0;n<6;++n)key(UiKey::Down);
+        if(!std::strcmp(mode,"operation-bottom"))for(unsigned n=0;n<OperationRowCount-1;++n)key(UiKey::Down);
         if(!std::strcmp(mode,"language-edit")){key(UiKey::Enter);key(UiKey::Right);}
         if(!std::strcmp(mode,"timeout-never"))for(unsigned n=0;n<3;++n)key(UiKey::Down);
     }else if(!std::strcmp(mode,"storage")||!std::strcmp(mode,"card")||!std::strcmp(mode,"format-confirm")){
@@ -138,7 +154,7 @@ int main(int argc,char** argv){
                 if(choice!=static_cast<unsigned>(language))model.keyPressed(UiKey::Right,11);
             }
             renderer.draw(model);
-            const auto color=settingEditable(row)||row==static_cast<unsigned>(SettingId::Dataset)?TFT_CYAN:TFT_DARKGREY;
+            const auto color=settingEditable(row)||row==static_cast<unsigned>(SettingId::Dataset)?(model.editDirty()?TFT_YELLOW:TFT_CYAN):TFT_DARKGREY;
             const int y=27+(row-SettingsLayout::firstVisible(row,OperationRowCount))*20;
             verifyText(20,y,settingsOperationLabel(language,row),english,color);
             char value[32];settingsValueText(language,row,choice,value,sizeof(value));
@@ -165,13 +181,14 @@ int main(int argc,char** argv){
         if(english)ascii(20,47,'S',TFT_WHITE);else japanese(20,27,U'動',TFT_CYAN);
     }
     if(!std::strcmp(mode,"root-bottom")){
-        if(english)ascii(20,87,'L',TFT_CYAN);else japanese(20,87,U'ラ',TFT_CYAN);
+        if(english)ascii(20,87,'A',TFT_CYAN);else japanese(20,87,U'ア',TFT_CYAN);
     }
     if(!std::strcmp(mode,"operation")){
         if(english)ascii(20,27,'L',TFT_CYAN);else japanese(20,27,U'表',TFT_CYAN);
     }
     if(!std::strcmp(mode,"language-edit")){
-        if(english)japanese(188,27,U'日',TFT_CYAN);else ascii(180,27,'E',TFT_CYAN);
+        check(ui.editDirty(),"direct language change must be marked dirty");
+        if(english)japanese(188,27,U'日',TFT_YELLOW);else ascii(180,27,'E',TFT_YELLOW);
     }
     if(!std::strcmp(mode,"timeout-never")){
         if(english)ascii(196,87,'N',TFT_CYAN);else{
@@ -204,8 +221,8 @@ int main(int argc,char** argv){
         small(28,124,"SG",TFT_WHITE);
     }
     if(!std::strcmp(mode,"language-edit")) {
-        pixel(68,127,TFT_WHITE);pixel(82,127,TFT_WHITE);
-        pixel(71,124,TFT_WHITE); // left arrow head reaches the top of its native cell
+        pixel(64,127,TFT_WHITE);pixel(78,127,TFT_WHITE);
+        pixel(67,124,TFT_WHITE); // left arrow head reaches the top of its native cell
     }
     if(!std::strcmp(mode,"licenses")) {
         pixel(55,124,TFT_DARKGREY);pixel(63,130,TFT_WHITE);
@@ -233,7 +250,7 @@ def main():
     for name in sorted(set(re.findall(r"\bTFT_[A-Z]+\b", SCENE + renderer))):
         value = re.search(rf"\b{name}\s*=\s*(0x[0-9A-Fa-f]+)", enum_source)[1]
         colors.append(f"inline constexpr uint16_t {name}={value};")
-    modes = ("mode", "mode-confirm", "mode-blocked", "root", "root-bottom", "operation", "operation-bottom", "language-edit", "timeout-never", "storage", "card", "reset", "reset-confirm", "format-confirm", "licenses", "license-first", "license-last", "about", "about-busy")
+    modes = ("alarms", "alarms-bottom", "alarms-edit", "alarms-repaired", "alarms-unavailable", "mode", "mode-confirm", "mode-blocked", "root", "root-bottom", "operation", "operation-bottom", "language-edit", "timeout-never", "storage", "card", "reset", "reset-confirm", "format-confirm", "licenses", "license-first", "license-last", "about", "about-busy")
     with tempfile.TemporaryDirectory(prefix="geoputer-settings-") as directory:
         work = Path(directory)
         write_metadata(work / "BuildMetadata.h", ROOT)

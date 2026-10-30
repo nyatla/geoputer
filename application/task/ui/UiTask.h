@@ -4,6 +4,7 @@
 #include "../../utils/Task.h"
 #include "UiModel.h"
 #include "UiFrameBuffer.h"
+#include "../../hardware/AudioOutput.h"
 
 namespace geoputer {
 
@@ -11,6 +12,8 @@ class UiTask final : public Task<UiRequest, 1> {
 public:
     UiTask(Queue<AppNotification, 8>& notifications, Queue<ReturnMessage, 1>& results)
         : notifications_(notifications), results_(results) {}
+
+    void setPowerMode(BootMode mode){power_manager_.configure(power::Level::None,mode);}
 
 protected:
     void run() override;
@@ -25,6 +28,8 @@ private:
     // UiTask has application lifetime; this framebuffer never occupies task stack.
     UiFrameBuffer frame_buffer_;
     UiModel model_;
+    power::PowerManager power_manager_;
+    AudioOutput audio_;
     ReturnMessage pending_return_{};
     bool has_return_ = false;
     uint32_t sequence_ = 0;

@@ -77,3 +77,7 @@ with tempfile.TemporaryDirectory(prefix="geoputer-native-") as directory:
 subprocess.run([sys.executable, str(root / "tests/build_metadata_tests.py")], check=True, timeout=60)
 
 subprocess.run([sys.executable,str(root / "tests/run_metadata.py")],check=True,timeout=120)
+
+# Alarm contracts and hardware scheduling use the same production modules.
+for script in ("run_alarms.py", "run_audio.py"):
+    subprocess.run([sys.executable,str(root/"tests"/script)],check=True,timeout=180)
