@@ -1,13 +1,10 @@
 #pragma once
 #include "AppScreenResources.h"
 #include "alarm/AlarmEngine.h"
-#include "task/gps/GpsTask.h"
 #include "task/storage/PlaceSearchFlow.h"
 namespace geoputer {
 enum class AppBootStage {NeedSettings,WaitSettings,SelectMode,NeedDataset,WaitDataset,Complete};
-struct AppGpsResources {
-    AppGpsResources(Queue<AppNotification,8>& notifications,Queue<ReturnMessage,1>& results):gps_(notifications,results){}
-    GpsTask gps_;
+struct GpsAppState {
     LogCommand log_pending_record_{};
     UiAction log_control_{};
     bool log_pending_ = false, log_accepting_ = false;
@@ -41,7 +38,4 @@ struct AppGpsResources {
     uint32_t boot_completed_at_ = 0;
     uint32_t boot_selection_at_ = 0;
 };
-struct AppUsbResources {
-    AppScreenResources screen_resources_; // USB export list; no GPS, GIS or alarm state.
-};
-} // namespace geoputer
+}

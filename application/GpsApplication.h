@@ -1,23 +1,22 @@
 #pragma once
 
-#include "TaskMessages.h"
+#include "GpsMessages.h"
 #include "alarm/AlarmEngine.h"
-#include "ApplicationModeMemory.h"
+#include "GpsAppState.h"
 #include "map/MapTracking.h"
 #include "utils/SyncClient.h"
-#include "task/ui/UiTask.h"
+#include "task/ui/GpsUiTask.h"
 #include "task/gps/GpsTask.h"
-#include "task/storage/StorageTask.h"
+#include "task/storage/GpsStorageTask.h"
 #include "task/storage/PlaceSearchFlow.h"
 
 namespace geoputer {
 
-// Runs on Arduino's main loopTask; no additional Application FreeRTOS task is created.
-class Application {
+// Runs on Arduino's main loopTask; no additional GpsApplication FreeRTOS task is created.
+class GpsApplication {
 public:
-    Application() : sync_(results_), ui_(notifications_, results_), storage_(notifications_, results_,mode_resources_) {}
-    bool begin(bool usb_mode = false);
-    bool begin(BootMode mode){return mode==BootMode::WifiManagement?beginWifi():begin(mode==BootMode::UsbStorage);}
+    GpsApplication() : sync_(results_), ui_(notifications_, results_), storage_(notifications_, results_),gps_(notifications_,results_) {}
+    bool begin();
     void runOnce();
 
 private:
@@ -51,12 +50,7 @@ private:
     [[gnu::noinline]] bool readUiSnapshot(UiSnapshot& content);
     void applyStorage(const StorageSnapshot& state);
     bool operateStorage(const UiAction& action);
-    bool beginUsb();
-    bool beginWifi();
-    void runWifiOnce();
     bool operateBootMode(const UiAction& action);
-    bool operateUsbExport(const UiAction& action);
-    bool usbSelecting() const { return usb_mode_ && screen_==ScreenId::UsbStorage && data_.storage.export_job.phase==ExportPhase::Selecting; }
     void message(const char* value);
     void refreshPlace();
     bool canSearchPlace() const;
@@ -91,31 +85,25 @@ private:
     Queue<AppNotification, 8> notifications_;
     Queue<ReturnMessage, 1> results_;
     SyncClient sync_;
-    UiTask ui_;
-    ApplicationModeMemory mode_resources_; // Outlives Storage, which drains it at shutdown.
-    StorageTask storage_;
+    GpsUiTask ui_;
+    GpsStorageTask storage_;
     ScreenId screen_ = ScreenId::LivePlace;
     uint32_t generation_ = 0;
     uint32_t last_processed_action_ = 0;
     UiData data_{};
     bool ui_changed_ = false;
-    bool usb_mode_ = false, wifi_mode_ = false;
     bool ui_data_dirty_ = false;
     DisplayMode mode_ = DisplayMode::View;
     uint32_t storage_operation_id_ = 0;
     uint32_t browse_token_=0,browse_waiting_=0,browse_release_generation_=0;
     bool browse_cancel_=false,restart_pending_=false;
     using BootStage=AppBootStage;
-    bool selectBootMode(bool usb) {
-        if(mode_resources_.selected())return false;
-        if(!storage_.setUsbMode(usb))return false;
-        usb_mode_=usb;
-        return true;
-    }
-    AppGpsResources& gpsMode(){return mode_resources_.gps().app;}
-    const AppGpsResources& gpsMode()const{return mode_resources_.gps().app;}
-    AppScreenResources& screenResources(){return wifi_mode_?mode_resources_.wifi().app.screen_resources_:usb_mode_?mode_resources_.usb().app.screen_resources_:gpsMode().screen_resources_;}
-    const AppScreenResources& screenResources()const{return wifi_mode_?mode_resources_.wifi().app.screen_resources_:usb_mode_?mode_resources_.usb().app.screen_resources_:gpsMode().screen_resources_;}
+    GpsAppState& gpsState(){return state_;}
+    const GpsAppState& gpsState()const{return state_;}
+    AppScreenResources& screenResources(){return state_.screen_resources_;}
+    const AppScreenResources& screenResources()const{return state_.screen_resources_;}
+    GpsTask gps_;
+    GpsAppState state_;
     static constexpr uint32_t BootSettingsRequest = 0x80000001u;
     static constexpr uint32_t BootDatasetRequest = 0x80000002u;
 };

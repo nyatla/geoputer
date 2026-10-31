@@ -2,7 +2,7 @@
 #include "galuchat/CachedMapReader.h"
 #include "StorageMapMemory.h"
 namespace geoputer {
-// Lifetime of StorageTask (the global Application). No array lives on a task
+// Lifetime of GpsStorageTask (the global GpsApplication). No array lives on a task
 // stack. A scoped lease controls the inner map/index union lifetime.
 struct StorageCodeImages {
     CodeCacheBuffer point{};

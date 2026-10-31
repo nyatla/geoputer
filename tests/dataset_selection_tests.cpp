@@ -2,7 +2,7 @@
 #include <stdexcept>
 #include "task/storage/DatasetSelection.h"
 #include "task/ui/PlacePresentation.h"
-#include "task/ui/UiModel.h"
+#include "task/ui/GpsUiModel.h"
 
 using namespace geoputer;
 namespace {
@@ -61,7 +61,7 @@ void presentation() {
     data.storage.card_state=CardState::Mounted;data.gps.reception=GpsReception::Fix;data.gps.fix.valid=true;
     data.dataset.state=PlaceState::Unselected;
     data.storage.dataset_failure={1,12,PlaceState::DatasetMissing,false};
-    UiModel model;model.tick(1000);
+    GpsUiModel model;model.tick(1000);
     check(model.setScreen({ScreenId::LivePlace,DisplayMode::View,1,data,0,ActionResult::None})==OperationStatus::Ok,"notice screen initialized");
     check(model.datasetFailureVisible() && placeIssue(model.data())==PlaceState::Unselected && mainError(data)==nullptr,
           "error notification is separate from steady None state");

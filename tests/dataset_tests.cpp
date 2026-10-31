@@ -5,7 +5,7 @@
 #include <unistd.h>
 #include "task/storage/dataset/DatasetMetadata.h"
 #include "task/storage/SettingsStore.h"
-#include "task/ui/UiModel.h"
+#include "task/ui/GpsUiModel.h"
 #include "task/storage/dataset/SelectedDataset.h"
 #include "task/ui/DatasetPresentation.h"
 using namespace geoputer;
@@ -178,7 +178,7 @@ void navigationAndGate() {
     log.closing=true;check(!datasetLogStopped(rec,log),"close acknowledgement must complete");log.closing=false;
     log.buffered=1;check(!datasetLogStopped(rec,log),"unsaved records block reboot");log.buffered=0;
     rec.pending=true;check(!datasetLogStopped(rec,log),"App pending sample blocks reboot");rec.pending=false;
-    UiModel model;UiData data{};data.settings=defaultSettings();data.storage.card_state=CardState::Mounted;data.storage.settings_state=SettingsState::Loaded;
+    GpsUiModel model;UiData data{};data.settings=defaultSettings();data.storage.card_state=CardState::Mounted;data.storage.settings_state=SettingsState::Loaded;
     check(model.setScreen({ScreenId::Settings,DisplayMode::View,1,data,0,ActionResult::None})==OperationStatus::Ok,"settings opens");
     model.keyPressed(UiKey::Enter,1);for(unsigned i=0;i<5;++i)model.keyPressed(UiKey::Down,2+i);model.keyPressed(UiKey::Enter,8);
     check(model.snapshot().page==SettingsPage::DatasetMenu && model.snapshot().action.kind==ActionKind::None,"Dataset opens its menu without reading or validating files");
@@ -212,7 +212,7 @@ void navigationAndGate() {
         model.keyPressed(UiKey::Enter,100001);
         check(model.snapshot().action.dataset_action==DatasetAction::Apply,"index or selection-save failure allows explicit retry");
     }
-    UiModel boot;UiData missing{};missing.settings=defaultSettings();missing.boot.complete=true;
+    GpsUiModel boot;UiData missing{};missing.settings=defaultSettings();missing.boot.complete=true;
     missing.boot.dataset(PlaceState::DatasetMissing);
     boot.setScreen({ScreenId::Boot,DisplayMode::View,1,missing,0,ActionResult::None});
     boot.keyPressed(UiKey::Enter,1000);
@@ -224,10 +224,10 @@ void unselectedUi() {
     UiData data{};data.settings=defaultSettings();data.dataset.state=PlaceState::Unselected;
     data.storage.card_state=CardState::NoCard;data.storage.settings_state=SettingsState::Loaded;
     auto logger_data=data;logger_data.storage.card_state=CardState::Mounted;
-    UiModel logger;logger.setScreen({ScreenId::GpsLogger,DisplayMode::View,1,logger_data,0,ActionResult::None});
+    GpsUiModel logger;logger.setScreen({ScreenId::GpsLogger,DisplayMode::View,1,logger_data,0,ActionResult::None});
     logger.keyPressed(UiKey::Enter,1);logger.keyPressed(UiKey::Right,2);logger.keyPressed(UiKey::Enter,3);
     check(logger.snapshot().action.kind==ActionKind::Logging,"unselected retains logger controls");
-    UiModel model;model.setScreen({ScreenId::Settings,DisplayMode::View,1,data,0,ActionResult::None});
+    GpsUiModel model;model.setScreen({ScreenId::Settings,DisplayMode::View,1,data,0,ActionResult::None});
     uint32_t now=0;auto key=[&](UiKey k){model.keyPressed(k,++now);};
     auto publish=[&](){const auto action=model.snapshot().action;++data.revision;
         data.editDatasets().revision=model.data().datasets().revision+1;
@@ -262,7 +262,7 @@ void unselectedUi() {
 }
 void cacheFlow(DatasetPurpose purpose) {
     UiData data{};data.settings=defaultSettings();data.dataset.state=PlaceState::Unselected;data.storage.card_state=CardState::Mounted;
-    UiModel model;model.setScreen({ScreenId::Settings,DisplayMode::View,1,data,0,ActionResult::None});
+    GpsUiModel model;model.setScreen({ScreenId::Settings,DisplayMode::View,1,data,0,ActionResult::None});
     uint32_t now=0;auto key=[&](UiKey k){model.keyPressed(k,++now);};
     auto publish=[&](){const auto action=model.snapshot().action;++data.revision;
         data.editDatasets().revision=model.data().datasets().revision+1;

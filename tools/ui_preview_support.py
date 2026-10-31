@@ -6,12 +6,16 @@ integer-pixel operations used by the Live Place and Settings renderers.
 """
 from pathlib import Path
 import re
+import os
 
 ROOT = Path(__file__).resolve().parents[1]
 OUTPUT = ROOT / "doc/画面・操作/live-place"
 M5GFX = ROOT / ".pio/libdeps/cardputer-adv/M5GFX/src/lgfx"
 if not M5GFX.is_dir():
     M5GFX = ROOT / ".pio/libdeps/cardputer-adv/M5GFX@0.2.33/src/lgfx"
+
+if os.environ.get("RGP_M5GFX_DIR"):
+    M5GFX = Path(os.environ["RGP_M5GFX_DIR"]) / "src/lgfx"
 
 ADAPTER = r'''
 #pragma once

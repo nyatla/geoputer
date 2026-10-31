@@ -1,6 +1,9 @@
 #pragma once
 #include <cstdint>
+#include "../Settings.h"
+#include "../task/storage/StorageBaseTypes.h"
 namespace geoputer {
+struct WifiDeviceInfo {Settings settings{};CardState card_state=CardState::Unknown;uint64_t total_bytes=0,free_bytes=0;};
 enum class WifiPage : uint8_t {ConnectionQr, WebQr, Text};
 enum class WifiError:uint8_t {None, RadioInit, Credentials, AccessPoint, SdRecovery, Restart};
 inline const char* wifiErrorName(WifiError error) {

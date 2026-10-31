@@ -1,13 +1,12 @@
 #pragma once
-#include "task/ui/UiTypes.h"
+#include "task/ui/GpsUiTypes.h"
 
 namespace geoputer {
-enum class ScreenGroup : uint8_t { Common, Map, Logs, Settings, Usb };
+enum class ScreenGroup : uint8_t { Common, Map, Logs, Settings };
 inline ScreenGroup screenGroup(ScreenId screen) {
     if (screen==ScreenId::Map) return ScreenGroup::Map;
     if (isLogBrowser(screen)) return ScreenGroup::Logs;
     if (screen==ScreenId::Settings) return ScreenGroup::Settings;
-    if (screen==ScreenId::UsbStorage) return ScreenGroup::Usb;
     return ScreenGroup::Common;
 }
 
@@ -35,8 +34,7 @@ inline void prepareScreenView(UiData& data, ScreenId target, ScreenId previous) 
             if(previous==ScreenId::LogPoint && view.point_loaded)view.target=view.index;
         }
         ++view.revision;
-    } else if (target==ScreenId::Settings ? !data.hasDatasets() :
-               target==ScreenId::UsbStorage ? !data.hasBrowse() : true) data.clearPage();
+    } else if (target==ScreenId::Settings ? !data.hasDatasets() : true) data.clearPage();
     ++data.revision;
 }
 } // namespace geoputer

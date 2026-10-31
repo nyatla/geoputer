@@ -1,5 +1,5 @@
 #pragma once
-#include "ScreenNavigation.h"
+#include "UiPrimitives.h"
 #include "EscapeIcon.h"
 #include "EnterIcon.h"
 #include <array>
@@ -29,8 +29,9 @@ private:
 };
 static_assert(sizeof(UiShortcutGuide)<=64,"Footer must remain a small stack value");
 inline char shortcutCharacter(UiKey key) {
-    for(const auto& item:MenuScreens)if(item.key==key)return item.shortcut;
     switch(key) {
+        case UiKey::OpenLivePlace:return '1';case UiKey::OpenMap:return '2';
+        case UiKey::OpenGpsLogger:return '3';case UiKey::OpenLogs:return '4';case UiKey::OpenSettings:return '0';
         case UiKey::Other:return ' ';
         case UiKey::ScreenOff:return 'S';case UiKey::GpsControl:return 'G';
         case UiKey::DeleteLog:return 'D';

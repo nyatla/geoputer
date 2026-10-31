@@ -12,7 +12,7 @@ SCENE = r'''
 #include <cstdio>
 #include <cstring>
 #include <stdexcept>
-#include "task/ui/UiRenderer.h"
+#include "task/ui/GpsUiRenderer.h"
 #include "task/ui/EscapeIcon.h"
 #include "BuildInfo.h"
 #include "dialog_preview_checks.h"
@@ -59,8 +59,8 @@ int main(int argc,char** argv){
         char value[32];alarmValueText(row,choice,32,!english,value,sizeof(value));
         check(20+width(alarmLabel(row,!english),english)+8<=236-width(value,english),"alert field overlaps value");
     }
-    M5GFX display;UiRenderer renderer(display);check(renderer.begin(previewColorDepth()),"renderer init");
-    UiModel ui;UiData data{};data.settings=defaultSettings();data.settings.language=language;
+    M5GFX display;GpsUiRenderer renderer(display);check(renderer.begin(previewColorDepth()),"renderer init");
+    GpsUiModel ui;UiData data{};data.settings=defaultSettings();data.settings.language=language;
     if(!std::strcmp(mode,"timeout-never"))data.settings.screen_timeout=4;
     data.storage.settings_state=SettingsState::Defaults;
     if(!std::strncmp(mode,"alarms",6)){
@@ -146,7 +146,7 @@ int main(int argc,char** argv){
             UiData trial=data;
             check(setSettingValue(trial.settings,row,choice),"setting choice fixture");
             trial.settings.language=language;
-            UiModel model;model.setScreen({ScreenId::Settings,DisplayMode::View,1,trial,0,ActionResult::None});
+            GpsUiModel model;model.setScreen({ScreenId::Settings,DisplayMode::View,1,trial,0,ActionResult::None});
             model.keyPressed(UiKey::Enter,1);
             for(unsigned n=0;n<row;++n)model.keyPressed(UiKey::Down,n+2);
             if(!row) {
@@ -247,7 +247,7 @@ def main():
     output = args.output
     output.mkdir(parents=True, exist_ok=True)
     enum_source = (M5GFX / "v1/misc/enum.hpp").read_text()
-    renderer = (ROOT / "application/task/ui/UiRenderer.cpp").read_text() + (ROOT / "application/task/ui/UiCanvas.h").read_text()
+    renderer = (ROOT / "application/task/ui/GpsUiRenderer.cpp").read_text() + (ROOT / "application/task/ui/UiCanvas.h").read_text()
     colors = []
     for name in sorted(set(re.findall(r"\bTFT_[A-Z]+\b", SCENE + renderer))):
         value = re.search(rf"\b{name}\s*=\s*(0x[0-9A-Fa-f]+)", enum_source)[1]
@@ -259,7 +259,7 @@ def main():
         (work / "M5GFX.h").write_text(ADAPTER + "\n" + "\n".join(colors))
         (work / "scene.cpp").write_text(SCENE)
         source = [ROOT / "application/task/ui" / f"{name}.cpp" for name in
-                  ("PixelFont", "UiRenderer", "UsbRenderer", "UiModel", "LicenseText", "SettingsText", "Shinonome")]
+                  ("PixelFont", "GpsUiRenderer", "GpsUiModel", "LicenseText", "SettingsText", "Shinonome")]
         executable = work / "render"
         subprocess.run(["g++", "-std=c++17", "-Wall", "-Wextra", "-Werror", "-pedantic", "-fsanitize=undefined",
                         "-fno-sanitize-recover=all", "-I", str(work), "-I", str(ROOT / "tools"), "-I", str(ROOT / "application"),

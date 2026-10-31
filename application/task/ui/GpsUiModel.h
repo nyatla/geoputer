@@ -1,19 +1,20 @@
 #pragma once
 
-#include "UiTypes.h"
+#include "GpsUiTypes.h"
 #include "DisplayClock.h"
 #include "ChoiceDialog.h"
 #include "UiKeyGuide.h"
 #include "UiShortcutGuide.h"
+#include "ScreenNavigation.h"
 #include "UiScreenResources.h"
 #include "../../map/MapFrameReceiver.h"
 #include "../../map/MapTracking.h"
-#include "../../TaskMessages.h"
+#include "../../GpsMessages.h"
 
 namespace geoputer {
 
 // Owned exclusively by UITask. This state has no LCD/RTOS dependency.
-class UiModel {
+class GpsUiModel {
 public:
     OperationStatus setScreen(const SetUiScreen& command);
     OperationStatus updateContent(const UpdateUiContent& command);
@@ -58,9 +59,6 @@ public:
     }
     bool viewingLicenses() const { return screen_ == ScreenId::Settings && screen_resources_.settings.page == SettingsPage::Licenses; }
     bool cardInfo() const { return screen_resources_.settings.card_info; }
-    WifiPage wifiPage()const{return screen_resources_.wifi_page;}
-    UsbPage usbPage() const { return screen_resources_.usb.page; }
-    uint8_t usbFile() const { return screen_resources_.usb.file; }
     const DisplayClock& clock() const { return clock_; }
     static constexpr uint32_t AccessLampMinMs = 150;
     bool sdAccessLit() const {
@@ -96,8 +94,6 @@ private:
     void browseAction(BrowseAction kind,uint32_t index=0);
     void action(ActionKind kind, ScreenId target = ScreenId::LivePlace);
     void acceptDialog(DialogKind kind);
-    void usbKey(UiKey key);
-    void usbAction(UsbAction action);
 
 
 

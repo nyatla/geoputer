@@ -1,4 +1,5 @@
-#include "task/ui/UiRenderer.h"
+#include "task/ui/GpsUiRenderer.h"
+#include "apps/common/PanelRenderer.h"
 #include "task/ui/GpsControls.h"
 #include "task/ui/PlacePresentation.h"
 #include "task/ui/EscapeIcon.h"
@@ -18,7 +19,6 @@ Mask render(ScreenId screen,int page,bool active,bool japanese,int depth,bool di
     UiData data{};data.settings=defaultSettings();data.settings.language=japanese?UiLanguage::Japanese:UiLanguage::English;
     data.storage.sd={1,1,active};data.storage.card_state=CardState::Mounted;
     data.storage.settings_state=SettingsState::Loaded;data.storage.settings=data.settings;
-    data.storage.usb.ready=true;data.storage.usb.connected=true;
     data.recording.state=RecordingState::Paused;
     data.gps.reception=GpsReception::Fix;data.gps.fix={35.68,140.02,0,true};
     if(screen==ScreenId::Settings)data.editDatasets().loading=loading;
@@ -33,14 +33,20 @@ Mask render(ScreenId screen,int page,bool active,bool japanese,int depth,bool di
         list.list_records[0]=3527;list.list_records[1]=99;
         std::strcpy(list.names[0],"20261026_120000_0.gps.dat");std::strcpy(list.names[1],"20261025_120000_0.gps.dat");
     }
-    UiModel model;check(model.setScreen({screen,DisplayMode::View,1,data,0,ActionResult::None})==OperationStatus::Ok,"test screen");
+    GpsUiModel model;if(screen!=ScreenId::UsbStorage)check(model.setScreen({screen,DisplayMode::View,1,data,0,ActionResult::None})==OperationStatus::Ok,"test screen");
     if(screen==ScreenId::Settings)model.screen_resources_.settings.page=static_cast<SettingsPage>(page);
-    if(screen==ScreenId::UsbStorage)model.screen_resources_.usb.page=static_cast<UsbPage>(page);
     model.setBattery(percent,charging,charge_known);model.tick(200);
     if(dialog) {model.keyPressed(UiKey::GpsControl,201);check(model.confirming(),"dialog must open");}
-    M5GFX display;UiRenderer renderer(display);
+    M5GFX display;GpsUiRenderer renderer(display);
     alignas(4) uint8_t backing[240*135*2+4]{};
-    check(renderer.begin(depth,backing,sizeof(backing)),"renderer begin");renderer.draw(model);
+    check(renderer.begin(depth,backing,sizeof(backing)),"renderer begin");
+    UsbUiModel usb;
+    if(screen==ScreenId::UsbStorage){
+        UsbUiData content{};content.settings.language=data.settings.language;content.storage.sd=data.storage.sd;
+        content.storage.usb.ready=content.storage.usb.connected=true;content.storage.files.loading=loading;
+        usb.update(content,0);usb.page_=static_cast<UsbPage>(page);usb.setBattery(percent,charging,charge_known);usb.tick(200);
+        PanelRenderer panel(display);check(panel.begin(backing,sizeof(backing),depth),"USB renderer begin");panel.draw(usb);
+    }else renderer.draw(model);
     if(screen==ScreenId::LogPoint && page==-1) {
         auto label=[&](unsigned x,const char* value,uint16_t color) {
             for(unsigned n=0;value[n];++n)for(unsigned y=0;y<8;++y)for(unsigned col=0;col<8;++col) {
@@ -55,7 +61,7 @@ Mask render(ScreenId screen,int page,bool active,bool japanese,int depth,bool di
         for(unsigned y=0;y<16;++y)for(unsigned x=152;x<156;++x)
             check(display.pixels[y*240+x]==TFT_BLACK,"replay header fits before SD/battery");
     }
-    const auto shortcuts=model.shortcutGuide();
+    const auto shortcuts=screen==ScreenId::UsbStorage?usb.shortcutGuide():model.shortcutGuide();
     for(unsigned i=0;i<shortcuts.size();++i)if(shortcuts[i].key==UiKey::Escape)
         check(shortcuts[i].tone!=ShortcutTone::Accent,"ESC is white when available, grey when disabled; never cyan");
     static constexpr uint8_t arrows[4][8]={
@@ -146,8 +152,8 @@ void replayLabelContinuity(bool map_mode,bool japanese,int depth) {
     std::strcpy(data.place[0],"OLD REGION");std::strcpy(data.place[1],"OLD DISTRICT");
     auto& view=data.editBrowse();view.summary.records=2;view.point_loaded=true;view.map_mode=map_mode;
     view.playing=map_mode;view.point={35.68,140.02,0,true};
-    UiModel model;check(model.setScreen({ScreenId::LogPoint,DisplayMode::View,1,data,0,ActionResult::None})==OperationStatus::Ok,"place continuity initial screen");
-    M5GFX display;UiRenderer renderer(display);alignas(4) uint8_t backing[240*135*2+4]{};
+    GpsUiModel model;check(model.setScreen({ScreenId::LogPoint,DisplayMode::View,1,data,0,ActionResult::None})==OperationStatus::Ok,"place continuity initial screen");
+    M5GFX display;GpsUiRenderer renderer(display);alignas(4) uint8_t backing[240*135*2+4]{};
     check(renderer.begin(depth,backing,sizeof(backing)),"place continuity renderer begin");renderer.draw(model);
     constexpr unsigned First=84*240,End=116*240;
     std::array<uint16_t,End-First> old{};

@@ -1,6 +1,6 @@
 #include <cstring>
 #include <stdexcept>
-#include "task/ui/UiModel.h"
+#include "task/ui/GpsUiModel.h"
 
 using namespace geoputer;
 namespace {
@@ -35,7 +35,7 @@ void testClock() {
     wrapped.tick(244); text(wrapped, "09:00:00");
     wrapped.tick(1244); text(wrapped, "09:00:01");
 
-    UiModel ui;
+    GpsUiModel ui;
     ui.tick(1000);
     SetUiScreen command{};
     command.screen = ScreenId::LivePlace;

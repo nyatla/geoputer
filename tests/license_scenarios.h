@@ -2,7 +2,7 @@
 
 #include <cstring>
 #include <stdexcept>
-#include "../application/task/ui/UiModel.h"
+#include "../application/task/ui/GpsUiModel.h"
 #include "../application/task/ui/LicenseText.h"
 #include "../application/task/ui/SettingsLayout.h"
 
@@ -14,7 +14,7 @@ inline void licenseCheck(bool value, const char* message) {
 // The same state transitions run on the host and against the real LCD. Render
 // non-overlapping pages so every document line reaches the physical renderer.
 template <typename Paint>
-void exerciseLicenses(UiModel& ui, Paint paint) {
+void exerciseLicenses(GpsUiModel& ui, Paint paint) {
     SetUiScreen command{};
     command.screen = ScreenId::Settings;
     command.mode = DisplayMode::View;

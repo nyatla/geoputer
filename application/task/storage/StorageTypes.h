@@ -1,21 +1,16 @@
 #pragma once
 
 #include <cstdint>
+#include "StorageBaseTypes.h"
 #include "../../Settings.h"
 #include "PlaceTypes.h"
 #include "StorageActivity.h"
 #include "log/LogTypes.h"
 #include "log/LogReadTypes.h"
 #include "dataset/DatasetTypes.h"
-#include "usb/UsbStorageTypes.h"
-#include "export/ExportTypes.h"
-#include "../../wifi/WifiTypes.h"
 
 namespace geoputer {
 
-enum class SettingsState : uint8_t { Unavailable, Defaults, Loaded, Invalid, Saving, Saved, Failed };
-enum class CardState : uint8_t { Unknown, NoCard, Mounted, Unmounted, Unsupported, Failed };
-enum class StorageOperation : uint8_t { None, SaveSettings, Remount, Unmount, Format, EnterUsbMode, ExitUsbMode, SaveAlarm, ReloadAlarm, EnterWifiMode, ExitWifiMode, RegenerateWifi };
 enum class StorageReadKind : uint8_t { None, Settings, Place, Dataset, Log, LogBrowse, DatasetBrowser };
 
 struct StorageSnapshot {
@@ -38,9 +33,6 @@ struct StorageSnapshot {
     SdAccessSnapshot sd;
     LogSnapshot log;
     LogError log_result;
-    WifiView wifi;
-    UsbStorageView usb;
-    ExportSnapshot export_job;
     alarm::Profile alarm{};
 };
 
@@ -72,16 +64,5 @@ struct StorageCompletion {
     union { PlaceCompletion place; LogReadReply logs; DatasetCompletion dataset; };
 };
 
-inline const char* cardStateName(CardState state) {
-    switch (state) {
-        case CardState::Unknown: return "WAITING";
-        case CardState::NoCard: return "NO CARD";
-        case CardState::Mounted: return "MOUNTED";
-        case CardState::Unmounted: return "SAFE TO REMOVE";
-        case CardState::Unsupported: return "FAT32 REQUIRED";
-        case CardState::Failed: return "SD ERROR";
-    }
-    return "SD ERROR";
-}
 
 }  // namespace geoputer

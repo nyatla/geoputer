@@ -1,4 +1,4 @@
-"""Render the actual firmware UiRenderer with example data and native pixel fonts.
+"""Render the actual firmware GpsUiRenderer with example data and native pixel fonts.
 
 This is host execution of production drawing code, not a device screen capture.
 The application sources are compiled unchanged.
@@ -18,7 +18,7 @@ from ui_preview_support import ADAPTER, M5GFX, OUTPUT, ROOT, reference_frame
 SCENE = r'''
 #include <cstdio>
 #include <cstring>
-#include "task/ui/UiRenderer.h"
+#include "task/ui/GpsUiRenderer.h"
 #include "task/ui/LivePlaceLayout.h"
 #include "task/ui/EscapeIcon.h"
 #include "task/ui/GpsPresentation.h"
@@ -41,9 +41,9 @@ int main(int argc, char** argv) {
     const bool full_battery = std::strcmp(mode,"full-battery") == 0;
     const bool missing = std::strcmp(mode,"missing") == 0;
     M5GFX display;
-    UiRenderer renderer(display);
+    GpsUiRenderer renderer(display);
     if (!renderer.begin(previewColorDepth())) return 1;
-    UiModel model; model.tick(1000); model.setBattery(full_battery ? 100 : 72,false,true);
+    GpsUiModel model; model.tick(1000); model.setBattery(full_battery ? 100 : 72,false,true);
     UiData data{}; data.settings = defaultSettings(); data.revision = 1;
     data.recording.state = unprepared ? RecordingState::Stopped : paused ? RecordingState::Paused : RecordingState::Recording;
     data.recording.elapsed_ms = unprepared ? 0 : (3*3600+42*60+18)*1000;
@@ -171,7 +171,7 @@ int main(int argc, char** argv) {
 
 def main():
     enum_source = (M5GFX / "v1/misc/enum.hpp").read_text()
-    renderer_source = (ROOT / "application/task/ui/UiRenderer.cpp").read_text() + (ROOT / "application/task/ui/UiCanvas.h").read_text()
+    renderer_source = (ROOT / "application/task/ui/GpsUiRenderer.cpp").read_text() + (ROOT / "application/task/ui/UiCanvas.h").read_text()
     names = sorted(set(re.findall(r"\bTFT_[A-Z]+\b", SCENE + renderer_source)))
     colors = []
     for name in names:
@@ -189,9 +189,8 @@ def main():
             "-I", str(work), "-I", str(ROOT / "application"), "-I", str(ROOT / "tests/support"),
             "-I", str(M5GFX / "Fonts"), str(work / "scene.cpp"),
             str(ROOT / "application/task/ui/PixelFont.cpp"),
-            str(ROOT / "application/task/ui/UiRenderer.cpp"),
-            str(ROOT / "application/task/ui/UsbRenderer.cpp"),
-            str(ROOT / "application/task/ui/UiModel.cpp"),
+            str(ROOT / "application/task/ui/GpsUiRenderer.cpp"),
+            str(ROOT / "application/task/ui/GpsUiModel.cpp"),
             str(ROOT / "application/task/ui/LicenseText.cpp"),
             str(ROOT / "application/task/ui/SettingsText.cpp"),
             str(ROOT / "application/Settings.cpp"),

@@ -1,5 +1,5 @@
 #include "LogPresentation.h"
-#include "UiRenderer.h"
+#include "GpsUiRenderer.h"
 #include "SdCardIcon.h"
 #include "EscapeIcon.h"
 #include "EnterIcon.h"
@@ -23,29 +23,29 @@ constexpr int ViewHeaderTextY = SettingsLayout::HeaderTextY;
 constexpr int ViewHeaderBottom = SettingsLayout::HeaderBottom;
 }
 
-bool UiRenderer::begin(uint8_t color_depth, void* buffer, size_t capacity) {
+bool GpsUiRenderer::begin(uint8_t color_depth, void* buffer, size_t capacity) {
     display_.setRotation(1);
     display_.setBrightness(102);
     return display_.width() == 240 && display_.height() == 135 &&
            frame_.begin(color_depth, buffer, capacity) && font_.begin();
 }
 
-void UiRenderer::text(int x, int y, const char* value, uint16_t color) {
+void GpsUiRenderer::text(int x, int y, const char* value, uint16_t color) {
     font_.draw(frame_, x, y, value, TextRole::UI, color);
 }
 
-void UiRenderer::valueText(int left, int right, int y, const char* value, uint16_t color) {
+void GpsUiRenderer::valueText(int left, int right, int y, const char* value, uint16_t color) {
     // UI ASCII is 8 pixels wide. Never let oversized values cover neighbouring fields.
     const int width = static_cast<int>(std::strlen(value)) * 8;
     if (width > right - left) value = "OVR";
     text(right - static_cast<int>(std::strlen(value)) * 8, y, value, color);
 }
 
-void UiRenderer::largeText(int x, int y, const char* value, uint16_t color) {
+void GpsUiRenderer::largeText(int x, int y, const char* value, uint16_t color) {
     font_.draw(frame_, x, y, value, TextRole::UiLarge, color);
 }
 
-void UiRenderer::speedText(const char* value) {
+void GpsUiRenderer::speedText(const char* value) {
     int x = LivePlaceLayout::SpeedRight - speedTextWidth(value);
     for (; *value; ++value) {
         const char character[] = {*value, '\0'};
@@ -66,7 +66,7 @@ static const char* recordingName(RecordingState state) {
     return "ERROR";
 }
 
-void UiRenderer::drawDialog(const UiModel& model, UiLanguage language) {
+void GpsUiRenderer::drawDialog(const GpsUiModel& model, UiLanguage language) {
     const bool japanese = language == UiLanguage::Japanese;
     const auto role = japanese ? TextRole::UiLarge : TextRole::Ascii8x16;
     const auto& dialog = model.dialog();
@@ -126,19 +126,6 @@ void UiRenderer::drawDialog(const UiModel& model, UiLanguage language) {
             detail = dialog.actionEnabled() ? (dialog.kind()==DialogKind::EnterWifiMode?"Wi-Fi":"USB") : systemModeBlockText(model.data(), model.systemUsbMode(), language);
             accept = japanese ? "再起動" : "Restart";
             break;
-        case DialogKind::RegenerateWifi:
-            title=japanese?"パスワード再生成？":"Renew password?";
-            detail=japanese?"接続を切り再起動します":"Disconnect and restart Wi-Fi";
-            accept=japanese?"再生成":"Renew";break;
-        case DialogKind::ExitWifiMode:
-            title=japanese?"Wi-Fiを終了？":"Exit Wi-Fi mode?";
-            detail=japanese?"転送を中断して再起動":"Stop transfers and restart";
-            accept=japanese?"終了":"Exit";break;
-        case DialogKind::ExitUsbMode:
-            title = japanese ? "USBモードを終了？" : "Exit USB mode?";
-            detail = japanese ? "PCの保存完了後に終了" : "Finish PC saves first";
-            accept = japanese ? "終了" : "Exit";
-            break;
         case DialogKind::ClearDataset:
             title=japanese?"選択を解除？":"Clear dataset?";
             detail=dialog.actionEnabled()?(japanese?"地名表示を停止":"Disable place lookup"):
@@ -150,6 +137,7 @@ void UiRenderer::drawDialog(const UiModel& model, UiLanguage language) {
             if(dialog.actionEnabled()) {detail=target_detail;detail_role=TextRole::UI;}
             else detail=datasetErrorText(datasetRowBlock(model.data(),model.snapshot().selected_setting),japanese);
             accept=japanese?"実行":"Run";break;
+        case DialogKind::ExitUsbMode: case DialogKind::ExitWifiMode: case DialogKind::RegenerateWifi:
         case DialogKind::GpsControl: case DialogKind::None: return;
     }
     // Details are either a 16-dot scope message, or an ASCII filename wrapped
@@ -184,7 +172,7 @@ void UiRenderer::drawDialog(const UiModel& model, UiLanguage language) {
 
 }
 
-void UiRenderer::draw(const UiModel& model) {
+void GpsUiRenderer::draw(const GpsUiModel& model) {
     const auto content = model.snapshot();
     const auto& data = model.data();
     if (model.mode() == DisplayMode::Background) { display_.setBrightness(0); return; }
@@ -194,14 +182,11 @@ void UiRenderer::draw(const UiModel& model) {
     frame_.setDimmed(model.confirming());
     frame_.fillSprite(TFT_BLACK);
     const bool live = content.screen == ScreenId::LivePlace || showingMap(content.screen,data);
-    const bool view_header = live || content.screen == ScreenId::GpsLogger || isLogBrowser(content.screen) || content.screen == ScreenId::Settings || content.screen==ScreenId::WifiManagement;
+    const bool view_header = live || content.screen == ScreenId::GpsLogger || isLogBrowser(content.screen) || content.screen == ScreenId::Settings;
     frame_.drawFastHLine(0, view_header ? ViewHeaderBottom : 22, 240, live ? TFT_WHITE : TFT_DARKGREY);
     frame_.drawFastHLine(0, live ? LivePlaceLayout::FooterTop : 118, 240, live ? TFT_WHITE : TFT_DARKGREY);
-    if(content.screen==ScreenId::WifiManagement) {drawWifi(model);present(model,language);return;}
-    if (content.screen == ScreenId::UsbStorage) {
-        drawUsb(model);
-        present(model,language); return;
-    }
+
+
     if (content.screen == ScreenId::Boot) {
         drawBoot(model, settings);
     } else if(content.screen==ScreenId::Map) {
@@ -237,7 +222,7 @@ void UiRenderer::draw(const UiModel& model) {
 }
 
 // Present every screen through the same overlay, including USB and dialogs.
-void UiRenderer::present(const UiModel& model,UiLanguage language) {
+void GpsUiRenderer::present(const GpsUiModel& model,UiLanguage language) {
     frame_.setDimmed(false);
     if(model.confirming())drawDialog(model,language);
     frame_.fillRect(0,121,240,14,TFT_BLACK);
@@ -245,7 +230,7 @@ void UiRenderer::present(const UiModel& model,UiLanguage language) {
     drawHeaderStatus(model);
     frame_.pushSprite(0,0);
 }
-void UiRenderer::drawHeaderStatus(const UiModel& model) {
+void GpsUiRenderer::drawHeaderStatus(const GpsUiModel& model) {
     frame_.fillRect(sd_icon::ReservedLeft,0,240-sd_icon::ReservedLeft,16,TFT_BLACK);
     const bool active=model.sdAccessLit();
     for(int y=0;y<sd_icon::Height;++y)
@@ -269,7 +254,7 @@ void UiRenderer::drawHeaderStatus(const UiModel& model) {
     valueText(204,236,4,line,battery.percent >= 0 && battery.percent <= 20 ? battery_fill : TFT_WHITE);
 }
 
-void UiRenderer::drawBoot(const UiModel& model, const Settings& settings) {
+void GpsUiRenderer::drawBoot(const GpsUiModel& model, const Settings& settings) {
     const auto& data = model.data();
     char line[64];
     text(4, 8, "GEOPUTER", TFT_CYAN);
@@ -293,7 +278,7 @@ void UiRenderer::drawBoot(const UiModel& model, const Settings& settings) {
 
 }
 
-void UiRenderer::drawLivePlace(const UiModel& model, const UiSnapshot& content, const Settings& settings) {
+void GpsUiRenderer::drawLivePlace(const GpsUiModel& model, const UiSnapshot& content, const Settings& settings) {
     const auto& data = model.data();
     const auto language = settings.language;
     const bool japanese = language == UiLanguage::Japanese;
@@ -359,7 +344,7 @@ void UiRenderer::drawLivePlace(const UiModel& model, const UiSnapshot& content, 
     }
 }
 
-void UiRenderer::drawLogBrowser(const UiModel& model, const UiSnapshot& content, const Settings& settings) {
+void GpsUiRenderer::drawLogBrowser(const GpsUiModel& model, const UiSnapshot& content, const Settings& settings) {
     const auto& data = model.data();
     const auto language = settings.language;
     const bool japanese = language == UiLanguage::Japanese;
@@ -464,7 +449,7 @@ void UiRenderer::drawLogBrowser(const UiModel& model, const UiSnapshot& content,
     }
 }
 
-void UiRenderer::drawGpsLogger(const UiModel& model) {
+void GpsUiRenderer::drawGpsLogger(const GpsUiModel& model) {
     const auto& data = model.data();
     const auto& gps = data.gps;
     const auto& log = data.storage.log;
@@ -501,7 +486,7 @@ void UiRenderer::drawGpsLogger(const UiModel& model) {
     }
 }
 
-void UiRenderer::drawSettings(const UiModel& model, const UiSnapshot& content, const Settings& settings) {
+void GpsUiRenderer::drawSettings(const GpsUiModel& model, const UiSnapshot& content, const Settings& settings) {
     const auto& data = model.data();
     const auto language = settings.language;
     const bool japanese = language == UiLanguage::Japanese;
@@ -728,7 +713,7 @@ void UiRenderer::drawSettings(const UiModel& model, const UiSnapshot& content, c
 }
 
 // Native 8x8 arrow cells; no scaled glyphs or font-dependent Unicode arrows.
-void UiRenderer::drawKeyArrow(int x, int y, UiKey direction, bool enabled) {
+void GpsUiRenderer::drawKeyArrow(int x, int y, UiKey direction, bool enabled) {
     const auto color = enabled ? TFT_WHITE : TFT_DARKGREY;
     auto pixel = [&](int col,int row) {
         if(direction==UiKey::Down) row=6-row;
@@ -740,7 +725,7 @@ void UiRenderer::drawKeyArrow(int x, int y, UiKey direction, bool enabled) {
     for(int i=1;i<4;++i){pixel(3-i,i);pixel(3+i,i);}
 }
 
-void UiRenderer::drawScreenGuide(const UiModel& model) {
+void GpsUiRenderer::drawScreenGuide(const GpsUiModel& model) {
     const auto row=model.shortcutGuide();
     int x=4;
     for(unsigned i=0;i<row.size();++i) {
@@ -760,7 +745,7 @@ void UiRenderer::drawScreenGuide(const UiModel& model) {
     }
 }
 
-void UiRenderer::drawMap(const UiModel& model) {
+void GpsUiRenderer::drawMap(const GpsUiModel& model) {
     const auto& data=model.data();const auto& received=model.mapFrame();const auto& image=received.image();const auto& info=received.info();
     frame_.fillRect(0,17,240,103,TFT_BLACK);
     for(unsigned y=0;y<image.height();++y)for(unsigned x=0;x<image.width();++x) {
@@ -827,42 +812,6 @@ void UiRenderer::drawMap(const UiModel& model) {
     }
 }
 
-void UiRenderer::drawWifi(const UiModel& model) {
-    const auto& data=model.data();const auto& wifi=data.storage.wifi;const auto page=model.wifiPage();
-    const bool ja=data.settings.language==UiLanguage::Japanese;
-    text(4,ViewHeaderTextY,"WI-FI FILES");
-    char number[8];std::snprintf(number,sizeof(number),"%u/3",static_cast<unsigned>(page)+1);text(128,ViewHeaderTextY,number,TFT_LIGHTGREY);
-    if(page==WifiPage::Text) {
-        text(4,25,"SSID",TFT_LIGHTGREY);font_.draw(frame_,4,36,wifi.ssid,TextRole::Ascii8x16,TFT_CYAN);
-        text(4,56,"PASSWORD",TFT_LIGHTGREY);font_.draw(frame_,4,67,wifi.password,TextRole::Ascii8x16,TFT_WHITE);
-        text(4,88,wifi.url,TFT_CYAN);
-        char state[40];std::snprintf(state,sizeof(state),"%s / %u CLIENT / %s",wifiPhaseName(wifi.phase),wifi.clients,
-            data.storage.card_state==CardState::Mounted?"SD OK":"NO SD");
-        text(4,103,wifi.error!=WifiError::None?wifiErrorName(wifi.error):data.message[0] && wifi.phase!=WifiPhase::Failed?data.message:state,wifi.phase==WifiPhase::Failed?TFT_RED:TFT_LIGHTGREY);
-        return;
-    }
-    if(wifi_qr_ && wifi_qr_->valid()) {
-        constexpr int left=4,top=18;
-        frame_.fillRect(left,top,wifi::QrCode::Area,wifi::QrCode::Area,TFT_WHITE);
-        const auto cell=wifi_qr_->cell(),offset=wifi_qr_->offset();
-        for(unsigned y=0;y<wifi_qr_->size();++y)for(unsigned x=0;x<wifi_qr_->size();++x)
-            if(wifi_qr_->dark(x,y))frame_.fillRect(left+offset+x*cell,top+offset+y*cell,cell,cell,TFT_BLACK);
-    } else {text(12,55,wifi.phase==WifiPhase::Starting?"WAITING":"NO QR",TFT_LIGHTGREY);}
-    const bool network=page==WifiPage::ConnectionQr;
-    text(110,25,network?"CONNECT QR":"WEB QR",TFT_CYAN);
-    font_.draw(frame_,110,40,network?(ja?"QRで接続":"Scan to join"):(ja?"管理画面":"Open browser"),
-        ja?TextRole::UiLarge:TextRole::Ascii8x16,TFT_WHITE);
-    if(network) {
-        text(110,64,"SSID",TFT_LIGHTGREY);
-        char prefix[16]{};std::strncpy(prefix,wifi.ssid,15);font_.draw(frame_,110,74,prefix,TextRole::Ascii8x16,TFT_WHITE);
-        if(std::strlen(wifi.ssid)>15)font_.draw(frame_,110,90,wifi.ssid+15,TextRole::Ascii8x16,TFT_WHITE);
-    } else {
-        text(110,65,"HTTP",TFT_LIGHTGREY);
-        const auto* host=std::strstr(wifi.url,"://");font_.draw(frame_,110,77,host?host+3:wifi.url,TextRole::Ascii8x16,TFT_WHITE);
-        text(110,95,wifi.portal?"PORTAL READY":"SCAN TO OPEN",TFT_LIGHTGREY);
-    }
-    const auto* state=wifi.phase==WifiPhase::Stopping?"RESTARTING...":wifi.phase==WifiPhase::Failed?"ERROR / TEXT >":wifi.clients?"CONNECTED":"NOT CONNECTED";
-    text(110,109,state,wifi.phase==WifiPhase::Failed?TFT_RED:wifi.clients?TFT_GREEN:TFT_LIGHTGREY);
-}
+
 
 }  // namespace geoputer

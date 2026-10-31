@@ -4,7 +4,7 @@
 #include <string>
 #include "task/gps/GpsReceiver.h"
 #include "task/gps/GpsTime.h"
-#include "task/ui/UiModel.h"
+#include "task/ui/GpsUiModel.h"
 #include "utils/SyncClient.h"
 
 using namespace geoputer;
@@ -151,7 +151,7 @@ void testClockRolloverAndUiIsolation() {
     check(client.receiveSyncResult(returned, 0) == SyncReceiveResult::Returned,
           "GPS return succeeds while notification queue is full");
     check(notifications.receive(event), "sample notification remains separate from sync return");
-    UiModel ui;
+    GpsUiModel ui;
     SetUiScreen screen{};
     screen.screen = ScreenId::LivePlace; screen.mode = DisplayMode::View; screen.generation = 1;
     ui.setScreen(screen);

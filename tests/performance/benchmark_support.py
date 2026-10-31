@@ -30,9 +30,9 @@ def prepare_workspace(root, name, headers):
 
 
 def inject_storage_probe(source, header, body):
-    source = replace_once(source, '#include "StorageTask.h"',
-                          f'#include "StorageTask.h"\n#include "../../benchmark/{header}"')
-    start = source.index("void StorageTask::run()")
+    source = replace_once(source, '#include "GpsStorageTask.h"',
+                          f'#include "GpsStorageTask.h"\n#include "../../benchmark/{header}"')
+    start = source.index("void GpsStorageTask::run()")
     before, loop = source[:start], source[start:]
     marker = "        vTaskDelay(pdMS_TO_TICKS(5));"
     return before + replace_once(loop, marker, body + marker)

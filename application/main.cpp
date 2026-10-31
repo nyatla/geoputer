@@ -1,5 +1,5 @@
 #include <Arduino.h>
-#include "Application.h"
+#include "ApplicationRuntime.h"
 #include "BootMode.h"
 #include "hardware/LoraSafety.h"
 #include "utils/Console.h"
@@ -10,7 +10,7 @@
 #include <tusb.h>
 
 namespace {
-geoputer::Application application;
+geoputer::ApplicationRuntime application;
 bool ready = false;
 bool usb_boot = false, wifi_boot = false, console_reported = false;
 uint32_t memory_report_at = 0;
@@ -57,11 +57,11 @@ void loop() {
         const auto written=geoputer::Console.printf(
             "[MODE-MEM] mode=%s fixed_gps=%u fixed_usb=%u fixed_wifi=%u union=%u app=%u sd_fil=%u heap=%u min_heap=%u largest=%u internal=%u stack_free=%u\n",
             wifi_boot?"WIFI":usb_boot?"USB":"GPS",
-            static_cast<unsigned>(sizeof(geoputer::GpsApplicationResources)),
-            static_cast<unsigned>(sizeof(geoputer::UsbApplicationResources)),
-            static_cast<unsigned>(sizeof(geoputer::WifiApplicationResources)),
-            static_cast<unsigned>(sizeof(geoputer::ApplicationModeMemory)),
-            static_cast<unsigned>(sizeof(geoputer::Application)),
+            static_cast<unsigned>(sizeof(geoputer::GpsApplication)),
+            static_cast<unsigned>(sizeof(geoputer::UsbApplication)),
+            static_cast<unsigned>(sizeof(geoputer::WifiApplication)),
+            static_cast<unsigned>(sizeof(geoputer::ApplicationMemory)),
+            static_cast<unsigned>(sizeof(geoputer::ApplicationRuntime)),
             static_cast<unsigned>(sizeof(geoputer::FIL)),ESP.getFreeHeap(),ESP.getMinFreeHeap(),
             heap_caps_get_largest_free_block(MALLOC_CAP_8BIT),
             heap_caps_get_free_size(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT),

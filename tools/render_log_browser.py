@@ -10,7 +10,7 @@ SCENE = r'''
 #include <cstdio>
 #include <cstring>
 #include <stdexcept>
-#include "task/ui/UiRenderer.h"
+#include "task/ui/GpsUiRenderer.h"
 #include "dialog_preview_checks.h"
 #include "task/ui/Shinonome.h"
 using namespace geoputer;
@@ -18,7 +18,7 @@ int main(int argc,char** argv) {
     if(argc!=3)return 1;
     const bool english=!std::strcmp(argv[2],"en");
     const char* mode=argv[1];
-    M5GFX display; UiRenderer renderer(display); alignas(4) uint8_t backing[240*135*2+4]{};
+    M5GFX display; GpsUiRenderer renderer(display); alignas(4) uint8_t backing[240*135*2+4]{};
     const auto depth=previewColorDepth();
     const auto capacity=sizeof(backing);
     if(!renderer.begin(depth,std::getenv("GEOPUTER_PREVIEW_EXTERNAL") ? backing : nullptr,capacity))return 1;
@@ -89,7 +89,7 @@ int main(int argc,char** argv) {
             view.statistics.has_speed=view.statistics.has_altitude=true;view.statistics.max_speed_kmh=98.4;
             view.statistics.min_altitude_m=-12.3;view.statistics.max_altitude_m=123.4;view.statistics.elapsed_ms=3214;}
     }
-    UiModel model;model.setScreen({screen,DisplayMode::View,1,data,0,ActionResult::None});
+    GpsUiModel model;model.setScreen({screen,DisplayMode::View,1,data,0,ActionResult::None});
     if(log_map) {
         map::FrameInfo info{};info.width=240;info.height=101;info.meters_per_pixel=11.132;
         auto& request=info.request;request.token=1;request.screen_generation=1;request.dataset_generation=data.dataset.generation;
@@ -156,7 +156,7 @@ def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output',type=Path,default=ROOT/'doc/画面・操作')
     args=parser.parse_args()
-    renderer=(ROOT/'application/task/ui/UiRenderer.cpp').read_text()+(ROOT/'application/task/ui/UiCanvas.h').read_text()
+    renderer=(ROOT/'application/task/ui/GpsUiRenderer.cpp').read_text()+(ROOT/'application/task/ui/UiCanvas.h').read_text()
     enums=(M5GFX/'v1/misc/enum.hpp').read_text()
     colors=[]
     for name in sorted(set(re.findall(r'\bTFT_[A-Z]+\b',SCENE+renderer))):
@@ -165,7 +165,7 @@ def main():
     modes=('properties', 'statistics', 'statistics-loading', 'statistics-error', 'usb', 'usb-screen', 'usb-selected', 'usb-error', 'usb-ejected', 'list', 'delete-confirm', 'delete-selected', 'delete-protected', 'delete-short', 'delete-longest', 'deleting', 'delete-error', 'point-empty', 'point', 'long-name', 'unknown', 'loading', 'crc-error', 'empty', 'sd-error', 'bounds', 'point-no-dataset', 'log-map', 'log-map-play', 'log-map-reverse', 'log-map-fast', 'log-map-slow', 'log-map-loading', 'log-map-error')
     with tempfile.TemporaryDirectory(prefix='geoputer-browser-') as directory:
         work=Path(directory);(work/'M5GFX.h').write_text(ADAPTER+'\n'+'\n'.join(colors));(work/'scene.cpp').write_text(SCENE)
-        sources=[ROOT/'application/task/ui'/f'{name}.cpp' for name in ('PixelFont','UiRenderer','UsbRenderer','UiModel','LicenseText','SettingsText','Shinonome')]
+        sources=[ROOT/'application/task/ui'/f'{name}.cpp' for name in ('PixelFont','GpsUiRenderer','GpsUiModel','LicenseText','SettingsText','Shinonome')]
         exe=work/'render'
         subprocess.run(['g++','-std=c++17','-Wall','-Wextra','-Werror','-pedantic','-fsanitize=undefined','-fno-sanitize-recover=all','-I',str(work),'-I',str(ROOT/'tools'),'-I',str(ROOT/'application'),'-I',str(ROOT/'tests/support'),'-I',str(M5GFX/'Fonts'),str(work/'scene.cpp'),*map(str,sources),str(ROOT/'application/Settings.cpp'),'-o',str(exe)],check=True,timeout=180)
         for language in ('ja','en'):

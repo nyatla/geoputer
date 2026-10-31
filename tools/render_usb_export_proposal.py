@@ -18,30 +18,30 @@ SCENE = r'''
 #include <cstdio>
 #include <cstring>
 #include <stdexcept>
-#include "task/ui/UiRenderer.h"
+#include "apps/common/PanelRenderer.h"
 using namespace geoputer;
 int main(int argc,char** argv) {
     if(argc!=3)return 1;
     const char* mode=argv[1];const bool en=!std::strcmp(argv[2],"en");
-    M5GFX display;UiRenderer renderer(display);if(!renderer.begin(previewColorDepth()))return 2;
-    UiData data{};data.revision=1;data.settings=defaultSettings();
+    M5GFX display;PanelRenderer renderer(display);UiFrameBuffer backing;if(!renderer.begin(backing.data,sizeof(backing.data)))return 2;
+    UsbUiData data{};data.storage.revision=1;
     data.settings.language=en?UiLanguage::English:UiLanguage::Japanese;
     data.storage.usb.ready=true;
     data.storage.usb.connected=std::strcmp(mode,"disconnected") && std::strcmp(mode,"complete");
-    data.editBrowse().revision=1;data.editBrowse().count=4;data.editBrowse().has_older=true;
+    data.storage.files.revision=1;data.storage.files.count=4;data.storage.files.has_older=true;
     const char* names[]={"20261017_093012_0.gps.dat","20261016_142801_0.gps.dat","20261015_081530_0.gps.dat","20261014_175205_0.gps.dat"};
-    for(unsigned n=0;n<4;++n)std::strcpy(data.editBrowse().names[n],names[n]);
+    for(unsigned n=0;n<4;++n)std::strcpy(data.storage.files.names[n],names[n]);
     std::strcpy(data.storage.export_job.name,names[0]);data.storage.export_job.format=ExportFormat::Gpx;
     if(!std::strcmp(mode,"no-sd"))data.storage.usb.ready=false;
     if(!std::strcmp(mode,"ejected"))data.storage.usb.ejected=true;
-    UiModel ui;ui.setScreen({ScreenId::UsbStorage,DisplayMode::View,1,data,0,ActionResult::None});
+    UsbUiModel ui;ui.update(data,0);
     auto& job=data.storage.export_job;
     if(!std::strcmp(mode,"eject"))job.phase=ExportPhase::WaitEject;
     if(!std::strcmp(mode,"files")||!std::strcmp(mode,"format")||!std::strcmp(mode,"long-format")||!std::strcmp(mode,"empty")||!std::strcmp(mode,"loading")) {
         job.phase=ExportPhase::Selecting;data.storage.usb.local=true;
-        if(!std::strcmp(mode,"empty"))data.editBrowse().count=0;
-        if(!std::strcmp(mode,"loading"))data.editBrowse().loading=true;
-        if(!std::strcmp(mode,"long-format"))std::strcpy(data.editBrowse().names[0],"123456789012345678901234567890123456789.gps.dat");
+        if(!std::strcmp(mode,"empty"))data.storage.files.count=0;
+        if(!std::strcmp(mode,"loading"))data.storage.files.loading=true;
+        if(!std::strcmp(mode,"long-format"))std::strcpy(data.storage.files.names[0],"123456789012345678901234567890123456789.gps.dat");
     }
     if(!std::strcmp(mode,"progress")||!std::strcmp(mode,"full-progress")) {
         job.phase=ExportPhase::Running;data.storage.usb.local=true;job.total=4096;job.processed=2048;
@@ -53,8 +53,8 @@ int main(int argc,char** argv) {
     }
     if(!std::strcmp(mode,"error")) {job.phase=ExportPhase::Failed;job.error=ExportError::Corrupt;job.failed_record=12;}
     if(!std::strcmp(mode,"publish-error")) {job.phase=ExportPhase::Failed;job.output_created=true;job.error=ExportError::Publish;}
-    ui.updateContent({DisplayMode::View,1,data,0,ActionResult::None});
-    if(!std::strcmp(mode,"format")||!std::strcmp(mode,"long-format"))ui.keyPressed(UiKey::Enter,1);
+    ui.update(data,0);
+    if(!std::strcmp(mode,"format")||!std::strcmp(mode,"long-format"))ui.key(UiKey::Enter);
     renderer.draw(ui);
     for(int y=0;y<135;++y)for(int x=236;x<240;++x)
         if(y!=22 && y!=118 && display.pixels[y*240+x]!=TFT_BLACK)throw std::runtime_error("right margin overwritten");
@@ -91,7 +91,7 @@ def main():
     OUTPUT.mkdir(parents=True, exist_ok=True)
     enums = (M5GFX/'v1/misc/enum.hpp').read_text()
     colors = []
-    for name in sorted(set(re.findall(r'\bTFT_[A-Z]+\b', SCENE+(ROOT/'application/task/ui/UiCanvas.h').read_text()+(ROOT/'application/task/ui/UsbRenderer.cpp').read_text()))):
+    for name in sorted(set(re.findall(r'\bTFT_[A-Z]+\b', SCENE+(ROOT/'application/task/ui/UiCanvas.h').read_text()+(ROOT/'application/apps/common/PanelRenderer.cpp').read_text()))):
         value = re.search(rf'\b{name}\s*=\s*(0x[0-9A-Fa-f]+)', enums)[1]
         colors.append(f'inline constexpr uint16_t {name}={value};')
     with tempfile.TemporaryDirectory(prefix='geoputer-usb-proposal-') as directory:
@@ -102,8 +102,8 @@ def main():
         subprocess.run(['g++','-std=c++17','-Wall','-Wextra','-Werror','-pedantic',
                         '-fsanitize=undefined','-fno-sanitize-recover=all',
                         '-I',str(work),'-I',str(ROOT/'application'),'-I',str(M5GFX/'Fonts'),
-                        str(work/'scene.cpp'),*[str(ROOT/'application/task/ui'/f'{name}.cpp') for name in ('PixelFont','UiRenderer','UsbRenderer','UiModel','LicenseText','SettingsText','Shinonome')],
-                        str(ROOT/'application/Settings.cpp'),'-I',str(ROOT/'tests/support'),'-o',str(exe)],check=True,timeout=180)
+                        str(work/'scene.cpp'),*[str(ROOT/'application/task/ui'/f'{name}.cpp') for name in ('PixelFont','Shinonome')],
+                        str(ROOT/'application/apps/common/PanelRenderer.cpp'),str(ROOT/'application/Settings.cpp'),'-I',str(ROOT/'tests/support'),'-o',str(exe)],check=True,timeout=180)
         for language in ('ja','en'):
             frames=[]
             for mode in (*SCENES,'error','publish-error','no-sd','ejected','long-format','long-complete','empty','loading','full-progress'):

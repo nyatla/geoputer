@@ -1,57 +1,12 @@
 #pragma once
 
 #include <cstdint>
+#include "utils/MessageTypes.h"
 #include <type_traits>
-#include "task/ui/UiTypes.h"
+#include "task/ui/GpsUiTypes.h"
 
 namespace geoputer {
 
-enum class TaskId : uint8_t { Application, UI, GPS, Storage };
-enum class MessageKind : uint8_t {
-    SetUiScreen,
-    UpdateUiContent,
-    GetUiContent,
-    UiContentChanged,
-    StartGpsReception,
-    GetGpsStatus,
-    GpsSampleReady,
-    GpsStatusChanged,
-    InitializeStorage,
-    GetStorageStatus,
-    SaveSettings,
-    OperateStorage,
-    LoadSettings,
-    SearchPlace,
-    CheckDataset,
-    RgCacheStateChanged,
-    SdAccessChanged,
-    OpenLogSession,
-    FlushLog,
-    CloseLogSession,
-    ListLogs,
-    ReadLogSummary,
-    ReadLogRecords,
-    DeleteLog,
-    CancelLogRead,
-    LogWritten,
-    SettingsWritten,
-    ReadCompleted,
-    ReadFailed,
-    StorageOperationCompleted,
-    StorageError,
-    DatasetOperation,
-    DatasetProgress,
-    WifiStorageChanged, StopWifi, RegenerateWifi,
-    UsbStorageChanged,
-    UsbExportOperation,
-    RequestMap, ReleaseMap, CancelMap, MapCompleted,
-    BeginMapFrame, CommitMapFrame, DiscardMapFrame, CloseMapSession,
-    SyncReturn,
-    ReleaseLogBrowse, ReadLogStatistics, LogStatisticsProgress,
-    BeginPlaceSearch, CommitPlaceSearch, DiscardPlaceSearch,
-    BeginDatasetRead, CommitDatasetRead, DiscardDatasetRead, DatasetReadError, UpdateDatasetProgress, ControlAudio,
-};
-enum class OperationStatus : uint8_t { Ok, InvalidRequest, StaleContent, Unavailable };
 
 struct SyncReturn {
     MessageKind request_kind;
@@ -72,13 +27,6 @@ struct UiContentChanged {
 };
 
 // The envelope and queue counts are common; payload storage is direction-specific.
-struct MessageHeader {
-    MessageKind kind;
-    TaskId source;
-    uint32_t request_id;
-    uint32_t sequence;
-    uint32_t sent_at_ms;
-};
 
 template <typename Payload>
 struct Message : MessageHeader { Payload payload; };
@@ -98,14 +46,12 @@ union StorageRequestPayload {
     LogCommand log;
     LogReadRequest log_read;
     DatasetRequest dataset;
-    ExportRequest export_request;
     map::Request map;
 };
 union AppNotificationPayload {
     map::FrameInfo map;
     IndexProgress index_progress;
     LogStatisticsProgress log_progress;
-    StorageSnapshot usb_storage;
     UiContentChanged changed;
     GpsSnapshot gps;
     StorageCompletion storage_completion;

@@ -9,7 +9,7 @@ from PIL import Image
 from ui_preview_support import ROOT, M5GFX, ADAPTER, reference_frame
 
 SCENE = r'''
-#include "task/ui/UiRenderer.h"
+#include "task/ui/GpsUiRenderer.h"
 #include "task/storage/MapBuildJob.h"
 #include "support/MapIndexFixture.h"
 #include "task/storage/galuchat/PlaceLookup.h"
@@ -26,7 +26,7 @@ int main(int argc,char** argv) {
     test_index::generate(argv[2],"map.glc","names.giswordbook");
     map::Request request{};request.token=1;request.screen_generation=1;request.dataset_generation=1;
     request.latitude=35.681641;request.longitude=140.027194;request.scale=std::atoi(argv[3]);
-    M5GFX display;UiRenderer renderer(display);alignas(4) uint8_t backing[240*135*2+4]{};
+    M5GFX display;GpsUiRenderer renderer(display);alignas(4) uint8_t backing[240*135*2+4]{};
     const auto depth=previewColorDepth();
     const auto capacity=sizeof(backing);
     check(renderer.begin(depth,std::getenv("GEOPUTER_PREVIEW_EXTERNAL") ? backing : nullptr,capacity));
@@ -38,7 +38,7 @@ int main(int argc,char** argv) {
     check(lookup.prepare().state==PlaceState::Ready);data.dataset=lookup.datasetInfo();
     request.dataset_generation=data.dataset.generation;
     data.gps.reception=GpsReception::Fix;data.gps.fix={request.latitude,request.longitude,19921000,true};
-    UiModel model;model.tick(1000);model.setBattery(72,false,true);
+    GpsUiModel model;model.tick(1000);model.setBattery(72,false,true);
     check(model.setScreen({ScreenId::Map,DisplayMode::View,1,data,0,ActionResult::None})==OperationStatus::Ok);
     const bool reading=!std::strcmp(mode,"reading");
     map::FrameInfo origin{};
@@ -126,13 +126,13 @@ def main():
     parser.add_argument('--output',type=Path,default=ROOT/'doc/画面・操作/place-view')
     args=parser.parse_args()
     enum_source=(M5GFX/'v1/misc/enum.hpp').read_text()
-    renderer_source=(ROOT/'application/task/ui/UiRenderer.cpp').read_text()+(ROOT/'application/task/ui/UiCanvas.h').read_text()
+    renderer_source=(ROOT/'application/task/ui/GpsUiRenderer.cpp').read_text()+(ROOT/'application/task/ui/UiCanvas.h').read_text()
     colors=[]
     for name in sorted(set(re.findall(r'\bTFT_[A-Z]+\b',SCENE+renderer_source))):
         value=re.search(rf'\b{name}\s*=\s*(0x[0-9A-Fa-f]+)',enum_source)
         colors.append(f'inline constexpr uint16_t {name} = {value[1]};')
-    sources=['Settings.cpp','task/ui/PixelFont.cpp','task/ui/UiRenderer.cpp','task/ui/UsbRenderer.cpp',
-        'task/ui/UiModel.cpp','task/ui/LicenseText.cpp','task/ui/SettingsText.cpp','task/ui/Shinonome.cpp',
+    sources=['Settings.cpp','task/ui/PixelFont.cpp','task/ui/GpsUiRenderer.cpp',
+        'task/ui/GpsUiModel.cpp','task/ui/LicenseText.cpp','task/ui/SettingsText.cpp','task/ui/Shinonome.cpp',
         'task/storage/dataset/DatasetIndex.cpp','task/storage/dataset/DatasetMetadata.cpp',
         'task/storage/galuchat/MapSource.cpp','task/storage/galuchat/DiskIndexedMapReader.cpp',
         'task/storage/galuchat/DiskIndexedWordBookReader.cpp','task/storage/galuchat/TextEncoding.cpp',

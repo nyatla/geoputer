@@ -2,7 +2,7 @@
 #include "map/DecimatedViewport.h"
 #include "map/MapFrameReceiver.h"
 #include "task/storage/MapBuildJob.h"
-#include "task/ui/UiModel.h"
+#include "task/ui/GpsUiModel.h"
 #include "task/ui/KeyBindings.h"
 #include "task/ui/ScreenNavigation.h"
 #include <stdexcept>
@@ -92,7 +92,7 @@ void testDecimatedViewport() {
 void testMapScaleKeys() {
     UiData data{};data.settings=defaultSettings();data.dataset.generation=1;
     data.recording.state=RecordingState::Recording;
-    UiModel model;model.setScreen({ScreenId::Map,DisplayMode::View,7,data,0,ActionResult::None});
+    GpsUiModel model;model.setScreen({ScreenId::Map,DisplayMode::View,7,data,0,ActionResult::None});
     model.keyPressed(UiKey::ZoomIn,1);
     check(model.snapshot().action.kind==ActionKind::None,"map scale must stop at native resolution");
     model.keyPressed(mapPhysicalKey('-',false),2);
@@ -223,19 +223,19 @@ void testMaps() {
     data.gps.fix.valid=true;data.gps.reception=GpsReception::Fix;data.recording.state=RecordingState::Recording;
     const ScreenId roots[]{ScreenId::LivePlace,ScreenId::GpsLogger,ScreenId::Logs,ScreenId::Settings,ScreenId::Map};
     for(auto from:roots)for(bool fn:{false,true}) {
-        UiModel model;model.setScreen({from,DisplayMode::View,7,data,0,ActionResult::None});
+        GpsUiModel model;model.setScreen({from,DisplayMode::View,7,data,0,ActionResult::None});
         model.keyPressed(mapPhysicalKey('2',fn),1);
         const auto action=model.snapshot().action;
         check(from==ScreenId::Map?action.kind==ActionKind::None:action.kind==ActionKind::ChangeScreen && action.target==ScreenId::Map,"4 opens Map from every root with or without Fn");
         check(model.data().recording.state==RecordingState::Recording,"opening Map never changes logging");
     }
-    UiModel child;child.setScreen({ScreenId::Settings,DisplayMode::View,7,data,0,ActionResult::None});child.keyPressed(UiKey::Enter,1);child.keyPressed(UiKey::OpenMap,2);
+    GpsUiModel child;child.setScreen({ScreenId::Settings,DisplayMode::View,7,data,0,ActionResult::None});child.keyPressed(UiKey::Enter,1);child.keyPressed(UiKey::OpenMap,2);
     check(child.snapshot().action.kind==ActionKind::None,"settings children ignore map shortcut");
-    UiModel modal;modal.setScreen({ScreenId::LivePlace,DisplayMode::View,7,data,0,ActionResult::None});modal.keyPressed(UiKey::GpsControl,1);modal.keyPressed(UiKey::OpenMap,2);
+    GpsUiModel modal;modal.setScreen({ScreenId::LivePlace,DisplayMode::View,7,data,0,ActionResult::None});modal.keyPressed(UiKey::GpsControl,1);modal.keyPressed(UiKey::OpenMap,2);
     check(modal.confirming() && modal.snapshot().action.kind==ActionKind::None,"map cannot bypass a confirmation");
-    UiModel model;model.setScreen({ScreenId::Map,DisplayMode::View,7,data,0,ActionResult::None});
+    GpsUiModel model;model.setScreen({ScreenId::Map,DisplayMode::View,7,data,0,ActionResult::None});
     request.buffer={};++request.token;
-    auto render=[&](UiModel& target,map::Request& next) {
+    auto render=[&](GpsUiModel& target,map::Request& next) {
         next.buffer={};
         check(target.beginMapFrame(next,next.buffer)==OperationStatus::Ok,"UI lends the back image for this screen");
         check(job.start(next,session),"worker accepts UI loan");job.loaded(source(next));

@@ -2,7 +2,7 @@
 #include <iostream>
 #include <stdexcept>
 #include "utils/SyncClient.h"
-#include "task/ui/UiModel.h"
+#include "task/ui/GpsUiModel.h"
 #include "AppScreenResources.h"
 
 using namespace geoputer;
@@ -227,7 +227,7 @@ static void testExclusiveUiPages() {
         check(data.gps.fix.valid && data.gps.fix.latitude==35.68 && data.recording.state==RecordingState::Recording,
               "page changes preserve GPS and logger state");
     }
-    UiModel ui;
+    GpsUiModel ui;
     check(ui.setScreen({ScreenId::Logs,DisplayMode::View,1,data,0,ActionResult::None})==OperationStatus::Ok,
           "browser payload accepted by UI");
     check(ui.data().hasBrowse(), "UI sanitization preserves browser payload");
@@ -246,7 +246,7 @@ static void testScreenResourceLifetime() {
     app.enter(ScreenGroup::Logs);check(app.logs().cache_count==1 && app.logs().records[0][0]==0x55,"log hierarchy retains its own work");
     app.enter(ScreenGroup::Settings);check(!app.hasMap() && !app.hasLogs(),"settings owns no map/log working payload");
     app.enter(ScreenGroup::Map);check(!app.map().info.region && !app.map().anchor.request.token,"map reentry starts clean");
-    app.enter(ScreenGroup::Usb);check(app.hasLogs(),"USB file selection uses bounded log working resources");
+    app.enter(ScreenGroup::Logs);check(app.hasLogs(),"log selection uses bounded log working resources");
     UiScreenResources ui;ui.enter(ScreenGroup::Map);
     map::FrameInfo info{};info.request.token=1;info.width=map::MaxWidth;info.height=map::MaxHeight;info.meters_per_pixel=1;
     check(ui.map.frame.begin(info.request,info.request.buffer),"UI lends fixed staging memory");
@@ -255,9 +255,9 @@ static void testScreenResourceLifetime() {
     ui.enter(ScreenGroup::Settings);
     check(!ui.map.frame.image().bytes() && !ui.map.cursor.valid,"map image is hidden at screen leave");
     ui.settings.editing=true;ui.settings.dataset.edit_original[0]='x';ui.settings.license_offset=81;
-    ui.enter(ScreenGroup::Usb);
-    check(!ui.settings.editing && !ui.settings.dataset.edit_original[0] && !ui.settings.license_offset && ui.usb.page==UsbPage::Menu,
-          "departed settings and license state are cleared before USB entry");
+    ui.enter(ScreenGroup::Logs);
+    check(!ui.settings.editing && !ui.settings.dataset.edit_original[0] && !ui.settings.license_offset,
+          "departed settings and license state are cleared before log entry");
 }
 
 static void testSyncCallerEnvelopeAndQueuedSnapshot() {
@@ -305,7 +305,7 @@ static SetUiScreen initialScreen() {
 }
 
 static void testUiActionOwnershipAndStaleUpdates() {
-    UiModel model;
+    GpsUiModel model;
     auto command = initialScreen();
     check(model.setScreen(command) == OperationStatus::Ok, "initial screen accepted");
     check(!model.notificationPending(), "App screen update does not notify App again");
@@ -356,7 +356,7 @@ static void testUiActionOwnershipAndStaleUpdates() {
 }
 
 static void testRepeatedUiRoundTripsAndValueCopies() {
-    UiModel model;
+    GpsUiModel model;
     auto command = initialScreen();
     model.setScreen(command);
     command.data.place[0][0] = 'X';

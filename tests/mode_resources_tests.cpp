@@ -1,4 +1,4 @@
-#include "Application.h"
+#include "ApplicationRuntime.h"
 #include <cstdio>
 #include <stdexcept>
 using namespace geoputer;
@@ -9,8 +9,12 @@ struct GpsProbe {explicit GpsProbe(int n):value(n){++gps_built;}~GpsProbe(){++gp
 struct UsbProbe {explicit UsbProbe(int n):value(n){++usb_built;}~UsbProbe(){++usb_destroyed;}int value;char bytes[128]{};};
 }
 namespace geoputer {
-void UiTask::run(){}void GpsTask::run(){}void StorageTask::run(){}
-void StorageTask::sdBegin(){}void StorageTask::sdEnd(){}void StorageTask::cacheState(RgCacheState,bool){}
+void GpsUiTask::run(){}void GpsTask::run(){}void GpsStorageTask::run(){}
+void UsbUiTask::run(){}void UsbStorageTask::run(){}
+void UsbStorageTask::sdBegin(){}void UsbStorageTask::sdEnd(){}
+void WifiUiTask::run(){}void WifiStorageTask::run(){}
+void WifiStorageTask::sdBegin(){}void WifiStorageTask::sdEnd(){}
+void GpsStorageTask::sdBegin(){}void GpsStorageTask::sdEnd(){}void GpsStorageTask::cacheState(RgCacheState,bool){}
 }
 int main(){
     {
@@ -29,32 +33,31 @@ int main(){
     check(usb_built==1 && usb_destroyed==1 && gps_built==1,"USB never constructs GPS");
     static_assert(sizeof(BootModeResources<GpsProbe,UsbProbe>)<sizeof(GpsProbe)+sizeof(UsbProbe),"reservation is maximum, not sum");
     {
-        Application app;
-        check(!app.mode_resources_.selected() && !app.storage_.mode_resources_.selected(),"App and Storage start with no active mode");
-        check(app.selectBootMode(true) && app.mode_resources_.isUsb() && app.storage_.mode_resources_.isUsb(),"App and Storage choose USB together");
-        check(&app.mode_resources_==&app.storage_.mode_resources_,"App and Storage borrow the same outer union");
-        check(!app.storage_.usbMode().exporter_ && !app.storage_.work().mapBusy(),"USB starts without exporter allocation or map worker");
-        app.screenResources().enter(ScreenGroup::Usb);
-        check(app.screenResources().hasLogs(),"USB retains its own file-list resources");
-        check(!app.selectBootMode(false) && app.usb_mode_,"App cannot replace resources before reboot");
-        check(!app.storage_.setUsbMode(false),"Storage cannot activate the other member");
+        ApplicationMemory apps;check(!apps.selected(),"no app constructed at static initialization");
+        check(apps.selectUsb() && !apps.selectGps(),"USB is an independent whole application");
+        auto& usb=apps.usb();check(&usb.ui_.events_==&usb.events_ && &usb.storage_.events_==&usb.events_,"USB peers use only USB queues");
+        check(std::holds_alternative<LogReader>(usb.storage_.work_),"USB never constructs a GPS map job");
+        check(sizeof(UsbUiTask)<sizeof(GpsUiTask) && sizeof(UsbChannels::UiRequest)<sizeof(UiRequest),"USB has no GPS images or GPS payload");
     }
     {
-        Application app;check(app.selectBootMode(false),"select GPS before tasks");
-        auto& gps=app.storage_.gpsMode();
-        check(&gps.selected_dataset_==&gps.place_lookup_.selected_,"lookup borrows the selected dataset in the same mode");
+        ApplicationMemory apps;check(apps.selectGps(),"GPS whole application");auto& app=apps.gps();
+        auto& gps=app.storage_.gpsState();
+        check(reinterpret_cast<uintptr_t>(&gps)>reinterpret_cast<uintptr_t>(&app.storage_.state_),"Storage observer state outlives reader/writer resources during destruction");
+        check(&gps.selected_dataset_==&gps.place_lookup_.selected_,"lookup borrows Storage's selected dataset");
         check(gps.screen_resources_.live_map.pixels==gps.code_images_.map.image().data() &&
-              gps.screen_resources_.log_map.pixels==gps.code_images_.map.image().data(),"map sessions borrow the GPS member's stable raster");
-        check(&app.storage_.work()==&gps.screen_resources_.work,"Reader workspace remains owned by Storage");
+              gps.screen_resources_.log_map.pixels==gps.code_images_.map.image().data(),"map sessions use a stable GPS raster");
+        check(&app.storage_.work()==&gps.screen_resources_.work,"Reader workspace remains Storage-owned");
+        check(&app.ui_.notifications_==&app.notifications_ && &app.gps_.notifications_==&app.notifications_,"all GPS tasks belong to the GPS app");
     }
     {
-        Application app;check(app.storage_.setWifiMode(),"select Wi-Fi without GPS or USB");app.wifi_mode_=true;
-        check(app.mode_resources_.isWifi() && !app.mode_resources_.isUsb(),"Wi-Fi selects the third union branch");
-        app.screenResources().enter(ScreenGroup::Common);
-        check(!app.storage_.setWifiMode() && !app.storage_.setUsbMode(false),"Wi-Fi resources cannot change while active");
-        check(app.storage_.inbox().initialize() && app.storage_.requestWifiExit(),"Wi-Fi exit is a queued control, no shared mutable service access");
-        StorageRequest request{};check(app.storage_.inbox().receive(request) && request.kind==MessageKind::StopWifi,"Wi-Fi stop command uses Storage inbox");
-        check(app.storage_.requestWifiRegenerate() && app.storage_.inbox().receive(request) && request.kind==MessageKind::RegenerateWifi,"renewal uses the same one-slot Storage inbox");
+        ApplicationMemory apps;check(apps.selectWifi() && !apps.selectUsb(),"independent Wi-Fi application");auto& app=apps.wifi();
+        check(&app.ui_.events_==&app.events_ && &app.storage_.events_==&app.events_,"Wi-Fi uses its own typed queues");
+        check(sizeof(WifiUiTask)<sizeof(GpsUiTask) && sizeof(WifiChannels::UiRequest)<sizeof(UiRequest),"Wi-Fi has no GPS image or payload");
+        const auto tail=apps.wifiHeapTail();
+        check(tail.begin>=reinterpret_cast<uintptr_t>(&app)+sizeof(app),"donation excludes all Wi-Fi tasks and queues");
+        check(tail.end<=reinterpret_cast<uintptr_t>(&apps.kind_),"donation excludes the owner tag");
+        std::memset(reinterpret_cast<void*>(tail.begin),0xa5,tail.bytes());
+        check(apps.isWifi() && !app.ui_.model_.pending(),"allocator may write unused tail without damaging the live application");
     }
     {
         struct SmallWifi {int marker=123;char retained[29]{};};
@@ -71,8 +74,6 @@ int main(){
         memory.destroyForShutdown();
         check(!memory.selectGps(1) && !memory.selectUsb(1) && !memory.selectWifi(),"donation permanently forbids reconstructing any mode before reboot");
     }
-    std::printf("MODE SIZES host: app_gps=%zu app_usb=%zu gps_mode=%zu storage_gps=%zu storage_usb=%zu mode_union=%zu Application=%zu\n",
-        sizeof(AppGpsResources),sizeof(AppUsbResources),sizeof(GpsApplicationResources),
-        sizeof(StorageGpsResources),sizeof(StorageUsbResources),sizeof(ApplicationModeMemory),sizeof(Application));
+    std::printf("MODE SIZES host: gps=%zu usb=%zu wifi=%zu union=%zu runtime=%zu\n",sizeof(GpsApplication),sizeof(UsbApplication),sizeof(WifiApplication),sizeof(ApplicationMemory),sizeof(ApplicationRuntime));
     std::puts("PASS: empty startup, one-time mode construction, shared addresses, opposite-mode rejection, active-only destruction and stable GPS loans");
 }

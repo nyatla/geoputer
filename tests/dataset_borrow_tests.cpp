@@ -1,4 +1,4 @@
-#include "task/ui/UiModel.h"
+#include "task/ui/GpsUiModel.h"
 #include "task/storage/dataset/DatasetReadMemory.h"
 #include <cstring>
 #include <stdexcept>
@@ -9,7 +9,7 @@ void check(bool ok,const char* why){if(!ok)throw std::runtime_error(why);}
 void testDatasetBorrowing() {
     UiData common{};common.settings=defaultSettings();common.storage.card_state=CardState::Mounted;common.storage.settings_state=SettingsState::Loaded;
     common.editDatasets().count=1;common.editDatasets().rows[0].number=1;std::strcpy(common.editDatasets().rows[0].title,"OLD");
-    UiModel ui;check(ui.setScreen({ScreenId::Settings,DisplayMode::View,1,common,0,ActionResult::None})==OperationStatus::Ok,"dataset test enters settings");
+    GpsUiModel ui;check(ui.setScreen({ScreenId::Settings,DisplayMode::View,1,common,0,ActionResult::None})==OperationStatus::Ok,"dataset test enters settings");
     DatasetRequest request{};request.token=10;request.screen_generation=1;map::BufferLease buffer{};
     check(ui.beginDatasetRead(request,buffer)==OperationStatus::Ok,"dataset borrows fixed UI back");request.buffer=buffer;
     check(validDatasetMemory(request) && buffer.capacity==6060,"dataset typed layout fits existing image");

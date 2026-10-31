@@ -1,5 +1,5 @@
 #pragma once
-#include "../../TaskMessages.h"
+#include "../../GpsMessages.h"
 #include "../../utils/Queue.h"
 #include <cassert>
 #include <new>

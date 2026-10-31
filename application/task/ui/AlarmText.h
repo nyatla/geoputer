@@ -1,5 +1,5 @@
 #pragma once
-#include "UiTypes.h"
+#include "GpsUiTypes.h"
 #include <cstdio>
 namespace geoputer {
 inline constexpr unsigned AlarmRows=6,AlarmSoundRow=3,AlarmReloadRow=5;

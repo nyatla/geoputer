@@ -1,7 +1,7 @@
 #pragma once
 
 #include <cstddef>
-#include "UiTypes.h"
+#include "GpsUiTypes.h"
 
 namespace geoputer {
 

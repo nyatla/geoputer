@@ -1,5 +1,6 @@
 #include "../../utils/Console.h"
-#include "StorageTask.h"
+#include "GpsStorageTask.h"
+#include "../../hardware/CardSpi.h"
 #include "../../utils/ElapsedTime.h"
 #include "../../utils/HeapDiagnostics.h"
 #include "DatasetSelection.h"
@@ -18,18 +19,18 @@
 
 namespace geoputer {
 
-LogError StorageTask::tryAppendLog(const LogCommand& command, LogSnapshot& snapshot) {
-    if(usb_mode_ || wifi_mode_) {snapshot={};return LogError::Invalid;}
-    const auto error = gpsMode().log_writer_.append(command, taskTimeMs());
+LogError GpsStorageTask::tryAppendLog(const LogCommand& command, LogSnapshot& snapshot) {
+
+    const auto error = gpsState().log_writer_.append(command, taskTimeMs());
     snapshot = logSnapshot();
     return error;
 }
 
-void StorageTask::closeCard() {
+void GpsStorageTask::closeCard() {
     SdAccessScope access(this);
-    if(!wifi_mode_)if(auto* map=work().activeMap())map->release(map->info().request);
-    if(!usb_mode_ && !wifi_mode_) {
-        gpsMode().screen_resources_.clearMaps();gpsMode().place_lookup_.close();
+    if(auto* map=work().activeMap())map->release(map->info().request);
+    {
+        gpsState().screen_resources_.clearMaps();gpsState().place_lookup_.close();
     }
     if (drive_ == 0xFF) return;
     unmountStorageCard(drive_);
@@ -38,7 +39,7 @@ void StorageTask::closeCard() {
     mounted_ = false;
 }
 
-void StorageTask::mountCard() {
+void GpsStorageTask::mountCard() {
     SdAccessScope access(this);
     closeCard();
     state_.card_state = CardState::NoCard;
@@ -46,9 +47,9 @@ void StorageTask::mountCard() {
     state_.fat_type = 0;
     drive_ = initStorageCard(12, &spi_, config::SdSpiHz);
     if (drive_ == 0xFF) { state_.sd_error = state_.error = -10; return; }
-    if(!wifi_mode_) {
-        gpsMode().place_lookup_.setDrive(drive_);
-        gpsMode().log_writer_.setDrive(drive_);
+    {
+        gpsState().place_lookup_.setDrive(drive_);
+        gpsState().log_writer_.setDrive(drive_);
         work().setDrive(drive_);
     }
     mounted_ = mountStorageCard(drive_, "/sd", config::SdMaxOpenFiles, false);  // Never format on mount failure.
@@ -74,7 +75,7 @@ void StorageTask::mountCard() {
     state_.sd_error = state_.error = 0;
 }
 
-bool StorageTask::formatCard() {
+bool GpsStorageTask::formatCard() {
     SdAccessScope access(this);
     // Only reached via a confirmed command. No automatic formatting or NVS erasure.
     closeCard();
@@ -95,22 +96,22 @@ bool StorageTask::formatCard() {
     return state_.card_state == CardState::Mounted;
 }
 
-void StorageTask::configureDataset() {
-    if(usb_mode_)return;
+void GpsStorageTask::configureDataset() {
+
     state_.alarm={};
-    gpsMode().screen_resources_.clearMaps();
-    gpsMode().place_lookup_.configure(state_.settings.dataset,
+    gpsState().screen_resources_.clearMaps();
+    gpsState().place_lookup_.configure(state_.settings.dataset,
                             state_.settings.wordbook_language);
 }
 
-void StorageTask::releaseDataset(PlaceState reason) {
+void GpsStorageTask::releaseDataset(PlaceState reason) {
     if (!releaseUnusableDataset(settings_store_, state_, reason)) return;
     configureDataset();
     Console.printf("[DATASET RELEASE] number=%02u reason=%s saved=%u\n",state_.dataset_failure.number,
                    placeStateName(reason),!state_.dataset_failure.save_failed);
 }
 
-bool StorageTask::loadSettings() {
+bool GpsStorageTask::loadSettings() {
     state_.settings_state = settings_store_.load(state_.settings);
     configureDataset();
     if (state_.settings_state != SettingsState::Loaded && state_.settings_state != SettingsState::Defaults) {
@@ -121,7 +122,7 @@ bool StorageTask::loadSettings() {
     return true;
 }
 
-bool StorageTask::saveSettings(const Settings& value) {
+bool GpsStorageTask::saveSettings(const Settings& value) {
     // One versioned, checked record; never clear the namespace or the NVS partition.
     if (!settings_store_.save(value)) {
         state_.settings_state = SettingsState::Failed;
@@ -138,23 +139,21 @@ bool StorageTask::saveSettings(const Settings& value) {
     return true;
 }
 
-void StorageTask::handle(const StorageRequest& request) {
+void GpsStorageTask::handle(const StorageRequest& request) {
     if (request.source != TaskId::Application || request.request_id == 0) return;
     if(request.kind==MessageKind::ReleaseLogBrowse) {
         browse_release_generation_=std::max(browse_release_generation_,request.payload.log_read.screen_generation);
         return;
     }
     if(request.kind==MessageKind::CancelLogRead) {
-        if(has_read_ && work().logs().result().request.kind!=LogReadKind::Delete &&
-           request.payload.log_read.token==work().logs().result().request.token) work().logs().cancel();
+        if(has_read_ && work().logs().result().request.kind!=LogReadKind::Delete && request.payload.log_read.token==work().logs().result().request.token) work().logs().cancel();
         return;
     }
-    if (request.kind == MessageKind::LoadSettings || request.kind == MessageKind::SearchPlace ||
-        request.kind == MessageKind::CheckDataset) {
-        if (!usb_mode_ && !hasJob() && !replies_.completionPending() && !work().mapBusy()) {
+    if (request.kind == MessageKind::LoadSettings || request.kind == MessageKind::SearchPlace || request.kind == MessageKind::CheckDataset) {
+        if (!hasJob() && !replies_.completionPending() && !work().mapBusy()) {
             job_kind_ = request.kind == MessageKind::LoadSettings ? JobKind::LoadSettings :
                         request.kind == MessageKind::SearchPlace ? JobKind::SearchPlace : JobKind::CheckDataset;
-            gpsMode().place_request_ = request.kind == MessageKind::SearchPlace ? request.payload.place_request : PlaceRequest{};
+            gpsState().place_request_ = request.kind == MessageKind::SearchPlace ? request.payload.place_request : PlaceRequest{};
             job_ = {}; job_request_id_ = request.request_id;
             state_.busy = true;
         }
@@ -164,36 +163,35 @@ void StorageTask::handle(const StorageRequest& request) {
     prepareSyncReturn(pending_return, TaskId::Storage, request, ++sequence_);
     auto& result = pending_return.payload.result;
     if(request.kind==MessageKind::RequestMap) {
-        if(!usb_mode_ && initialized_ && !hasJob() && !replies_.completionPending() && !has_read_ && !work().mapBusy()) {
+        if(initialized_ && !hasJob() && !replies_.completionPending() && !has_read_ && !work().mapBusy()) {
             const auto& command=request.payload.map;
-            gpsMode().screen_resources_.selectMap(command.session);
+            gpsState().screen_resources_.selectMap(command.session);
             auto* map=work().forMap();
-            if(map && map->start(command,gpsMode().screen_resources_.session(command.session))) {
+            if(map && map->start(command,gpsState().screen_resources_.session(command.session))) {
                 if(state_.card_state!=CardState::Mounted)map->fail(map::Error::NoCard);
                 else if(!state_.settings.dataset)map->fail(map::Error::NoDataset);
-                else if(command.dataset_generation!=gpsMode().place_lookup_.datasetInfo().generation)map->fail(map::Error::Stale);
+                else if(command.dataset_generation!=gpsState().place_lookup_.datasetInfo().generation)map->fail(map::Error::Stale);
                 result.status=OperationStatus::Ok;
             }
         }
-    } else if(!usb_mode_ && (request.kind==MessageKind::ReleaseMap || request.kind==MessageKind::CancelMap)) {
+    } else if(request.kind==MessageKind::ReleaseMap || request.kind==MessageKind::CancelMap) {
         auto* map=work().activeMap();
         if(!map || map->release(request.payload.map)) {
             result.status=OperationStatus::Ok;
             reportMapHeap(request.kind==MessageKind::ReleaseMap?"released-retained":"cancelled",request.payload.map.token,
-                gpsMode().screen_resources_.retainedMapBytes());
+                gpsState().screen_resources_.retainedMapBytes());
         }
-    } else if(!usb_mode_ && request.kind==MessageKind::CloseMapSession) {
+    } else if(request.kind==MessageKind::CloseMapSession) {
         if(!work().mapBusy()) {
             // UI detaches; Storage keeps the fixed raster and its pixel key.
             // A new screen may render it again when the dataset/viewport match.
             result.status=OperationStatus::Ok;reportMapHeap("session-closed",request.payload.map.token);
         }
-    } else if(request.kind==MessageKind::UsbExportOperation) {
-        handleUsbExport(request,result);
+
     } else if (request.kind == MessageKind::DatasetOperation) {
-        if (!usb_mode_ && initialized_ && !has_read_ && !hasJob() && !replies_.completionPending() && !work().mapBusy() && validDatasetMemory(request.payload.dataset)) {
-            gpsMode().dataset_request_ = request.payload.dataset;
-            gpsMode().dataset_request_.language[sizeof(gpsMode().dataset_request_.language)-1] = 0;
+        if (initialized_ && !has_read_ && !hasJob() && !replies_.completionPending() && !work().mapBusy() && validDatasetMemory(request.payload.dataset)) {
+            gpsState().dataset_request_ = request.payload.dataset;
+            gpsState().dataset_request_.language[sizeof(gpsState().dataset_request_.language)-1] = 0;
             job_kind_ = JobKind::BrowseDatasets;
             job_ = {}; job_request_id_ = request.request_id;
             state_.busy = true; ++state_.revision; result.status = OperationStatus::Ok;
@@ -206,13 +204,7 @@ void StorageTask::handle(const StorageRequest& request) {
             configureDataset();
             state_.settings_state = nvs_ready_ ? SettingsState::Defaults : SettingsState::Unavailable;
             state_.nvs_error = nvs_ready_ ? 0 : -20;
-            if (usb_mode_) {
-                state_.settings_state = settings_store_.load(state_.settings);
-                usbMode().usb_.begin(spi_);
-                state_.usb = usbMode().usb_.snapshot(); usb_dirty_ = true;
-                state_.card_state = CardState::Unmounted; // No FatFs mount while the card is published to the PC.
-                Console.printf("[USB] raw SD ready=%u; FATFS deferred; GPS/GIS disabled\n",state_.usb.ready);
-            } else mountCard();
+            mountCard();
             state_.revision = 1;
             initialized_ = true;
             Console.printf("[STORAGE] NVS=%s SD=%s spi_hz=%lu spi_actual_hz=%lu\n", nvs_ready_ ? "ready" : "error", cardStateName(state_.card_state), static_cast<unsigned long>(config::SdSpiHz), static_cast<unsigned long>(spiClockDivToFrequency(spi_.getClockDivider())));
@@ -221,9 +213,7 @@ void StorageTask::handle(const StorageRequest& request) {
     } else if (request.kind == MessageKind::GetStorageStatus) {
         result.status = initialized_ ? OperationStatus::Ok : OperationStatus::Unavailable;
     } else if(request.kind==MessageKind::ListLogs || request.kind==MessageKind::ReadLogSummary || request.kind==MessageKind::ReadLogRecords || request.kind==MessageKind::DeleteLog || request.kind==MessageKind::ReadLogStatistics) {
-        if(initialized_ && !has_read_ && !hasJob() && !replies_.completionPending() && !work().mapBusy() &&
-           (!usb_mode_ || (usbMode().usb_.local() && state_.card_state==CardState::Mounted &&
-                           state_.export_job.phase==ExportPhase::Selecting && request.kind==MessageKind::ListLogs))) {
+        if(initialized_ && !has_read_ && !hasJob() && !replies_.completionPending() && !work().mapBusy()) {
             auto read=request.payload.log_read;
             read.kind=request.kind==MessageKind::ReadLogStatistics?LogReadKind::Statistics:request.kind==MessageKind::ListLogs?LogReadKind::List:request.kind==MessageKind::ReadLogSummary?LogReadKind::Summary:request.kind==MessageKind::DeleteLog?LogReadKind::Delete:LogReadKind::Records;
             auto* logs=work().forLogs();
@@ -233,37 +223,32 @@ void StorageTask::handle(const StorageRequest& request) {
                 state_.busy=true; ++state_.revision; result.status=OperationStatus::Ok;
             }
         } else result.status=OperationStatus::Unavailable;
-    } else if (!usb_mode_ && initialized_ && (request.kind == MessageKind::OpenLogSession ||
-               request.kind == MessageKind::FlushLog ||
-               request.kind == MessageKind::CloseLogSession)) {
+    } else if (initialized_ && (request.kind == MessageKind::OpenLogSession || request.kind == MessageKind::FlushLog || request.kind == MessageKind::CloseLogSession)) {
         const auto& command = request.payload.log;
         LogError error = LogError::Invalid;
         if (state_.card_state != CardState::Mounted) error = LogError::Io;
         else if (request.kind == MessageKind::OpenLogSession) {
-            error = gpsMode().log_writer_.open(command.session_id, command.created_utc_ms);
-        } else error = gpsMode().log_writer_.requestFlush(command.session_id, command.sample_seq,
+            error = gpsState().log_writer_.open(command.session_id, command.created_utc_ms);
+        } else error = gpsState().log_writer_.requestFlush(command.session_id, command.sample_seq,
                                                 request.kind == MessageKind::CloseLogSession);
         state_.log = logSnapshot();
         state_.log_result = error;
         ++state_.revision;
         result.status = error == LogError::None ? OperationStatus::Ok : OperationStatus::Unavailable;
-    } else if (initialized_ && !hasJob() && !replies_.completionPending() && !work().mapBusy() &&
-               (request.kind == MessageKind::SaveSettings || request.kind == MessageKind::OperateStorage)) {
+    } else if (initialized_ && !hasJob() && !replies_.completionPending() && !work().mapBusy() && (request.kind == MessageKind::SaveSettings || request.kind == MessageKind::OperateStorage)) {
         const auto command = request.payload.storage_command;
         const bool saving = request.kind == MessageKind::SaveSettings &&
                             command.operation == StorageOperation::SaveSettings && validSettings(command.settings);
         const bool sd_operation = request.kind == MessageKind::OperateStorage &&
                                   (command.operation == StorageOperation::Remount || command.operation == StorageOperation::Unmount ||
                                    (command.operation == StorageOperation::Format && command.confirmed));
-        const bool alarm_operation=!usb_mode_ && !has_read_ && state_.card_state==CardState::Mounted && gpsMode().selected_dataset_.ready() &&
+        const bool alarm_operation=!has_read_ && state_.card_state==CardState::Mounted && gpsState().selected_dataset_.ready() &&
             request.kind==MessageKind::OperateStorage && command.settings.dataset==state_.settings.dataset &&
             (command.operation==StorageOperation::SaveAlarm || command.operation==StorageOperation::ReloadAlarm);
         const bool mode_operation = request.kind == MessageKind::OperateStorage && command.confirmed && nvs_ready_ &&
-            (command.operation == (usb_mode_ ? StorageOperation::ExitUsbMode : StorageOperation::EnterUsbMode) ||
-             (!usb_mode_ && command.operation==StorageOperation::EnterWifiMode));
-        if (alarm_operation || (!usb_mode_ && saving && nvs_ready_) ||
-            (((!usb_mode_ && sd_operation) || mode_operation) && !has_read_ && (usb_mode_ || !gpsMode().log_writer_.hasRetainedSession()) &&
-              (!usb_mode_ || (usbMode().usb_work_==UsbWork::None && state_.export_job.phase==ExportPhase::Idle)))) {
+            (command.operation == (StorageOperation::EnterUsbMode) ||
+             (command.operation==StorageOperation::EnterWifiMode));
+        if (alarm_operation || (saving && nvs_ready_) || ((sd_operation || mode_operation) && !has_read_ && !gpsState().log_writer_.hasRetainedSession())) {
             job_ = command; job_request_id_ = request.request_id;
             job_kind_ = JobKind::Operation;
             state_.busy = true; state_.operation = command.operation;
@@ -276,97 +261,97 @@ void StorageTask::handle(const StorageRequest& request) {
     result.storage = state_;
 }
 
-void StorageTask::sendReturn() {
+void GpsStorageTask::sendReturn() {
     replies_.sendReturn(results_);
 }
 
-void StorageTask::completeDatasetJob() {
-    auto& view=*datasetResultMemory(gpsMode().dataset_request_);
-    view={};view.purpose=gpsMode().dataset_request_.purpose;view.number=gpsMode().dataset_request_.number;
-    const bool listing=gpsMode().dataset_request_.action==DatasetAction::Open || gpsMode().dataset_request_.action==DatasetAction::Older || gpsMode().dataset_request_.action==DatasetAction::Newer;
-    const bool maintenance=gpsMode().dataset_request_.action==DatasetAction::RebuildIndex || gpsMode().dataset_request_.action==DatasetAction::VerifyIndex;
-    const bool clearing = gpsMode().dataset_request_.action == DatasetAction::Clear;
-    const bool applying = clearing || gpsMode().dataset_request_.action == DatasetAction::Apply || maintenance;
-    gpsMode().index_started_at_=taskTimeMs();gpsMode().index_progress_={};gpsMode().index_progress_.token=gpsMode().dataset_request_.token;
-    gpsMode().index_progress_.verifying=gpsMode().dataset_request_.action==DatasetAction::VerifyIndex;
-    if (applying && gpsMode().log_writer_.hasRetainedSession()) view.error = DatasetError::NotStopped;
+void GpsStorageTask::completeDatasetJob() {
+    auto& view=*datasetResultMemory(gpsState().dataset_request_);
+    view={};view.purpose=gpsState().dataset_request_.purpose;view.number=gpsState().dataset_request_.number;
+    const bool listing=gpsState().dataset_request_.action==DatasetAction::Open || gpsState().dataset_request_.action==DatasetAction::Older || gpsState().dataset_request_.action==DatasetAction::Newer;
+    const bool maintenance=gpsState().dataset_request_.action==DatasetAction::RebuildIndex || gpsState().dataset_request_.action==DatasetAction::VerifyIndex;
+    const bool clearing = gpsState().dataset_request_.action == DatasetAction::Clear;
+    const bool applying = clearing || gpsState().dataset_request_.action == DatasetAction::Apply || maintenance;
+    gpsState().index_started_at_=taskTimeMs();gpsState().index_progress_={};gpsState().index_progress_.token=gpsState().dataset_request_.token;
+    gpsState().index_progress_.verifying=gpsState().dataset_request_.action==DatasetAction::VerifyIndex;
+    if (applying && gpsState().log_writer_.hasRetainedSession()) view.error = DatasetError::NotStopped;
     else if (clearing) {
         clearDatasetSelection(view);
-    } else if (maintenance && (!gpsMode().dataset_request_.number || gpsMode().dataset_request_.number>99)) view.error = DatasetError::Unselected;
-    else if(listing && gpsMode().dataset_request_.purpose==DatasetPurpose::Select && (!mounted_ || state_.card_state!=CardState::Mounted)) view.count=1;
+    } else if (maintenance && (!gpsState().dataset_request_.number || gpsState().dataset_request_.number>99)) view.error = DatasetError::Unselected;
+    else if(listing && gpsState().dataset_request_.purpose==DatasetPurpose::Select && (!mounted_ || state_.card_state!=CardState::Mounted)) view.count=1;
     else if (!mounted_ || state_.card_state != CardState::Mounted) view.error = DatasetError::Missing;
     else if(maintenance) {
         maintainDatasetIndex(view);
     } else {
-        if(listing)DatasetCatalog(config::DatasetRoot,this,drive_,&work().files()).readInto(gpsMode().dataset_request_,state_.settings.language,view);
+        if(listing)DatasetCatalog(config::DatasetRoot,this,drive_,&work().files()).readInto(gpsState().dataset_request_,state_.settings.language,view);
         else {
-            StorageIndexLease workspace(gpsMode().code_images_.map,gpsMode().screen_resources_);
+            StorageIndexLease workspace(gpsState().code_images_.map,gpsState().screen_resources_);
             if(!workspace){view.detail=true;view.error=DatasetError::Busy;}
-            else DatasetCatalog(config::DatasetRoot,this,drive_,&work().files(),workspace.work()).readInto(gpsMode().dataset_request_,state_.settings.language,view);
+            else DatasetCatalog(config::DatasetRoot,this,drive_,&work().files(),workspace.work()).readInto(gpsState().dataset_request_,state_.settings.language,view);
         }
     }
-    if(!usb_mode_ && state_.card_state!=CardState::Mounted) releaseDataset(PlaceState::NoCard);
+    if(state_.card_state!=CardState::Mounted) releaseDataset(PlaceState::NoCard);
     if (applying && !maintenance && !clearing && view.error == DatasetError::None) {
         applyDatasetSelection(view);
     }
     if(applying) {
-        gpsMode().index_progress_.phase=view.error==DatasetError::None?IndexPhase::Complete:IndexPhase::Failed;
-        gpsMode().index_progress_.percent=view.error==DatasetError::None?100:gpsMode().index_progress_.percent;
-        gpsMode().index_progress_.elapsed_ms=taskTimeMs()-gpsMode().index_started_at_;view.progress=gpsMode().index_progress_;
-        gpsMode().index_progress_dirty_=false;
+        gpsState().index_progress_.phase=view.error==DatasetError::None?IndexPhase::Complete:IndexPhase::Failed;
+        gpsState().index_progress_.percent=view.error==DatasetError::None?100:gpsState().index_progress_.percent;
+        gpsState().index_progress_.elapsed_ms=taskTimeMs()-gpsState().index_started_at_;view.progress=gpsState().index_progress_;
+        gpsState().index_progress_dirty_=false;
     }
-    view.applying = applying; view.revision = gpsMode().dataset_request_.token;
+    view.applying = applying; view.revision = gpsState().dataset_request_.token;
     state_.busy = has_read_; ++state_.revision;
     auto& completion = replies_.beginCompletion(); completion.kind = view.error == DatasetError::None ? MessageKind::ReadCompleted : MessageKind::ReadFailed;
     completion.source = TaskId::Storage; completion.request_id = job_request_id_;
     completion.sequence = ++sequence_; completion.sent_at_ms = taskTimeMs();
     auto& result = completion.payload.storage_completion;
     result.request_id = job_request_id_; result.snapshot = state_;
-    result.read_kind = StorageReadKind::DatasetBrowser; result.dataset={gpsMode().dataset_request_,view.error};
+    result.read_kind = StorageReadKind::DatasetBrowser; result.dataset={gpsState().dataset_request_,view.error};
      job_kind_ = JobKind::None;
     return;
 }
 
-void StorageTask::clearDatasetSelection(DatasetView& view) {
-    Settings candidate = gpsMode().dataset_request_.reset_settings ? defaultSettings() : state_.settings;
+void GpsStorageTask::clearDatasetSelection(DatasetView& view) {
+    Settings candidate = gpsState().dataset_request_.reset_settings ? defaultSettings() : state_.settings;
     candidate.dataset = 0;
     std::memset(candidate.wordbook_language, 0, sizeof(candidate.wordbook_language));
     if (!saveSettings(candidate)) view.error = DatasetError::SaveFailed;
 }
 
-void StorageTask::maintainDatasetIndex(DatasetView& view) {
-    StorageIndexLease workspace(gpsMode().code_images_.map,gpsMode().screen_resources_);
+void GpsStorageTask::maintainDatasetIndex(DatasetView& view) {
+    StorageIndexLease workspace(gpsState().code_images_.map,gpsState().screen_resources_);
     if(!workspace){view.error=DatasetError::Busy;return;}
-    const bool active=gpsMode().dataset_request_.number==state_.settings.dataset;
-    if(active)gpsMode().place_lookup_.close();
-    const auto directory=DatasetCatalog{}.directory(gpsMode().dataset_request_.number);
+    const bool active=gpsState().dataset_request_.number==state_.settings.dataset;
+    if(active)gpsState().place_lookup_.close();
+    const auto directory=DatasetCatalog{}.directory(gpsState().dataset_request_.number);
     DatasetMetadata metadata;
     readDatasetMetadataInto(directory.view(),state_.settings.language,"",metadata,this);
     view.error=metadata.error;
     if(view.error==DatasetError::None) {
         DatasetIndex index(drive_,this,indexProgress,this,&work().files(),workspace.work());
-        view.error=gpsMode().dataset_request_.action==DatasetAction::RebuildIndex?
+        view.error=gpsState().dataset_request_.action==DatasetAction::RebuildIndex?
             index.rebuild(directory.view(),metadata):
             index.verifyAgainstDataset(directory.view(),metadata);
     }
     if(active && view.error!=DatasetError::None)releaseDataset(datasetErrorState(view.error));
     Console.printf("[DATASET CACHE] action=%s target=%02u result=%u elapsed_ms=%lu\n",
-        gpsMode().dataset_request_.action==DatasetAction::RebuildIndex?"REBUILD":"VERIFY",gpsMode().dataset_request_.number,
-        static_cast<unsigned>(view.error),static_cast<unsigned long>(taskTimeMs()-gpsMode().index_started_at_));
+        gpsState().dataset_request_.action==DatasetAction::RebuildIndex?"REBUILD":"VERIFY",gpsState().dataset_request_.number,
+        static_cast<unsigned>(view.error),static_cast<unsigned long>(taskTimeMs()-gpsState().index_started_at_));
 }
 
-void StorageTask::applyDatasetSelection(DatasetView& view) {
-    Settings candidate = gpsMode().dataset_request_.reset_settings ? defaultSettings() : state_.settings;
-    candidate.dataset = gpsMode().dataset_request_.number;
+void GpsStorageTask::applyDatasetSelection(DatasetView& view) {
+    Settings candidate = gpsState().dataset_request_.reset_settings ? defaultSettings() : state_.settings;
+    candidate.dataset = gpsState().dataset_request_.number;
     std::snprintf(candidate.wordbook_language, sizeof(candidate.wordbook_language), "%s", view.info.language);
     const auto directory = DatasetCatalog{}.directory(candidate.dataset);
     DatasetMetadata metadata;
     readDatasetMetadataInto(directory.view(),candidate.language,candidate.wordbook_language,metadata,this);
     if (metadata.error != DatasetError::None) view.error = metadata.error;
     else {
-        StorageIndexLease workspace(gpsMode().code_images_.map,gpsMode().screen_resources_);
+        StorageIndexLease workspace(gpsState().code_images_.map,gpsState().screen_resources_);
         if(!workspace){view.error=DatasetError::Busy;return;}
-        struct ApplyContext { StorageTask* task; const Settings* settings; } context{this, &candidate};
+        struct ApplyContext { GpsStorageTask* task; const Settings* settings; } context{this, &candidate};
         const auto index_started = taskTimeMs();
         Console.printf("[DATASET INDEX] generating %02u lang=%s\n", candidate.dataset, candidate.wordbook_language);
         view.error = DatasetIndex(drive_, this,indexProgress,this,&work().files(),workspace.work()).apply(directory.view(), metadata, [](void* pointer) {
@@ -377,10 +362,10 @@ void StorageTask::applyDatasetSelection(DatasetView& view) {
                        static_cast<unsigned long>(taskTimeMs() - index_started));
     }
     if (view.error == DatasetError::None)
-        gpsMode().place_lookup_.configure(candidate.dataset, candidate.wordbook_language);
+        gpsState().place_lookup_.configure(candidate.dataset, candidate.wordbook_language);
 }
 
-void StorageTask::completeJob() {
+void GpsStorageTask::completeJob() {
     const bool load_job = job_kind_ == JobKind::LoadSettings;
     const bool search_job = job_kind_ == JobKind::SearchPlace;
     const bool dataset_job = job_kind_ == JobKind::CheckDataset;
@@ -392,37 +377,37 @@ void StorageTask::completeJob() {
     bool ok = false;
     state_.error = 0;
     PlaceResult local_place{};
-    const bool borrowed_place=search_job && validPlaceMemory(gpsMode().place_request_);
-    PlaceResult& place=borrowed_place?*placeResultMemory(gpsMode().place_request_):local_place;
+    const bool borrowed_place=search_job && validPlaceMemory(gpsState().place_request_);
+    PlaceResult& place=borrowed_place?*placeResultMemory(gpsState().place_request_):local_place;
     const uint32_t started_us = config::DetailedDiagnostics ? micros() : 0;
-    const auto cache_before = config::DetailedDiagnostics && !usb_mode_ ? gpsMode().place_lookup_.cacheStats() : MapCacheStats{};
-    const auto wordbook_before = config::DetailedDiagnostics && !usb_mode_ ? gpsMode().place_lookup_.wordBookCacheStats() : WordBookCacheStats{};
+    const auto cache_before = config::DetailedDiagnostics ? gpsState().place_lookup_.cacheStats() : MapCacheStats{};
+    const auto wordbook_before = config::DetailedDiagnostics ? gpsState().place_lookup_.wordBookCacheStats() : WordBookCacheStats{};
     if (search_job || dataset_job) {
-        if(search_job && gpsMode().screen_resources_.retainedMapBytes())reportMapHeap("place-begin-retained",job_request_id_,gpsMode().screen_resources_.retainedMapBytes());
+        if(search_job && gpsState().screen_resources_.retainedMapBytes())reportMapHeap("place-begin-retained",job_request_id_,gpsState().screen_resources_.retainedMapBytes());
         if(search_job && !borrowed_place) {
-            place.request=gpsMode().place_request_;place.state=PlaceState::DataError;place.dataset=gpsMode().place_lookup_.datasetInfo();
+            place.request=gpsState().place_request_;place.state=PlaceState::DataError;place.dataset=gpsState().place_lookup_.datasetInfo();
         } else if (!state_.settings.dataset || (mounted_ && state_.card_state == CardState::Mounted)) {
             if(dataset_job) {
-                StorageIndexLease workspace(gpsMode().code_images_.map,gpsMode().screen_resources_);
-                if(!workspace) {place.state=PlaceState::Waiting;place.dataset=gpsMode().place_lookup_.datasetInfo();}
-                else {configureDataset();gpsMode().place_lookup_.prepareInto(place,workspace.work()->available());}
+                StorageIndexLease workspace(gpsState().code_images_.map,gpsState().screen_resources_);
+                if(!workspace) {place.state=PlaceState::Waiting;place.dataset=gpsState().place_lookup_.datasetInfo();}
+                else {configureDataset();gpsState().place_lookup_.prepareInto(place,workspace.work()->available());}
             }
             else {
-                auto& bytes=placeReaderMemory(gpsMode().place_request_);
+                auto& bytes=placeReaderMemory(gpsState().place_request_);
                 BorrowedReadBuffer work(bytes.data(),bytes.size());
-                if(gpsMode().place_request_.alarm_sample)gpsMode().place_lookup_.observeAlarmInto(gpsMode().place_request_,place,state_.alarm.settings,&work);
-                else gpsMode().place_lookup_.searchInto(gpsMode().place_request_,place,&work,&placeWordBookMemory(gpsMode().place_request_));
+                if(gpsState().place_request_.alarm_sample)gpsState().place_lookup_.observeAlarmInto(gpsState().place_request_,place,state_.alarm.settings,&work);
+                else gpsState().place_lookup_.searchInto(gpsState().place_request_,place,&work,&placeWordBookMemory(gpsState().place_request_));
             }
-        } else { place.request = gpsMode().place_request_; place.state = PlaceState::NoCard; place.dataset = gpsMode().place_lookup_.datasetInfo(); place.dataset.state = PlaceState::NoCard; }
+        } else { place.request = gpsState().place_request_; place.state = PlaceState::NoCard; place.dataset = gpsState().place_lookup_.datasetInfo(); place.dataset.state = PlaceState::NoCard; }
         if(datasetUnavailable(place.state)) {
             releaseDataset(place.state);
-            place.dataset=gpsMode().place_lookup_.datasetInfo();
+            place.dataset=gpsState().place_lookup_.datasetInfo();
         }
-        if(search_job && gpsMode().screen_resources_.retainedMapBytes())reportMapHeap("place-done-retained",job_request_id_,gpsMode().screen_resources_.retainedMapBytes());
+        if(search_job && gpsState().screen_resources_.retainedMapBytes())reportMapHeap("place-done-retained",job_request_id_,gpsState().screen_resources_.retainedMapBytes());
         ok = place.state == PlaceState::Unselected || place.state == PlaceState::Ready || place.state == PlaceState::NotFound;
         if (dataset_job && place.state == PlaceState::Ready && !state_.settings.wordbook_language[0])
             std::snprintf(state_.settings.wordbook_language, sizeof(state_.settings.wordbook_language), "%s",
-                          gpsMode().place_lookup_.selectedLanguage().data());
+                          gpsState().place_lookup_.selectedLanguage().data());
         if(dataset_job && place.state==PlaceState::Ready)loadAlarmProfile();
     } else if (load_job) ok = loadSettings();
     else switch (job_.operation) {
@@ -441,14 +426,9 @@ void StorageTask::completeJob() {
             if (ok) { closeCard(); state_.card_state = CardState::Unmounted; }
             else state_.nvs_error = state_.error = -21;
             break;
-        case StorageOperation::ExitUsbMode:
-            ok = usbMode().usb_.exitToLogger(); state_.usb = usbMode().usb_.snapshot();
-            if (!ok) state_.error = -31;
-            break;
         default: break;
     }
-    if(!usb_mode_ && !read_job && (job_.operation==StorageOperation::Remount || job_.operation==StorageOperation::Unmount || job_.operation==StorageOperation::Format) &&
-       state_.card_state!=CardState::Mounted) releaseDataset(PlaceState::NoCard);
+    if(!read_job && (job_.operation==StorageOperation::Remount || job_.operation==StorageOperation::Unmount || job_.operation==StorageOperation::Format) && state_.card_state!=CardState::Mounted) releaseDataset(PlaceState::NoCard);
     state_.busy = has_read_;
     state_.operation = job_.operation;
     state_.operation_ok = ok;
@@ -477,8 +457,8 @@ void StorageTask::completeJob() {
     job_kind_ = JobKind::None;
     if constexpr (config::DetailedDiagnostics) {
         if (search_job || dataset_job) {
-            const auto cache = gpsMode().place_lookup_.cacheStats();
-            const auto wordbook = gpsMode().place_lookup_.wordBookCacheStats();
+            const auto cache = gpsState().place_lookup_.cacheStats();
+            const auto wordbook = gpsState().place_lookup_.wordBookCacheStats();
             Console.printf("[DATASET] chunks=%llu max=%lu state=%s\n",
                           static_cast<unsigned long long>(place.dataset.chunks), static_cast<unsigned long>(place.dataset.limit),
                           placeStateName(place.state));
@@ -499,7 +479,7 @@ void StorageTask::completeJob() {
                                           static_cast<unsigned long>(wordbook.hits),
                                           static_cast<unsigned long>(wordbook.misses));
             if (search_job && mounted_ && state_.card_state == CardState::Mounted) {
-                const auto& time = gpsMode().place_lookup_.readTiming();
+                const auto& time = gpsState().place_lookup_.readTiming();
                 Console.printf("[READ-TIME] total_us=%llu open_us=%llu map_us=%llu rect_us=%llu wordbook_us=%llu text_us=%llu\n",
                               static_cast<unsigned long long>(time.total_us), static_cast<unsigned long long>(time.open_us),
                               static_cast<unsigned long long>(time.map_us), static_cast<unsigned long long>(time.rect_us),
@@ -535,24 +515,24 @@ void StorageTask::completeJob() {
     }
 }
 
-void StorageTask::notify() {
+void GpsStorageTask::notify() {
     replies_.notifyCompletion(notifications_);
 }
 
-void StorageTask::sdBegin() {
+void GpsStorageTask::sdBegin() {
     if (sd_depth_++) return;
     ++state_.sd.access_id;
     if (!++state_.sd.revision) ++state_.sd.revision;
     state_.sd.active = true; sd_dirty_ = true;
     notifyActivity();
 }
-void StorageTask::sdEnd() {
+void GpsStorageTask::sdEnd() {
     if (!sd_depth_ || --sd_depth_) return;
     if (!++state_.sd.revision) ++state_.sd.revision;
     state_.sd.active = false; sd_dirty_ = true;
     notifyActivity();
 }
-void StorageTask::cacheState(RgCacheState cache, bool new_dataset) {
+void GpsStorageTask::cacheState(RgCacheState cache, bool new_dataset) {
     if (!new_dataset && cache == state_.rg.state) return;
     if (new_dataset) ++state_.rg.dataset_generation;
     state_.rg.state = cache;
@@ -560,17 +540,17 @@ void StorageTask::cacheState(RgCacheState cache, bool new_dataset) {
     rg_dirty_ = true;
     notifyActivity();
 }
-void StorageTask::indexProgress(void* pointer,const IndexProgress& progress) {
-    auto& self=*static_cast<StorageTask*>(pointer);self.gpsMode().index_progress_=progress;
-    self.gpsMode().index_progress_.token=self.gpsMode().dataset_request_.token;
-    self.gpsMode().index_progress_.elapsed_ms=taskTimeMs()-self.gpsMode().index_started_at_;
-    self.gpsMode().index_progress_dirty_=true;self.notifyActivity();
+void GpsStorageTask::indexProgress(void* pointer,const IndexProgress& progress) {
+    auto& self=*static_cast<GpsStorageTask*>(pointer);self.gpsState().index_progress_=progress;
+    self.gpsState().index_progress_.token=self.gpsState().dataset_request_.token;
+    self.gpsState().index_progress_.elapsed_ms=taskTimeMs()-self.gpsState().index_started_at_;
+    self.gpsState().index_progress_dirty_=true;self.notifyActivity();
 }
-void StorageTask::notifyActivity() {
-    if(!usb_mode_ && !wifi_mode_ && gpsMode().index_progress_dirty_ && taskTimeMs()-gpsMode().index_progress_at_>=200) {
+void GpsStorageTask::notifyActivity() {
+    if(gpsState().index_progress_dirty_ && taskTimeMs()-gpsState().index_progress_at_>=200) {
         AppNotification progress{};progress.kind=MessageKind::DatasetProgress;progress.source=TaskId::Storage;
-        progress.payload.index_progress=gpsMode().index_progress_;
-        if(sendSpeculative(notifications_,progress)==SpeculativeResult::Queued) {gpsMode().index_progress_dirty_=false;gpsMode().index_progress_at_=taskTimeMs();}
+        progress.payload.index_progress=gpsState().index_progress_;
+        if(sendSpeculative(notifications_,progress)==SpeculativeResult::Queued) {gpsState().index_progress_dirty_=false;gpsState().index_progress_at_=taskTimeMs();}
     }
     AppNotification event{};
     event.source = TaskId::Storage; event.sent_at_ms = taskTimeMs();
@@ -585,15 +565,15 @@ void StorageTask::notifyActivity() {
         if (sendSpeculative(notifications_, event) == SpeculativeResult::Queued) sd_dirty_ = false;
     }
 }
-void StorageTask::flushLog(bool force) {
+void GpsStorageTask::flushLog(bool force) {
     const auto log = logSnapshot();
     const auto now = taskTimeMs();  // Sample time after the producer-published timestamp.
     const bool due = log.buffered && now - log.buffer_since_ms >= FlushIntervals[state_.settings.flush_interval] * 1000u;
-    if ((!force && !gpsMode().log_writer_.needsFlush() && !due) || static_cast<int32_t>(now - gpsMode().next_log_retry_) < 0) return;
-    const bool ok = gpsMode().log_writer_.flush(now);
+    if ((!force && !gpsState().log_writer_.needsFlush() && !due) || static_cast<int32_t>(now - gpsState().next_log_retry_) < 0) return;
+    const bool ok = gpsState().log_writer_.flush(now);
     state_.log = logSnapshot();
     state_.log_result = ok ? LogError::None : state_.log.error;
-    gpsMode().next_log_retry_ = ok ? now : now + 5000;
+    gpsState().next_log_retry_ = ok ? now : now + 5000;
     ++state_.revision;
     auto& completion = replies_.beginCompletion();
     completion.kind = ok ? MessageKind::LogWritten : MessageKind::StorageError;
@@ -607,12 +587,12 @@ void StorageTask::flushLog(bool force) {
                   state_.log.closing, static_cast<unsigned>(state_.log.error));
 }
 
-void StorageTask::stepLogRead() {
+void GpsStorageTask::stepLogRead() {
     if(!read_prepared_ && !work().logs().done()) {
         const auto log=logSnapshot();
         if(state_.card_state!=CardState::Mounted) work().logs().fail(LogReadError::NoCard);
         else if(work().logs().result().request.kind!=LogReadKind::Delete && log.session_id==read_barrier_session_ && log.saved<read_barrier_) {
-            if(log.error!=LogError::None && static_cast<int32_t>(taskTimeMs()-gpsMode().next_log_retry_)<0)
+            if(log.error!=LogError::None && static_cast<int32_t>(taskTimeMs()-gpsState().next_log_retry_)<0)
                 work().logs().fail(LogReadError::SaveFailed);
             else { flushLog(true); return; }
         } else read_prepared_=true;
@@ -621,7 +601,7 @@ void StorageTask::stepLogRead() {
     const bool statistics=reader.result().request.kind==LogReadKind::Statistics;
     const auto start=monotonicMicros();
     for(unsigned n=0;!reader.done();++n) {
-        reader.step(usb_mode_?nullptr:&gpsMode().log_writer_);
+        reader.step(&gpsState().log_writer_);
         if(!statistics || n+1>=config::LogStatisticsStepsPerLoop || monotonicMicros()-start>=config::LogStatisticsBudgetUs)break;
     }
     if(!reader.done()) {
@@ -647,15 +627,15 @@ void StorageTask::stepLogRead() {
                   static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)));
 }
 
-void StorageTask::stepMap() {
+void GpsStorageTask::stepMap() {
     auto* map=work().activeMap();
     if(!map)return;
     if(map->reading()) {
         const auto request=map->info().request;
         const auto started=config::DetailedDiagnostics ? taskTimeMs() : 0;
         reportMapHeap("read-begin",request.token);
-        map->loaded(readBoundaryMap(gpsMode().selected_dataset_,request,drive_,this,
-            std::move(gpsMode().screen_resources_.session(request.session)),map->readBuffer(),map->readFile()));
+        map->loaded(readBoundaryMap(gpsState().selected_dataset_,request,drive_,this,
+            std::move(gpsState().screen_resources_.session(request.session)),map->readBuffer(),map->readFile()));
         if constexpr (config::DetailedDiagnostics) Console.printf("[MAP] read token=%lu error=%u elapsed_ms=%lu heap=%u\n",
             static_cast<unsigned long>(request.token),static_cast<unsigned>(map->info().error),
             static_cast<unsigned long>(taskTimeMs()-started),ESP.getFreeHeap());
@@ -664,7 +644,7 @@ void StorageTask::stepMap() {
         const bool was_complete=map->complete();
         map->step();
         if(!was_complete && map->complete())reportMapHeap("render-done-retained",map->info().request.token,
-            gpsMode().screen_resources_.session(map->info().request.session).bytes());
+            gpsState().screen_resources_.session(map->info().request.session).bytes());
     }
     if(map->notificationPending()) {
         AppNotification event{};event.kind=MessageKind::MapCompleted;event.source=TaskId::Storage;
@@ -673,18 +653,10 @@ void StorageTask::stepMap() {
     }
 }
 
-void StorageTask::initializeCardHardware() {
-            digitalWrite(config::LoraSelectPin, HIGH);  // Keep the radio deselected until the controlled SLEEP transition.
-            pinMode(config::LoraSelectPin, OUTPUT);
-            pinMode(12, OUTPUT); digitalWrite(12, HIGH);
-            spi_.begin(40, 39, 14, 12);
-            uint8_t lora_status = 0xff;
-            const bool lora_sleep = sleepUnusedLora(spi_, &lora_status);
-            Console.printf("[LORA] %s status=0x%02X (TX/RX disabled)\n", lora_sleep ? "SLEEP" : "RESET HELD", lora_status);
-}
+void GpsStorageTask::initializeCardHardware() {initializeCardSpi(spi_);}
 
-void StorageTask::run() {
-    if(wifi_mode_){runWifi();return;}
+void GpsStorageTask::run() {
+
     for (;;) {
         sendReturn();
         notify();
@@ -692,35 +664,16 @@ void StorageTask::run() {
         // Keep the one accepted operation/result until delivered. An incoming
         // read notification must never be consumed and silently discarded.
         if (!replies_.returnPending() && !hasJob() && !replies_.completionPending() && inbox().receive(request)) { handle(request); sendReturn(); }
-        if(browse_release_generation_ && !has_read_ && !hasJob() &&
-           !replies_.returnPending() && !replies_.completionPending() &&
-           work().releaseLogs(browse_release_generation_))browse_release_generation_=0;
+        if(browse_release_generation_ && !has_read_ && !hasJob() && !replies_.returnPending() && !replies_.completionPending() && work().releaseLogs(browse_release_generation_))browse_release_generation_=0;
         // Display notifications never gate physical work. Only accepted job/results are retained.
         if (!replies_.returnPending() && hasJob()) completeJob();
-        if (!usb_mode_ && !replies_.returnPending() && !hasJob() && !replies_.completionPending()) flushLog();
-        if (!replies_.returnPending() && !hasJob() && !replies_.completionPending() && has_read_ && (!usb_mode_ || usbMode().usb_.local())) {
-            if(usb_mode_ && usbMode().usb_work_==UsbWork::PublishMenu) work().logs().cancel();
+        if (!replies_.returnPending() && !hasJob() && !replies_.completionPending()) flushLog();
+        if (!replies_.returnPending() && !hasJob() && !replies_.completionPending() && has_read_) {
+
             stepLogRead();
         }
-        if(!usb_mode_ && !replies_.returnPending() && !hasJob() && !replies_.completionPending() && !has_read_) stepMap();
-        if (usb_mode_) {
-            const auto io=usbMode().usb_.takeActivity();
-            const bool active=io.active || sd_depth_!=0;
-            if(io.accesses || active!=state_.sd.active) {
-                state_.sd.access_id+=io.accesses;
-                state_.sd.active=active;
-                if(!++state_.sd.revision)++state_.sd.revision;
-                sd_dirty_=true;notifyActivity();
-            }
-            if(!replies_.returnPending() && !hasJob() && !has_read_ && !replies_.completionPending()) stepUsbExport();
-            const auto view = usbMode().usb_.snapshot();
-            if (!(view == state_.usb)) { state_.usb = view; ++state_.revision; usb_dirty_ = true; }
-            if (usb_dirty_) {
-                AppNotification event{}; event.source = TaskId::Storage; event.kind = MessageKind::UsbStorageChanged;
-                event.payload.usb_storage = state_;
-                if (sendSpeculative(notifications_,event) == SpeculativeResult::Queued) usb_dirty_ = false;
-            }
-        }
+        if(!replies_.returnPending() && !hasJob() && !replies_.completionPending() && !has_read_) stepMap();
+
         notifyActivity();
         notify();
         const bool statistics=has_read_ && work().logs().result().request.kind==LogReadKind::Statistics;
@@ -731,23 +684,21 @@ void StorageTask::run() {
 }  // namespace geoputer
 
 namespace geoputer {
-void StorageTask::loadAlarmProfile() {
+void GpsStorageTask::loadAlarmProfile() {
     const auto revision=state_.alarm.revision+1;
     state_.alarm={};state_.alarm.revision=revision;
-    if(usb_mode_ || !nvs_ready_ || state_.nvs_error || state_.card_state!=CardState::Mounted || !gpsMode().selected_dataset_.ready())return;
+    if(!nvs_ready_ || state_.nvs_error || state_.card_state!=CardState::Mounted || !gpsState().selected_dataset_.ready())return;
     using namespace index_format;
     uint32_t identity=2166136261u;
-    for(auto b:gpsMode().selected_dataset_.map_index.header)identity=(identity^b)*16777619u;
-    for(auto b:gpsMode().selected_dataset_.book_index.header)identity=(identity^b)*16777619u;
-    const auto depth=get16(gpsMode().selected_dataset_.book_index.header.data()+Wordbook::Depth);
-    state_.alarm=AlarmFile(drive_,work().files().primary(),this).load(gpsMode().selected_dataset_.number,depth,identity);
+    for(auto b:gpsState().selected_dataset_.map_index.header)identity=(identity^b)*16777619u;
+    for(auto b:gpsState().selected_dataset_.book_index.header)identity=(identity^b)*16777619u;
+    const auto depth=get16(gpsState().selected_dataset_.book_index.header.data()+Wordbook::Depth);
+    state_.alarm=AlarmFile(drive_,work().files().primary(),this).load(gpsState().selected_dataset_.number,depth,identity);
     state_.alarm.revision=revision;
     Console.printf("[ALARM] dataset=%02u depth=%u state=%s enabled=%u\n",state_.alarm.dataset,state_.alarm.depth,alarm::stateName(state_.alarm.state),state_.alarm.settings.enabled);
 }
-bool StorageTask::saveAlarmProfile() {
-    if(usb_mode_ || state_.card_state!=CardState::Mounted || !state_.alarm.usable() ||
-        job_.alarm_identity!=state_.alarm.identity || job_.settings.dataset!=state_.settings.dataset ||
-        !alarm::valid(job_.alarm_settings,state_.alarm.depth))return false;
+bool GpsStorageTask::saveAlarmProfile() {
+    if(state_.card_state!=CardState::Mounted || !state_.alarm.usable() || job_.alarm_identity!=state_.alarm.identity || job_.settings.dataset!=state_.settings.dataset || !alarm::valid(job_.alarm_settings,state_.alarm.depth))return false;
     auto next=state_.alarm;next.settings=job_.alarm_settings;
     if(!AlarmFile(drive_,work().files().primary(),this).save(next)) {
         state_.alarm.settings.enabled=false;state_.alarm.state=alarm::State::IoError;++state_.alarm.revision;return false;

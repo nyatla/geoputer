@@ -7,24 +7,22 @@
 #include <fstream>
 #include <new>
 #include <stdexcept>
-#include "task/storage/StorageTask.h"
+#include "apps/usb/UsbStorageTask.h"
 using namespace geoputer;
 namespace {
 bool fail_allocation=false, fail_close=false, fail_publish=false;
 unsigned publications=0;
-StorageTask* current=nullptr;
+UsbStorageTask* current=nullptr;
 void check(bool value,const char* message) { if(!value)throw std::runtime_error(message); }
-void command(StorageTask& task,ExportOperation op) {
-    StorageRequest request{};request.payload.export_request.operation=op;
-    request.payload.export_request.format=ExportFormat::Gpx;
-    std::strcpy(request.payload.export_request.name,"lifecycle.gps.dat");
-    SyncReturn result{};result.status=OperationStatus::InvalidRequest;
-    task.handleUsbExport(request,result);
-    check(result.status==OperationStatus::Ok,"USB export command accepted");
+void command(UsbStorageTask& task,UsbActionKind op) {
+    UsbCommand request{};request.action=op;
+    request.format=ExportFormat::Gpx;std::strcpy(request.name,"lifecycle.gps.dat");
+    const bool accepted=task.exportCommand(request);
+    check(accepted,"USB export command accepted");
 }
-void select(StorageTask& task) {
-    command(task,ExportOperation::Begin);task.stepUsbExport();
-    check(task.state_.export_job.phase==ExportPhase::Selecting && !task.usbMode().exporter_,"selection does not allocate a converter");
+void select(UsbStorageTask& task) {
+    command(task,UsbActionKind::Begin);task.stepExport();
+    check(task.state_.export_job.phase==ExportPhase::Selecting && (!std::get_if<UsbExportWork>(&task.work_) || !task.converting().exporter),"selection does not allocate a converter");
 }
 }
 void* operator new(std::size_t bytes) {
@@ -41,34 +39,29 @@ extern "C" int __wrap_fclose(FILE* file) {
     return result;
 }
 namespace geoputer {
-// No RTOS loop or other jobs run in this focused state-machine test.
-void StorageTask::run() {}
-void GpsTask::run() {}
-void StorageTask::sdBegin() {}
-void StorageTask::sdEnd() {}
-void StorageTask::cacheState(RgCacheState,bool) {}
+// Hardware setup is outside this focused state-machine test.
+void UsbStorageTask::initializeStorage(){}
+bool UsbStorage::exitToLogger(){return false;}
 UsbStorageView UsbStorage::snapshot() const {UsbStorageView view{};view.ready=true;view.local=local_;return view;}
 bool UsbStorage::takeLocal() {local_=true;return true;}
 bool UsbStorage::publish() {
-    check(current && !current->usbMode().exporter_,"converter is released before USB publication");
+    check(current && !std::get_if<UsbExportWork>(&current->work_),"converter is released before USB publication");
     ++publications;
     if(fail_publish) {fail_publish=false;return false;}
     local_=false;return true;
 }
 }
 int main() {
-    Queue<AppNotification,8> notifications;Queue<ReturnMessage,1> results;
-    ApplicationModeMemory memory;StorageTask task(notifications,results,memory);current=&task;
-    check(!task.mode_resources_.selected(),"Storage starts without constructing any mode");
-    check(task.setUsbMode(true),"select USB resources before startup");check(!task.usbMode().exporter_,"USB selection has no converter yet");task.initialized_=true;
-    select(task);command(task,ExportOperation::Start);
-    fail_allocation=true;task.stepUsbExport();
-    check(!fail_allocation && !task.usbMode().exporter_ && task.state_.export_job.error==ExportError::Memory,"allocation failure is reported without retaining memory");
-    task.stepUsbExport();
+    UsbChannels::Events notifications;UsbChannels::Results results;
+    UsbStorageTask task(notifications,results);current=&task;task.initialized_=true;
+    select(task);command(task,UsbActionKind::Start);
+    fail_allocation=true;task.stepExport();
+    check(!fail_allocation && (!std::get_if<UsbExportWork>(&task.work_) || !task.converting().exporter) && task.state_.export_job.error==ExportError::Memory,"allocation failure is reported without retaining memory");
+    task.stepExport();
     check(publications==1 && task.state_.export_job.phase==ExportPhase::Failed,"allocation failure republishes USB and preserves its error");
-    command(task,ExportOperation::Publish);task.stepUsbExport();
-    select(task);command(task,ExportOperation::Start);task.stepUsbExport();
-    check(task.usbMode().exporter_ && task.usbMode().exporter_->running(),"accepted conversion allocates a workspace lazily");
+    command(task,UsbActionKind::Publish);task.stepExport();
+    select(task);command(task,UsbActionKind::Start);task.stepExport();
+    check(task.converting().exporter && task.converting().exporter->running(),"accepted conversion allocates a workspace lazily");
     // Use a real tiny binary log in a temporary directory for complete conversion.
     char pattern[]="/tmp/reversegeoputer-export-lifecycle-XXXXXX";
     const auto* directory=mkdtemp(pattern);check(directory,"create fixture directory");
@@ -79,25 +72,25 @@ int main() {
     {std::ofstream out(root/"logs/lifecycle.gps.dat",std::ios::binary);
      out.write(reinterpret_cast<char*>(header),sizeof(header));out.write(reinterpret_cast<char*>(record),sizeof(record));}
     // Restart before the first I/O so begin() constructs paths under the fixture root.
-    task.usbMode().exporter_->root_=root.string();task.usbMode().exporter_->state_={};task.usbMode().export_started_=false;
-    for(unsigned i=0;i<20 && task.usbMode().usb_work_!=StorageTask::UsbWork::None;++i)task.stepUsbExport();
-    check(!task.usbMode().exporter_ && task.state_.export_job.phase==ExportPhase::Complete && task.state_.export_job.output_created &&
+    task.converting().exporter->root_=root.string();task.converting().exporter->state_={};task.converting().started=false;
+    for(unsigned i=0;i<20 && task.work_kind_!=UsbStorageTask::Work::None;++i)task.stepExport();
+    check((!std::get_if<UsbExportWork>(&task.work_) || !task.converting().exporter) && task.state_.export_job.phase==ExportPhase::Complete && task.state_.export_job.output_created &&
           task.state_.export_job.processed==1 && publications==2,"conversion result survives converter destruction and USB republication");
     check(std::filesystem::exists(root/"export/lifecycle.gps.dat.gpx"),"completed GPX exists");
-    command(task,ExportOperation::Publish);task.stepUsbExport();
-    select(task);command(task,ExportOperation::Start);task.stepUsbExport();
+    command(task,UsbActionKind::Publish);task.stepExport();
+    select(task);command(task,UsbActionKind::Start);task.stepExport();
     // Model the pending handles of a failed conversion. Host fclose reports an
     // injected failure; the owner must retain the converter and withhold USB.
-    task.usbMode().exporter_->input_.file_=std::tmpfile();check(task.usbMode().exporter_->input_.file_,"open pending handle");
-    task.usbMode().exporter_->input_.opened_=true;
-    task.state_.export_job.phase=ExportPhase::Failed;task.usbMode().usb_work_=StorageTask::UsbWork::None;
-    command(task,ExportOperation::Publish);fail_close=true;task.stepUsbExport();
-    check(!fail_close && task.usbMode().exporter_ && task.state_.export_job.error==ExportError::Close && publications==2 && task.usbMode().usb_.local(),
+    task.converting().exporter->input_.file_=std::tmpfile();check(task.converting().exporter->input_.file_,"open pending handle");
+    task.converting().exporter->input_.opened_=true;
+    task.state_.export_job.phase=ExportPhase::Failed;task.work_kind_=UsbStorageTask::Work::None;
+    command(task,UsbActionKind::Publish);fail_close=true;task.stepExport();
+    check(!fail_close && task.converting().exporter && task.state_.export_job.error==ExportError::Close && publications==2 && task.usb_.local(),
           "close failure retains the converter and local SD ownership");
-    command(task,ExportOperation::Publish);fail_publish=true;task.stepUsbExport();
-    check(!task.usbMode().exporter_ && task.state_.export_job.error==ExportError::Publish && publications==3,"closed workspace is freed even if republication fails");
-    command(task,ExportOperation::Publish);task.stepUsbExport();
-    check(!task.usbMode().exporter_ && task.state_.export_job.phase==ExportPhase::Idle && publications==4,"republication retry returns to idle without reallocating");
+    command(task,UsbActionKind::Publish);fail_publish=true;task.stepExport();
+    check((!std::get_if<UsbExportWork>(&task.work_) || !task.converting().exporter) && task.state_.export_job.error==ExportError::Publish && publications==3,"closed workspace is freed even if republication fails");
+    command(task,UsbActionKind::Publish);task.stepExport();
+    check((!std::get_if<UsbExportWork>(&task.work_) || !task.converting().exporter) && task.state_.export_job.phase==ExportPhase::Idle && publications==4,"republication retry returns to idle without reallocating");
     std::filesystem::remove_all(root);
     std::puts("PASS: USB export lazy allocation, allocation failure, completed result, close retention and republication retry");
 }

@@ -1,7 +1,7 @@
 #include "alarm/AlarmEngine.h"
 #include "alarm/CellNeighborhood.h"
 #include "task/storage/alarm/AlarmFile.h"
-#include "task/ui/UiModel.h"
+#include "task/ui/GpsUiModel.h"
 #include "task/ui/AlarmText.h"
 #include <filesystem>
 #include <fstream>
@@ -106,7 +106,7 @@ void uiTests() {
     UiData data{};data.settings=defaultSettings();data.settings.dataset=1;data.dataset.state=PlaceState::Ready;
     data.storage.card_state=CardState::Mounted;data.storage.alarm.dataset=1;data.storage.alarm.depth=4;
     data.storage.alarm.identity=123;data.storage.alarm.state=alarm::State::Ready;
-    UiModel model;model.setScreen({ScreenId::Settings,DisplayMode::View,1,data,0,ActionResult::None});
+    GpsUiModel model;model.setScreen({ScreenId::Settings,DisplayMode::View,1,data,0,ActionResult::None});
     for(unsigned i=0;i<settingsRootIndex(SettingsRootItem::Alarm);++i)model.keyPressed(UiKey::Down,i+1);
     model.keyPressed(UiKey::Enter,20);check(model.snapshot().page==SettingsPage::Alarm,"root opens dataset alert settings");
     model.keyPressed(UiKey::Right,21);check(model.editDirty(),"alarm value changes directly");
@@ -118,7 +118,7 @@ void uiTests() {
     check(model.snapshot().action.kind==ActionKind::SaveAlarm && model.snapshot().action.alarm_settings.enabled && model.snapshot().action.alarm_identity==123,"alarm editing produces file save command rather than NVS settings");
     check(AlarmRows==6 && alarmChoices(2,4)==3 && !std::strcmp(alarmLabel(2,true),"区域判定"),"one three-choice region judgement row, no width/test rows");
     char text[32];alarmValueText(2,1,4,true,text,sizeof(text));check(!std::strcmp(text,"標準"),"standard has a word label rather than a numeric threshold");
-    UiModel sound;sound.setScreen({ScreenId::Settings,DisplayMode::View,1,data,0,ActionResult::None});
+    GpsUiModel sound;sound.setScreen({ScreenId::Settings,DisplayMode::View,1,data,0,ActionResult::None});
     for(unsigned i=0;i<settingsRootIndex(SettingsRootItem::Alarm);++i)sound.keyPressed(UiKey::Down,40+i);
     sound.keyPressed(UiKey::Enter,50);for(unsigned i=0;i<AlarmSoundRow;++i)sound.keyPressed(UiKey::Down,51+i);
     check(sound.snapshot().action.kind==ActionKind::None,"opening alerts and selecting sound do not play");
@@ -130,7 +130,7 @@ void uiTests() {
     ack();sound.keyPressed(UiKey::Escape,62);check(!sound.editing() && sound.snapshot().action.kind==ActionKind::None,"Escape cancels candidate rather than storing it");
     sound.keyPressed(UiKey::Right,63);ack();sound.keyPressed(UiKey::Down,64);
     check(sound.snapshot().action.kind==ActionKind::SaveAlarm && sound.snapshot().action.alarm_settings.tone==alarm::Tone::Rising,"leaving tone row commits the auditioned candidate once");
-    UiModel dark;dark.setScreen({ScreenId::Settings,DisplayMode::Background,1,data,0,ActionResult::None});
+    GpsUiModel dark;dark.setScreen({ScreenId::Settings,DisplayMode::Background,1,data,0,ActionResult::None});
     PlaceRequest q{1,12,{35.68,140.02,0,true}};q.token=51;q.dataset_generation=data.dataset.generation;q.alarm_sample=true;q.work_bytes=config::IndexReadBufferBytes;
     map::BufferLease buffer{};check(dark.beginPlaceSearch(q,buffer)==OperationStatus::Ok,"background alert borrows existing UI back area");q.buffer=buffer;
     check(dark.discardPlaceSearch(q)==OperationStatus::Ok,"background loan returns without changing screen");

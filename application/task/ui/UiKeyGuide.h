@@ -1,5 +1,5 @@
 #pragma once
-#include "UiTypes.h"
+#include "GpsUiTypes.h"
 
 namespace geoputer {
 struct UiKeyGuide {

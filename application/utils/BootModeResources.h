@@ -13,7 +13,7 @@ template<class Gps,class Usb,class Wifi=EmptyWifiResources> class BootModeResour
 public:
     BootModeResources()=default;
     ~BootModeResources(){destroyForShutdown();}
-    // Only the owning application/worker's shutdown path may call this.
+    // Only the outer application owner may call this, never a subtask.
     // All tasks and borrowers must already be quiescent.
     void destroyForShutdown() {
         if(kind_==Kind::GpsActive)data_.gps.~Gps();

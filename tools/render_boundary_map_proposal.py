@@ -17,7 +17,7 @@ SCENE = r'''
 #include <galuchat/std_file_reader.hpp>
 #include <galuchat/wgsmapset3_indexed_reader.hpp>
 #include <galuchat/gis_wordbook_reader.hpp>
-#include "task/ui/UiRenderer.h"
+#include "task/ui/GpsUiRenderer.h"
 using namespace geoputer;
 int main(int argc,char** argv) {
     if(argc!=3)return 2;
@@ -38,8 +38,8 @@ int main(int argc,char** argv) {
     for(size_t i=2;i<names.size();++i)name+=names[i];
     if(name.empty())name=names.back();
     std::fprintf(stderr,"region=%lld name=%s meters_per_pixel=%.3f\n",static_cast<long long>(center),name.c_str(),meters_x);
-    M5GFX display;UiRenderer ui(display);if(!ui.begin())return 1;
-    UiModel model;UiData data{};data.settings=defaultSettings();data.recording.state=RecordingState::Paused;
+    M5GFX display;GpsUiRenderer ui(display);if(!ui.begin())return 1;
+    GpsUiModel model;UiData data{};data.settings=defaultSettings();data.recording.state=RecordingState::Paused;
     data.storage.card_state=CardState::Mounted;data.storage.rg={1,1,RgCacheState::Ready};
     data.gps.fix.valid=true;data.gps.fix.utc_ms=19921000;data.gps.reception=GpsReception::Fix;
     model.setScreen({ScreenId::LivePlace,DisplayMode::View,1,data,0,ActionResult::None});model.setBattery(72,false,true);ui.draw(model);
@@ -95,7 +95,7 @@ def main():
     parser.add_argument('--map',type=Path,default=dataset/'estat-r2ka-jgd2011-2020-grid-8192-10000.remap.wgsmapset.glc')
     parser.add_argument('--book',type=Path,default=dataset/'giswordbook/estat-r2ka-jgd2011-2020.giswordbook')
     args=parser.parse_args()
-    renderer=(ROOT/'application/task/ui/UiRenderer.cpp').read_text()+(ROOT/'application/task/ui/UiCanvas.h').read_text()
+    renderer=(ROOT/'application/task/ui/GpsUiRenderer.cpp').read_text()+(ROOT/'application/task/ui/UiCanvas.h').read_text()
     enums=(M5GFX/'v1/misc/enum.hpp').read_text()
     colors=[]
     for name in sorted(set(re.findall(r'\bTFT_[A-Z]+\b',SCENE+renderer))):
@@ -104,7 +104,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix='reversegeoputer-map-proposal-') as directory:
         work=Path(directory);(work/'M5GFX.h').write_text(ADAPTER+'\n'+'\n'.join(colors));(work/'scene.cpp').write_text(SCENE)
         exe=work/'render'
-        sources=[ROOT/'application/task/ui'/f'{name}.cpp' for name in ('PixelFont','UiRenderer','UsbRenderer','UiModel','LicenseText','SettingsText','Shinonome')]
+        sources=[ROOT/'application/task/ui'/f'{name}.cpp' for name in ('PixelFont','GpsUiRenderer','GpsUiModel','LicenseText','SettingsText','Shinonome')]
         subprocess.run(['g++','-O2','-std=c++17','-Wall','-Wextra','-Werror','-pedantic','-I',str(work),'-I',str(ROOT/'application'),'-I',str(ROOT/'tests/support'),'-I',str(ROOT/'third_party/galuchat/include'),'-I',str(M5GFX/'Fonts'),str(work/'scene.cpp'),*map(str,sources),str(ROOT/'application/Settings.cpp'),'-o',str(exe)],check=True,timeout=180)
         result=subprocess.run([str(exe),str(args.map),str(args.book)],stdout=subprocess.PIPE,check=True,timeout=90)
         ppm=work/'map.ppm';ppm.write_bytes(result.stdout)

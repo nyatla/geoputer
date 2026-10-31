@@ -1,7 +1,7 @@
 #include <cstring>
 #include <stdexcept>
 #include "BootStatus.h"
-#include "task/ui/UiModel.h"
+#include "task/ui/GpsUiModel.h"
 
 using namespace geoputer;
 namespace {
@@ -47,14 +47,14 @@ void testBoot() {
                              PlaceState::TooManyChunks, PlaceState::OutOfMemory, PlaceState::MetadataError, PlaceState::VersionError, PlaceState::NoCard}) {
         progress = ready(); progress.dataset(state);
         check(progress.finish() && progress.hasIssues(), "dataset errors are visible and nonfatal");
-        UiModel degraded;UiData data{};data.settings=defaultSettings();data.boot=progress;
+        GpsUiModel degraded;UiData data{};data.settings=defaultSettings();data.boot=progress;
         degraded.setScreen({ScreenId::Boot,DisplayMode::View,1,data,0,ActionResult::None});
         degraded.keyPressed(UiKey::Enter,1);
         check(degraded.snapshot().action.kind==ActionKind::ChangeScreen && degraded.snapshot().action.target==ScreenId::LivePlace,
               "every dataset failure, including unavailable SD, permits boot acknowledgement");
     }
 
-    UiModel ui;
+    GpsUiModel ui;
     SetUiScreen command{};
     command.screen = ScreenId::Boot;
     command.mode = DisplayMode::View;
@@ -83,7 +83,7 @@ void testBoot() {
     ui.tick(215000);
     check(ui.snapshot().action.kind == ActionKind::Sleep, "idle timeout starts after leaving Boot");
     // A held ESC can precede the first App screen, and must survive that setup.
-    UiModel held;
+    GpsUiModel held;
     held.keyPressed(UiKey::Escape, 1);
     command = {}; command.screen=ScreenId::Boot;command.mode=DisplayMode::View;
     command.generation=1;command.data.settings=defaultSettings();
@@ -102,11 +102,11 @@ void testBoot() {
     command={};command.screen=ScreenId::Boot;command.mode=DisplayMode::View;command.generation=1;
     command.data.settings=defaultSettings();
     for(const auto key:{UiKey::Other,UiKey::Back}) {
-        UiModel unrelated;unrelated.keyPressed(key,1);unrelated.setScreen(command);unrelated.keyPressed(key,2);
+        GpsUiModel unrelated;unrelated.keyPressed(key,1);unrelated.setScreen(command);unrelated.keyPressed(key,2);
         check(unrelated.snapshot().action.kind==ActionKind::None,"Unmapped keys and Del cannot select maintenance at boot");
     }
     for (const bool fatal : {false,true}) {
-        UiModel recovery;
+        GpsUiModel recovery;
         command.data.boot={};command.data.boot.complete=false;
         if(fatal) command.data.boot.dataset(PlaceState::DatasetMissing);
         check(recovery.setScreen(command)==OperationStatus::Ok,"boot/error screen setup");
@@ -138,13 +138,13 @@ void testBoot() {
         command.screen=ScreenId::Boot;command.generation=1;command.processed_action_id=0;command.action_result=ActionResult::None;
         command.data={};command.data.settings=defaultSettings();
     }
-    UiModel usb;
+    GpsUiModel usb;
     usb.keyPressed(UiKey::Escape,1);
     command.screen=ScreenId::UsbStorage;
-    check(usb.setScreen(command)==OperationStatus::Ok && usb.snapshot().action.kind==ActionKind::None,
-          "early ESC does not override USB storage boot");
+    check(usb.setScreen(command)==OperationStatus::InvalidRequest,
+          "GPS UI rejects USB screens; USB has its own boot UI");
     for (const bool recording : {false,true}) {
-        UiModel runtime;
+        GpsUiModel runtime;
         command.screen=ScreenId::LivePlace;
         command.data.storage.card_state=CardState::NoCard;
         command.data.recording.state=recording?RecordingState::Recording:RecordingState::Stopped;
@@ -154,7 +154,7 @@ void testBoot() {
         check(runtime.snapshot().action.kind==ActionKind::ChangeScreen && runtime.snapshot().action.target==ScreenId::Menu,
               "runtime errors use maintenance when stopped and normal settings while recording");
     }
-    UiModel healthy;
+    GpsUiModel healthy;
     command.data.storage.card_state=CardState::Mounted;command.data.recording.state=RecordingState::Stopped;
     command.data.gps.fix.valid=true;command.data.gps.reception=GpsReception::Fix;
     healthy.setScreen(command);healthy.keyPressed(UiKey::Escape,20);

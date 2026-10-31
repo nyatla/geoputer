@@ -1,5 +1,5 @@
 #pragma once
-#include "UiTypes.h"
+#include "GpsUiTypes.h"
 namespace geoputer {
 inline unsigned gpsControlChoices(const UiData& data) {
     return data.recording.state == RecordingState::Stopped ? 1 : 2;

@@ -22,19 +22,13 @@ struct UiSettingsResources {
     uint8_t usb_mode=0; // BootMode candidate: 0 GPS, 1 USB, 2 Wi-Fi.
     uint8_t edit_value=0,edit_original=0;
 };
-struct UiUsbResources {
-    UsbPage page=UsbPage::Menu,return_page=UsbPage::Menu;
-    uint8_t file=0;
-};
 // UI alone owns these resources. Two image arrays remain at fixed addresses.
 // Screen entry hides old images and resets local state; pending loans survive.
 struct UiScreenResources {
     UiMapResources map;
     UiSettingsResources settings;
-    UiUsbResources usb;
-    WifiPage wifi_page=WifiPage::ConnectionQr;
     void enter(ScreenGroup group) {
-        map.clear();settings={};usb={};wifi_page=WifiPage::ConnectionQr;group_=group;
+        map.clear();settings={};group_=group;
     }
     ScreenGroup group() const {return group_;}
 private:

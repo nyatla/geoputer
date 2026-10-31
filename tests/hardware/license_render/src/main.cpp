@@ -6,8 +6,8 @@
 // Compile the production renderer/model unchanged in this standalone test image.
 // No App, GPS or Storage tasks, SD mounting or NVS writes run in this image.
 #include "../../../../application/Settings.cpp"
-#include "../../../../application/task/ui/UiModel.cpp"
-#include "../../../../application/task/ui/UiRenderer.cpp"
+#include "../../../../application/task/ui/GpsUiModel.cpp"
+#include "../../../../application/task/ui/GpsUiRenderer.cpp"
 #include "../../../../application/task/ui/UsbRenderer.cpp"
 #include "../../../../application/task/ui/SettingsText.cpp"
 #include "../../../../application/task/ui/PixelFont.cpp"
@@ -15,12 +15,12 @@
 #include "../../../../application/task/ui/LicenseText.cpp"
 
 namespace {
-geoputer::UiModel model;
-std::unique_ptr<geoputer::UiRenderer> renderer;
+geoputer::GpsUiModel model;
+std::unique_ptr<geoputer::GpsUiRenderer> renderer;
 uint32_t frames = 0, maximum_us = 0, slow_frames = 0;
 uint64_t total_us = 0;
 
-void paint(const geoputer::UiModel& ui) {
+void paint(const geoputer::GpsUiModel& ui) {
     M5Cardputer.update();
     const auto started = micros();
     renderer->draw(ui);
@@ -49,7 +49,7 @@ void setup() {
     pinMode(12, OUTPUT); digitalWrite(12, HIGH);
     delay(5000);  // Allow the serial capture to attach after flashing/resetting.
     try {
-        renderer.reset(new geoputer::UiRenderer(M5Cardputer.Display));
+        renderer.reset(new geoputer::GpsUiRenderer(M5Cardputer.Display));
         geoputer::test::licenseCheck(renderer->begin(), "renderer initialization");
         Serial.printf("[LICENSE-TEST] START lines=%u rows=%u\n",
                       static_cast<unsigned>(geoputer::licenseLineCount()), geoputer::SettingsLayout::LicenseRows);

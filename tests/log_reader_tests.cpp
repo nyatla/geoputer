@@ -6,7 +6,7 @@
 #include <stdexcept>
 #include <vector>
 #include "task/storage/log/LogReader.h"
-#include "task/ui/UiModel.h"
+#include "task/ui/GpsUiModel.h"
 #include "task/ui/KeyBindings.h"
 #include "task/ui/LogPresentation.h"
 using namespace geoputer;
@@ -67,19 +67,19 @@ void statisticsTests(const std::string& dir) {
 }
 void statisticsUiTests() {
     UiData data{};data.settings=defaultSettings();auto& view=data.editBrowse();view.summary.records=25;
-    UiModel properties;properties.setScreen({ScreenId::LogProperties,DisplayMode::View,1,data,0,ActionResult::None});
+    GpsUiModel properties;properties.setScreen({ScreenId::LogProperties,DisplayMode::View,1,data,0,ActionResult::None});
     properties.keyPressed(UiKey::Enter,1);
     check(properties.snapshot().action.browse_action==BrowseAction::OpenPoint,"properties Enter opens text");
-    UiModel menu;menu.setScreen({ScreenId::LogProperties,DisplayMode::View,1,data,0,ActionResult::None});
+    GpsUiModel menu;menu.setScreen({ScreenId::LogProperties,DisplayMode::View,1,data,0,ActionResult::None});
     menu.keyPressed(UiKey::OpenMap,1);
     check(!menu.confirming() && menu.snapshot().action.kind==ActionKind::None,"unavailable map shortcut is ignored without a dialog");
     menu.keyPressed(UiKey::OpenGpsLogger,2);
     check(menu.snapshot().action.browse_action==BrowseAction::Statistics,"3 directly requests statistics");
     view.loading=true;view.statistics_from_point=true;
-    UiModel busy;busy.setScreen({ScreenId::LogStatistics,DisplayMode::View,1,data,0,ActionResult::None});
+    GpsUiModel busy;busy.setScreen({ScreenId::LogStatistics,DisplayMode::View,1,data,0,ActionResult::None});
     busy.keyPressed(UiKey::Recalculate,1);check(busy.snapshot().action.kind==ActionKind::None,"R cannot overlap a running scan");
     busy.keyPressed(UiKey::Escape,2);check(busy.snapshot().action.target==ScreenId::LogPoint,"statistics Esc returns to caller while scan cancels");
-    data.settings.screen_timeout=0;UiModel timer;timer.setScreen({ScreenId::LogStatistics,DisplayMode::View,1,data,0,ActionResult::None});
+    data.settings.screen_timeout=0;GpsUiModel timer;timer.setScreen({ScreenId::LogStatistics,DisplayMode::View,1,data,0,ActionResult::None});
     timer.tick(10);timer.tick(60010);check(timer.snapshot().action.kind==ActionKind::None,"progress stays visible through the inactivity timeout");
     view.loading=false;timer.updateContent({DisplayMode::View,1,data,0,ActionResult::None});
     timer.tick(65009);check(timer.snapshot().action.kind==ActionKind::None,"full inactivity interval remains after statistics completes");
@@ -185,7 +185,7 @@ void activeTests(const std::string& dir) {
     req.kind=LogReadKind::Summary;check(run(reader,req,&writer).summary.records==30,"closed file uses independent read-only handle");
 }
 void uiTests() {
-    UiModel ui;UiData data{};data.settings=defaultSettings();data.editBrowse().count=6;data.editBrowse().has_older=true;data.editBrowse().revision=1;
+    GpsUiModel ui;UiData data{};data.settings=defaultSettings();data.editBrowse().count=6;data.editBrowse().has_older=true;data.editBrowse().revision=1;
     std::strcpy(data.editBrowse().names[0],"20261016_093012_0.gps.dat");
     ui.setScreen({ScreenId::Logs,DisplayMode::View,1,data,0,ActionResult::None});
     for(unsigned i=0;i<5;++i)ui.keyPressed(UiKey::Down,i+1);
@@ -292,7 +292,7 @@ void deleteTests(const std::string& dir) {
 void deleteUiTests() {
     UiData data{};data.settings=defaultSettings();data.editBrowse().count=3;data.editBrowse().selected=1;data.editBrowse().revision=7;
     for(unsigned n=0;n<3;++n)std::snprintf(data.editBrowse().names[n],LogNameBytes,"20261016_09301%u_0.gps.dat",n);
-    UiModel ui;ui.setScreen({ScreenId::Logs,DisplayMode::View,1,data,0,ActionResult::None});
+    GpsUiModel ui;ui.setScreen({ScreenId::Logs,DisplayMode::View,1,data,0,ActionResult::None});
     ui.keyPressed(UiKey::DeleteLog,10);
     check(ui.confirming() && !ui.confirmChoice() && ui.snapshot().action.kind==ActionKind::None,"D opens confirmation with Cancel selected, no request");
     ui.keyPressed(UiKey::Enter,11);
@@ -309,15 +309,15 @@ void deleteUiTests() {
     ui.tick(100);ui.tick(100000);
     check(ui.snapshot().action.kind==ActionKind::None,"accepted deletion cannot be abandoned by navigation, duplicate D or sleep");
     data.editBrowse().loading=data.editBrowse().deleting=false;data.editBrowse().active_mask=2;
-    UiModel active;active.setScreen({ScreenId::Logs,DisplayMode::View,1,data,0,ActionResult::None});
+    GpsUiModel active;active.setScreen({ScreenId::Logs,DisplayMode::View,1,data,0,ActionResult::None});
     active.keyPressed(UiKey::DeleteLog,10);active.keyPressed(UiKey::Right,11);active.keyPressed(UiKey::Enter,12);
     check(!active.confirming() && active.snapshot().action.kind==ActionKind::None,"active row explains protection and cannot confirm Delete");
     data.editBrowse().active_mask=0;
-    UiModel changed;changed.setScreen({ScreenId::Logs,DisplayMode::View,1,data,0,ActionResult::None});
+    GpsUiModel changed;changed.setScreen({ScreenId::Logs,DisplayMode::View,1,data,0,ActionResult::None});
     changed.keyPressed(UiKey::DeleteLog,10);++data.editBrowse().revision;
     changed.updateContent({DisplayMode::View,1,data,0,ActionResult::None});
     check(!changed.confirming() && changed.snapshot().action.kind==ActionKind::None,"refreshed list invalidates the shown delete target");
-    data.editBrowse().count=0;UiModel empty;empty.setScreen({ScreenId::Logs,DisplayMode::View,1,data,0,ActionResult::None});
+    data.editBrowse().count=0;GpsUiModel empty;empty.setScreen({ScreenId::Logs,DisplayMode::View,1,data,0,ActionResult::None});
     empty.keyPressed(UiKey::DeleteLog,10);check(!empty.confirming(),"empty list offers no delete target");
 }
 }

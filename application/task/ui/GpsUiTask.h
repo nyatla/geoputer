@@ -1,16 +1,16 @@
 #pragma once
 
-#include "../../TaskMessages.h"
+#include "../../GpsMessages.h"
 #include "../../utils/Task.h"
-#include "UiModel.h"
+#include "GpsUiModel.h"
 #include "UiFrameBuffer.h"
 #include "../../hardware/AudioOutput.h"
 
 namespace geoputer {
 
-class UiTask final : public Task<UiRequest, 1> {
+class GpsUiTask final : public Task<UiRequest, 1> {
 public:
-    UiTask(Queue<AppNotification, 8>& notifications, Queue<ReturnMessage, 1>& results)
+    GpsUiTask(Queue<AppNotification, 8>& notifications, Queue<ReturnMessage, 1>& results)
         : notifications_(notifications), results_(results) {}
 
     void setPowerMode(BootMode mode){power_manager_.configure(power::Level::None,mode);}
@@ -25,9 +25,9 @@ private:
 
     Queue<AppNotification, 8>& notifications_;
     Queue<ReturnMessage, 1>& results_;
-    // UiTask has application lifetime; this framebuffer never occupies task stack.
+    // GpsUiTask has application lifetime; this framebuffer never occupies task stack.
     UiFrameBuffer frame_buffer_;
-    UiModel model_;
+    GpsUiModel model_;
     power::PowerManager power_manager_;
     AudioOutput audio_;
     ReturnMessage pending_return_{};

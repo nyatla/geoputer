@@ -2,7 +2,7 @@
 #include "StorageWorkArea.h"
 namespace geoputer {
 // Sessions follow the displayed map; the worker follows accepted jobs.
-// StorageTask admits one read/map job, independently of the retained raster.
+// GpsStorageTask admits one read/map job, independently of the retained raster.
 struct StorageScreenResources {
     explicit StorageScreenResources(map::CodeImageBuffer& pixels,StorageObserver* observer=nullptr)
         :live_map(pixels),log_map(pixels),work(observer){}

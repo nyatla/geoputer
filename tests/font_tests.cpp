@@ -3,7 +3,7 @@
 #include "task/ui/Shinonome.h"
 #include "task/ui/LicenseText.h"
 #include "task/ui/SettingsLayout.h"
-#include "task/ui/UiModel.h"
+#include "task/ui/GpsUiModel.h"
 
 using namespace geoputer;
 namespace {
@@ -37,7 +37,7 @@ void testFonts() {
             check(static_cast<unsigned char>(*p) >= 0x20 && static_cast<unsigned char>(*p) <= 0x7E,
                   "license body is entirely printable ASCII");
     }
-    UiModel ui;
+    GpsUiModel ui;
     SetUiScreen command{};
     command.screen = ScreenId::Settings;
     command.mode = DisplayMode::View;

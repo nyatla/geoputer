@@ -1,5 +1,5 @@
 #include <stdexcept>
-#include "task/ui/UiModel.h"
+#include "task/ui/GpsUiModel.h"
 
 using namespace geoputer;
 static void check(bool value, const char* message) {
@@ -44,7 +44,7 @@ void testDialogs() {
     }
     UiData data{}; data.settings = defaultSettings();
     data.editBrowse().revision = 1; data.editBrowse().count = 1;
-    UiModel model;
+    GpsUiModel model;
     model.setScreen({ScreenId::Logs, DisplayMode::View, 1, data, 0, ActionResult::None});
     model.keyPressed(UiKey::DeleteLog, 10); model.keyPressed(UiKey::Right, 11);
     data.editBrowse().active_mask = 1; ++data.revision; // Same list, newly active file.

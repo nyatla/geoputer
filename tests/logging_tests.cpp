@@ -7,7 +7,7 @@
 #include <vector>
 #include "task/storage/log/LogWriter.h"
 #include "task/gps/GpsTime.h"
-#include "task/ui/UiModel.h"
+#include "task/ui/GpsUiModel.h"
 
 using namespace geoputer;
 namespace {
@@ -90,7 +90,7 @@ void uiTests() {
     for(auto screen:{ScreenId::GpsLogger,ScreenId::LivePlace,ScreenId::Map,ScreenId::Logs,ScreenId::Settings}) {
         for(auto state:{RecordingState::Stopped,RecordingState::Starting,RecordingState::Recording,RecordingState::Paused}) {
             for(unsigned choice=0;choice<(state==RecordingState::Stopped?1u:2u);++choice) {
-                UiModel ui;UiData data{};data.settings=defaultSettings();data.storage.card_state=CardState::Mounted;
+                GpsUiModel ui;UiData data{};data.settings=defaultSettings();data.storage.card_state=CardState::Mounted;
                 data.recording.state=state;data.gps.reception=GpsReception::Fix;
                 ui.setScreen({screen,DisplayMode::View,1,data,0,ActionResult::None});
                 ui.keyPressed(screen==ScreenId::GpsLogger?UiKey::Enter:UiKey::GpsControl,1);
@@ -105,13 +105,13 @@ void uiTests() {
                 check(a.kind==ActionKind::Logging && a.log_action==expected && a.confirmed,"GPS screen and G dispatch identical operations");
             }
             for(auto cancel:{UiKey::Escape,UiKey::Back}) {
-                UiModel ui;UiData data{};data.settings=defaultSettings();data.storage.card_state=CardState::Mounted;data.recording.state=state;
+                GpsUiModel ui;UiData data{};data.settings=defaultSettings();data.storage.card_state=CardState::Mounted;data.recording.state=state;
                 ui.setScreen({screen,DisplayMode::View,1,data,0,ActionResult::None});
                 ui.keyPressed(UiKey::GpsControl,1);ui.keyPressed(cancel,2);
                 check(!ui.confirming() && ui.snapshot().action.kind==ActionKind::None,"Esc/Del cancel without application request");
             }
             // Enter immediately after opening executes the intended default.
-            UiModel ui;UiData data{};data.settings=defaultSettings();data.storage.card_state=CardState::Mounted;data.recording.state=state;
+            GpsUiModel ui;UiData data{};data.settings=defaultSettings();data.storage.card_state=CardState::Mounted;data.recording.state=state;
             ui.setScreen({screen,DisplayMode::View,1,data,0,ActionResult::None});
             ui.keyPressed(UiKey::GpsControl,1);ui.keyPressed(UiKey::Enter,2);
             const auto expected=state==RecordingState::Stopped?LogAction::Start:state==RecordingState::Paused?LogAction::Resume:LogAction::Pause;
@@ -119,7 +119,7 @@ void uiTests() {
         }
     }
     UiData data{};data.settings=defaultSettings();data.storage.card_state=CardState::NoCard;
-    data.gps.reception=GpsReception::Fix;UiModel ui;ui.setScreen({ScreenId::GpsLogger,DisplayMode::View,1,data,0,ActionResult::None});
+    data.gps.reception=GpsReception::Fix;GpsUiModel ui;ui.setScreen({ScreenId::GpsLogger,DisplayMode::View,1,data,0,ActionResult::None});
     ui.keyPressed(UiKey::Enter,1);check(ui.dialog().choices()==1 && !ui.dialog().choiceEnabled(0),"without SD sole Start action is disabled");
     ui.keyPressed(UiKey::Right,2);check(ui.dialog().choice()==0,"disabled Start cannot move to a hidden Cancel item");
     ui.keyPressed(UiKey::Enter,2);check(ui.confirming() && ui.snapshot().action.kind==ActionKind::None,"disabled Start cannot execute or close the action menu");

@@ -2,7 +2,7 @@
 
 #include <cstring>
 #include <cstdio>
-#include "UiTypes.h"
+#include "GpsUiTypes.h"
 
 namespace geoputer {
 

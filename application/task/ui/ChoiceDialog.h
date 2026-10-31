@@ -1,6 +1,6 @@
 #pragma once
 
-#include "UiTypes.h"
+#include "UiPrimitives.h"
 
 namespace geoputer {
 

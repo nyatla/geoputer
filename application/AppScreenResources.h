@@ -27,7 +27,7 @@ class AppScreenResources {
 public:
     void enter(ScreenGroup group) {
         const auto next=group==ScreenGroup::Map?Kind::Map:
-            group==ScreenGroup::Logs || group==ScreenGroup::Usb?Kind::Logs:Kind::None;
+            group==ScreenGroup::Logs?Kind::Logs:Kind::None;
         if(next==kind_)return;
         if(next==Kind::Map)new (&data_.map) AppMapResources{};
         if(next==Kind::Logs)new (&data_.logs) AppLogResources{};

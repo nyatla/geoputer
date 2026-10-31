@@ -4,6 +4,7 @@ import subprocess,tempfile,os
 r=Path(__file__).resolve().parents[1]
 lib=r/'.pio/libdeps/cardputer-adv/M5GFX@0.2.33/src'
 if not lib.exists():lib=r/'.pio/libdeps/cardputer-adv/M5GFX/src'
+if os.environ.get("RGP_M5GFX_DIR"):lib=Path(os.environ["RGP_M5GFX_DIR"])/"src"
 with tempfile.TemporaryDirectory(prefix='rgp-wifi-setup-') as folder:
  d=Path(folder);obj=d/'qrcode.o';binary=d/'setup'
  flags=['-g','-O1','-fsanitize=address,undefined','-fno-omit-frame-pointer','-fno-pie']

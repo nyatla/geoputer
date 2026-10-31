@@ -1,29 +1,18 @@
-#include "Application.h"
+#include "GpsApplication.h"
 #include "utils/Console.h"
 #include <cstdio>
 
 namespace geoputer {
-bool Application::beginUsb() {
-    // As in normal boot, wait for M5 display/board initialization before
-    // configuring the SD SPI peripheral. UI startup runs in another task.
-    if (!setScreen(ScreenId::UsbStorage)) return false;
-    StorageRequest request{}; request.kind = MessageKind::InitializeStorage;
-    SyncReturn result{};
-    const bool started = storage_.initialize() && storage_.start("USBStorage",12288,1);
-    if (started && callTask(TaskId::Storage,storage_.inbox(),request,result)) applyStorage(result.storage);
-    else message("USB STORAGE INIT FAILED");
-    Console.println("[APP] USB mode: UI and raw SD only; GPS logger is not started");
-    return publishUiContent();
-}
-bool Application::operateBootMode(const UiAction& action) {
-    if (!action.confirmed || storage_operation_id_ || (!usb_mode_ && gpsMode().dataset_applying_)) return false;
-    if (!usb_mode_ && (!usbEntryAllowed(data_) || gpsMode().log_control_.kind != ActionKind::None)) {
+
+bool GpsApplication::operateBootMode(const UiAction& action) {
+    if (!action.confirmed || storage_operation_id_ || gpsState().dataset_applying_) return false;
+    if (!usbEntryAllowed(data_) || gpsState().log_control_.kind != ActionKind::None) {
         message("STOP LOGGER FIRST"); return false;
     }
     StorageRequest request{}; request.kind = MessageKind::OperateStorage;
     auto& command = request.payload.storage_command;
-    command.operation = usb_mode_ ? StorageOperation::ExitUsbMode : action.storage_operation;
-    if(!usb_mode_ && command.operation!=StorageOperation::EnterUsbMode && command.operation!=StorageOperation::EnterWifiMode)return false;
+    command.operation = action.storage_operation;
+    if(command.operation!=StorageOperation::EnterUsbMode && command.operation!=StorageOperation::EnterWifiMode)return false;
     if (command.operation != action.storage_operation) return false;
     command.confirmed = true; command.operation_id = action.action_id;
     SyncReturn result{};
@@ -37,37 +26,5 @@ bool Application::operateBootMode(const UiAction& action) {
     if (storage_operation_id_) message("SWITCHING MODE...");
     return true;
 }
-bool Application::operateUsbExport(const UiAction& action) {
-    if(!screenResources().hasLogs() || !usb_mode_ || storage_operation_id_ || restart_pending_)return false;
-    auto& logs=screenResources().logs();
-    const auto& view=data_.browse();
-    if(action.usb_action==UsbAction::Older || action.usb_action==UsbAction::Newer) {
-        const bool older=action.usb_action==UsbAction::Older;
-        if(!usbSelecting() || view.loading || !view.count || (older?!view.has_older:!view.has_newer))return false;
-        logs.request={};logs.request.kind=LogReadKind::List;logs.request.count=4;
-        logs.request.direction=older?LogListDirection::Older:LogListDirection::Newer;
-        std::snprintf(logs.request.anchor,sizeof(logs.request.anchor),"%s",view.names[older?view.count-1:0]);
-        data_.editBrowse().loading=logs.need=true;++data_.revision;ui_data_dirty_=true;return true;
-    }
-    if(action.usb_action!=UsbAction::Begin && action.usb_action!=UsbAction::Start && action.usb_action!=UsbAction::Publish)return false;
-    StorageRequest request{};request.kind=MessageKind::UsbExportOperation;
-    auto& command=request.payload.export_request;
-    command.operation=action.usb_action==UsbAction::Begin?ExportOperation::Begin:
-                      action.usb_action==UsbAction::Start?ExportOperation::Start:ExportOperation::Publish;
-    if(command.operation==ExportOperation::Start) {
-        if(!usbSelecting() || view.loading || action.browse_revision!=view.revision || action.browse_index>=view.count ||
-           !validExportFormat(action.export_format))return false;
-        command.format=action.export_format;
-        std::snprintf(command.name,sizeof(command.name),"%s",view.names[action.browse_index]);
-    }
-    if(command.operation==ExportOperation::Publish) {
-        logs.need=false;
-        if(browse_waiting_)browse_cancel_=true;
-    }
-    SyncReturn result{};
-    if(!callTask(TaskId::Storage,storage_.inbox(),request,result) || result.status!=OperationStatus::Ok) {
-        message("USB OPERATION REJECTED");return false;
-    }
-    applyStorage(result.storage);message("");return true;
-}
+
 }

@@ -5,15 +5,9 @@
 namespace geoputer {
 enum class ExportFormat : uint8_t { Gpx, Kml, Csv };
 enum class ExportPhase : uint8_t { Idle, WaitEject, Preparing, Selecting, Running, Publishing, Complete, Failed };
-enum class ExportOperation : uint8_t { Begin, Start, Publish };
 enum class ExportError : uint8_t { None, Media, InvalidName, Header, Unsupported, Corrupt, Tail, Empty,
     Exists, PartialExists, Read, Write, Directory, Limit, Time, Publish, Close, Memory };
 constexpr unsigned ExportNameBytes = LogNameBytes + 4;
-struct ExportRequest {
-    ExportOperation operation;
-    ExportFormat format;
-    char name[LogNameBytes];
-};
 struct ExportSnapshot {
     ExportPhase phase = ExportPhase::Idle;
     ExportFormat format = ExportFormat::Gpx;

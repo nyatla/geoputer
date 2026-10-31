@@ -28,7 +28,7 @@ class BenchmarkPreparationTests(unittest.TestCase):
         self.assertEqual((work/'capture.log').read_text(),'previous measurements')
 
     def test_probe_anchor_must_be_unique(self):
-        source='#include "StorageTask.h"\nvoid StorageTask::run() {\n        vTaskDelay(pdMS_TO_TICKS(5));\n}\n'
+        source='#include "GpsStorageTask.h"\nvoid GpsStorageTask::run() {\n        vTaskDelay(pdMS_TO_TICKS(5));\n}\n'
         modified=inject_storage_probe(source,'Probe.h','        probe();\n')
         self.assertEqual(modified.count('probe();'),1)
         self.assertIn('probe();\n        vTaskDelay',modified)

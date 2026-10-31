@@ -2,7 +2,6 @@
 #include "WifiTypes.h"
 #if defined(ARDUINO_ARCH_ESP32)
 #include "WifiFiles.h"
-#include "../task/storage/StorageTypes.h"
 #include "../task/storage/StorageActivity.h"
 #include <WebServer.h>
 #include <DNSServer.h>
@@ -22,7 +21,7 @@ public:
     void requestRegenerate(){if(started_ && !exit_requested_)regenerate_requested_=true;}
     bool exitReady()const{return view_.restart_ready;}
     const WifiView& view()const{return view_;}
-    void setStatus(const StorageSnapshot& status){status_=status;}
+    void setStatus(const WifiDeviceInfo& status){status_=status;}
 private:
     class Handler;
     bool authorized();
@@ -43,7 +42,7 @@ private:
     DNSServer dns_;
     wifi::Files files_;
     WifiView view_{};
-    StorageSnapshot status_{};
+    WifiDeviceInfo status_{};
     StorageObserver* observer_=nullptr;
     Changed changed_=nullptr;
     void* context_=nullptr;

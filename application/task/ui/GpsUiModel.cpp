@@ -1,4 +1,4 @@
-#include "UiModel.h"
+#include "GpsUiModel.h"
 #include "../../LogReplay.h"
 #include "AlarmText.h"
 #include "PlacePresentation.h"
@@ -16,18 +16,16 @@ namespace geoputer {
 
 static bool switchingMode(const UiData& data) {
     return data.storage.busy && (data.storage.operation == StorageOperation::EnterUsbMode ||
-                                 data.storage.operation == StorageOperation::ExitUsbMode || data.storage.operation == StorageOperation::EnterWifiMode);
+                                 data.storage.operation == StorageOperation::EnterWifiMode);
 }
 
-OperationStatus UiModel::setScreen(const SetUiScreen& command) {
-    if (command.screen != ScreenId::LivePlace && command.screen != ScreenId::Settings && command.screen != ScreenId::Boot &&
-        command.screen != ScreenId::Menu && command.screen != ScreenId::Map && command.screen != ScreenId::GpsLogger && command.screen != ScreenId::UsbStorage && command.screen!=ScreenId::WifiManagement && !isLogBrowser(command.screen)) {
+OperationStatus GpsUiModel::setScreen(const SetUiScreen& command) {
+    if (command.screen != ScreenId::LivePlace && command.screen != ScreenId::Settings && command.screen != ScreenId::Boot && command.screen != ScreenId::Menu && command.screen != ScreenId::Map && command.screen != ScreenId::GpsLogger && !isLogBrowser(command.screen)) {
         return OperationStatus::InvalidRequest;
     }
     if (command.generation <= generation_) return OperationStatus::StaleContent;
     // Switching screens cannot silently erase an unprocessed confirmed action.
-    if (action_.kind != ActionKind::None &&
-        (command.processed_action_id != action_.action_id || command.action_result == ActionResult::None)) {
+    if (action_.kind != ActionKind::None && (command.processed_action_id != action_.action_id || command.action_result == ActionResult::None)) {
         return OperationStatus::InvalidRequest;
     }
     acknowledge(command.processed_action_id, command.action_result);
@@ -48,7 +46,7 @@ OperationStatus UiModel::setScreen(const SetUiScreen& command) {
     return OperationStatus::Ok;
 }
 
-OperationStatus UiModel::updateContent(const UpdateUiContent& command) {
+OperationStatus GpsUiModel::updateContent(const UpdateUiContent& command) {
     if (command.generation != generation_ || command.data.revision < data_.revision) {
         return OperationStatus::StaleContent;
     }
@@ -59,11 +57,10 @@ OperationStatus UiModel::updateContent(const UpdateUiContent& command) {
     return OperationStatus::Ok;
 }
 
-OperationStatus UiModel::beginDatasetRead(const DatasetRequest& request,map::BufferLease& buffer) {
+OperationStatus GpsUiModel::beginDatasetRead(const DatasetRequest& request,map::BufferLease& buffer) {
     if(!request.token || request.screen_generation!=generation_ || screen_!=ScreenId::Settings || mode_!=DisplayMode::View)
         return OperationStatus::StaleContent;
-    if(request.number>99 || request.purpose>DatasetPurpose::Verify || request.action>DatasetAction::Clear ||
-       request.buffer.data || request.buffer.capacity || request.buffer.id)return OperationStatus::InvalidRequest;
+    if(request.number>99 || request.purpose>DatasetPurpose::Verify || request.action>DatasetAction::Clear || request.buffer.data || request.buffer.capacity || request.buffer.id)return OperationStatus::InvalidRequest;
     if(dataset_borrow_.token || !screen_resources_.map.frame.beginWork(request.token,buffer))return OperationStatus::Unavailable;
     dataset_borrow_=request;dataset_borrow_.buffer=buffer;
     if(!validDatasetMemory(dataset_borrow_)) {
@@ -81,7 +78,7 @@ OperationStatus UiModel::beginDatasetRead(const DatasetRequest& request,map::Buf
     if(view.applying){view.progress={};view.progress.verifying=request.action==DatasetAction::VerifyIndex;}
     ++view.revision;redraw_=true;return OperationStatus::Ok;
 }
-OperationStatus UiModel::discardDatasetRead(const DatasetCompletion& completion) {
+OperationStatus GpsUiModel::discardDatasetRead(const DatasetCompletion& completion) {
     const auto& request=completion.request;
     if(!dataset_borrow_.token || !sameDatasetRequest(dataset_borrow_,request))return OperationStatus::StaleContent;
     // Storage has completed (or rejected submission). A changed screen still returns the loan.
@@ -95,11 +92,10 @@ OperationStatus UiModel::discardDatasetRead(const DatasetCompletion& completion)
     }
     return OperationStatus::Ok;
 }
-OperationStatus UiModel::commitDatasetRead(const DatasetCompletion& completion) {
+OperationStatus GpsUiModel::commitDatasetRead(const DatasetCompletion& completion) {
     const auto& request=completion.request;
     if(!dataset_borrow_.token || !sameDatasetRequest(dataset_borrow_,request))return OperationStatus::StaleContent;
-    if(!dataset_publishable_ || request.screen_generation!=generation_ || screen_!=ScreenId::Settings ||
-       !dataset_owned_)return OperationStatus::StaleContent;
+    if(!dataset_publishable_ || request.screen_generation!=generation_ || screen_!=ScreenId::Settings || !dataset_owned_)return OperationStatus::StaleContent;
     const auto& incoming=*datasetResultMemory(dataset_borrow_);
     if(incoming.revision!=request.token || incoming.error!=completion.error)return OperationStatus::InvalidRequest;
     auto& view=data_.editDatasets();const auto revision=view.revision+1;
@@ -109,24 +105,20 @@ OperationStatus UiModel::commitDatasetRead(const DatasetCompletion& completion) 
     view.revision=revision;datasetChanged();updateDialogState();redraw_=true;
     return discardDatasetRead(completion);
 }
-OperationStatus UiModel::datasetReadError(const DatasetCompletion& completion) {
+OperationStatus GpsUiModel::datasetReadError(const DatasetCompletion& completion) {
     if(completion.request.screen_generation!=generation_ || screen_!=ScreenId::Settings)return OperationStatus::StaleContent;
     dataset_owned_=true;auto& view=data_.editDatasets();view.error=completion.error;view.loading=view.applying=false;
     ++view.revision;redraw_=true;updateDialogState();return OperationStatus::Ok;
 }
-OperationStatus UiModel::updateDatasetProgress(const IndexProgress& progress) {
-    if(!dataset_borrow_.token || !dataset_publishable_ || progress.token!=dataset_borrow_.token ||
-       dataset_borrow_.screen_generation!=generation_ || !dataset_owned_)return OperationStatus::StaleContent;
+OperationStatus GpsUiModel::updateDatasetProgress(const IndexProgress& progress) {
+    if(!dataset_borrow_.token || !dataset_publishable_ || progress.token!=dataset_borrow_.token || dataset_borrow_.screen_generation!=generation_ || !dataset_owned_)return OperationStatus::StaleContent;
     auto& view=data_.editDatasets();view.progress=progress;redraw_=true;return OperationStatus::Ok;
 }
 
-OperationStatus UiModel::beginPlaceSearch(const PlaceRequest& request,map::BufferLease& buffer) {
-    if(!request.token || request.screen_generation!=generation_ || request.dataset_generation!=data_.dataset.generation ||
-       (!request.alarm_sample && (mode_!=DisplayMode::View || (screen_!=ScreenId::LivePlace && screen_!=ScreenId::Map && !viewingLogPoint(screen_)))) ||
-       (request.alarm_sample && (data_.boot.maintenance || screen_==ScreenId::Boot || screen_==ScreenId::UsbStorage)))
+OperationStatus GpsUiModel::beginPlaceSearch(const PlaceRequest& request,map::BufferLease& buffer) {
+    if(!request.token || request.screen_generation!=generation_ || request.dataset_generation!=data_.dataset.generation || (!request.alarm_sample && (mode_!=DisplayMode::View || (screen_!=ScreenId::LivePlace && screen_!=ScreenId::Map && !viewingLogPoint(screen_)))) || (request.alarm_sample && (data_.boot.maintenance || screen_==ScreenId::Boot)))
         return OperationStatus::StaleContent;
-    if(request.buffer.data || request.buffer.id || request.buffer.capacity ||
-       request.work_bytes!=config::IndexReadBufferBytes)return OperationStatus::InvalidRequest;
+    if(request.buffer.data || request.buffer.id || request.buffer.capacity || request.work_bytes!=config::IndexReadBufferBytes)return OperationStatus::InvalidRequest;
     if(place_borrow_.token || !screen_resources_.map.frame.beginWork(request.token,buffer))return OperationStatus::Unavailable;
     place_borrow_=request;place_borrow_.buffer=buffer;
     if(!validPlaceMemory(place_borrow_)) {
@@ -136,19 +128,17 @@ OperationStatus UiModel::beginPlaceSearch(const PlaceRequest& request,map::Buffe
     output->request=place_borrow_;
     return OperationStatus::Ok;
 }
-OperationStatus UiModel::discardPlaceSearch(const PlaceRequest& request) {
+OperationStatus GpsUiModel::discardPlaceSearch(const PlaceRequest& request) {
     if(!place_borrow_.token || !samePlaceRequest(place_borrow_,request))return OperationStatus::StaleContent;
     // App has already observed Storage's completion (or never submitted it).
     endPlaceMemory(place_borrow_);
     if(!screen_resources_.map.frame.returnWork(request.token,request.buffer))return OperationStatus::InvalidRequest;
     place_borrow_={};return OperationStatus::Ok;
 }
-OperationStatus UiModel::commitPlaceSearch(const PlaceRequest& request) {
+OperationStatus GpsUiModel::commitPlaceSearch(const PlaceRequest& request) {
     if(request.alarm_sample)return OperationStatus::InvalidRequest;
     if(!place_borrow_.token || !samePlaceRequest(place_borrow_,request))return OperationStatus::StaleContent;
-    if(request.screen_generation!=generation_ || request.dataset_generation!=data_.dataset.generation ||
-       mode_!=DisplayMode::View || (screen_!=ScreenId::LivePlace && screen_!=ScreenId::Map && !viewingLogPoint(screen_)) ||
-       (viewingLogPoint(screen_) && (data_.browse().loading || request.sample_seq!=data_.browse().index+1)))
+    if(request.screen_generation!=generation_ || request.dataset_generation!=data_.dataset.generation || mode_!=DisplayMode::View || (screen_!=ScreenId::LivePlace && screen_!=ScreenId::Map && !viewingLogPoint(screen_)) || (viewingLogPoint(screen_) && (data_.browse().loading || request.sample_seq!=data_.browse().index+1)))
         return OperationStatus::StaleContent;
     const auto& result=*placeResultMemory(place_borrow_);
     if(!samePlaceRequest(result.request,request) || datasetInactive(result.state))return OperationStatus::InvalidRequest;
@@ -156,32 +146,32 @@ OperationStatus UiModel::commitPlaceSearch(const PlaceRequest& request) {
     return discardPlaceSearch(request);
 }
 
-bool UiModel::acceptsMap(const map::Request& request) const {
+bool GpsUiModel::acceptsMap(const map::Request& request) const {
     return request.token && showingMap(screen_,data_) && mode_==DisplayMode::View && request.screen_generation==generation_ &&
         request.session==(viewingLogPoint(screen_)?map::SessionId::Log:map::SessionId::Live) &&
         request.dataset_generation==data_.dataset.generation && request.scale==data_.map.scale &&
         map::supportedScale(request.scale);
 }
-bool UiModel::acceptsMap(const map::FrameInfo& info) const {
+bool GpsUiModel::acceptsMap(const map::FrameInfo& info) const {
     return acceptsMap(info.request) && info.width==map::MaxWidth && info.height==map::MaxHeight &&
         std::isfinite(info.meters_per_pixel) && info.meters_per_pixel>0;
 }
-OperationStatus UiModel::beginMapFrame(const map::Request& request,map::BufferLease& buffer) {
+OperationStatus GpsUiModel::beginMapFrame(const map::Request& request,map::BufferLease& buffer) {
     if(!acceptsMap(request))return OperationStatus::StaleContent;
     return screen_resources_.map.frame.begin(request,buffer)?OperationStatus::Ok:OperationStatus::Unavailable;
 }
-OperationStatus UiModel::discardMapFrame(const map::Request& request) {
+OperationStatus GpsUiModel::discardMapFrame(const map::Request& request) {
     // Returning a lease is independent of the currently visible screen/mode.
     return screen_resources_.map.frame.discard(request)?OperationStatus::Ok:OperationStatus::StaleContent;
 }
-OperationStatus UiModel::commitMapFrame(const map::FrameInfo& info) {
+OperationStatus GpsUiModel::commitMapFrame(const map::FrameInfo& info) {
     if(!acceptsMap(info))return OperationStatus::StaleContent;
     if(!screen_resources_.map.frame.commit(info))return OperationStatus::InvalidRequest;
     screen_resources_.map.cursor={0,0,true};updateMapCursor();
     redraw_=true;return OperationStatus::Ok;
 }
 
-void UiModel::updateMapCursor() {
+void GpsUiModel::updateMapCursor() {
     if(!screen_resources_.map.frame.image().bytes()) {screen_resources_.map.cursor={};return;}
     // Invalid GPS preserves the last known marker, drawn grey by the renderer.
     const auto& fix=displayedFix(screen_,data_);
@@ -191,25 +181,21 @@ void UiModel::updateMapCursor() {
     screen_resources_.map.cursor=map::cursorOffset({info.request,info.meters_per_pixel},fix.latitude,fix.longitude);
 }
 
-void UiModel::copyData(const UiData& data) {
+void GpsUiModel::copyData(const UiData& data) {
     if (data.gps.fix.valid) clock_.setInitialUtc(data.gps.fix.utc_ms, last_tick_ms_);
     const auto previous_sd = data_.storage.sd;
     const auto previous_rg = data_.storage.rg;
-    if (newerRevision(data.storage.sd.revision, previous_sd.revision) &&
-        (!sd_seen_ || data.storage.sd.access_id != previous_sd.access_id)) {
+    if (newerRevision(data.storage.sd.revision, previous_sd.revision) && (!sd_seen_ || data.storage.sd.access_id != previous_sd.access_id)) {
         access_started_ms_ = last_tick_ms_; sd_seen_ = true;
     }
     if(data.storage.dataset_failure.revision!=data_.storage.dataset_failure.revision)
         dataset_notice_started_ms_=last_tick_ms_;
     const auto old_browse=data_.browse().revision;
     const auto old_dataset_revision=data_.datasets().revision;
-    const auto old_export=data_.storage.export_job.phase;
-    if(screen_==ScreenId::WifiManagement && screen_resources_.wifi_page==WifiPage::ConnectionQr &&
-       !data_.storage.wifi.clients && data.storage.wifi.clients)screen_resources_.wifi_page=WifiPage::WebQr;
+
     // V switches modes inside LogPoint without SetUiScreen. The old images
     // are no longer visible; reject late commits but retain any outstanding loan.
-    if(data.dataset.generation!=data_.dataset.generation ||
-       (showingMap(screen_,data_) && !showingMap(screen_,data)))screen_resources_.map.clear();
+    if(data.dataset.generation!=data_.dataset.generation || (showingMap(screen_,data_) && !showingMap(screen_,data)))screen_resources_.map.clear();
     data_.copyFrom(data,dataset_owned_ && screen_==ScreenId::Settings);updateMapCursor();
     // Activity is global; an older job snapshot cannot roll it back.
     if (newerRevision(previous_sd.revision, data_.storage.sd.revision)) data_.storage.sd = previous_sd;
@@ -220,25 +206,7 @@ void UiModel::copyData(const UiData& data) {
         for(auto& name:browse.names) name[LogNameBytes-1]='\0';
         browse.name[LogNameBytes-1]='\0';
     }
-    data_.storage.export_job.name[LogNameBytes-1]='\0';
-    if(screen_==ScreenId::UsbStorage) {
-        const auto phase=data_.storage.export_job.phase;
-        if(phase!=old_export) {
-            dialog_.close();
-            switch(phase) {
-                case ExportPhase::Idle:screen_resources_.usb.page=UsbPage::Menu;selection_=0;break;
-                case ExportPhase::WaitEject:screen_resources_.usb.page=UsbPage::WaitEject;break;
-                case ExportPhase::Selecting:screen_resources_.usb.page=UsbPage::Files;selection_=data_.browse().selected;break;
-                case ExportPhase::Running:screen_resources_.usb.page=UsbPage::Progress;break;
-                case ExportPhase::Complete:screen_resources_.usb.page=UsbPage::Complete;break;
-                case ExportPhase::Failed:screen_resources_.usb.page=UsbPage::Error;break;
-                default:screen_resources_.usb.page=UsbPage::Busy;break;
-            }
-        }
-        if(phase==ExportPhase::Selecting && !data_.browse().loading && old_browse!=data_.browse().revision) {
-            screen_resources_.usb.page=UsbPage::Files;selection_=data_.browse().selected;
-        }
-    }
+
     if(screen_==ScreenId::Logs && !data_.browse().loading && data_.browse().revision!=old_browse) {
         selection_=data_.browse().selected;
         dialog_.close(); // A refreshed list invalidates the previously shown target.
@@ -248,9 +216,8 @@ void UiModel::copyData(const UiData& data) {
     data_.message[sizeof(data_.message) - 1] = '\0';
 }
 
-void UiModel::datasetChanged() {
-    if (screen_ == ScreenId::Settings &&
-        (screen_resources_.settings.page == SettingsPage::DatasetList || screen_resources_.settings.page == SettingsPage::DatasetDetail)) {
+void GpsUiModel::datasetChanged() {
+    if (screen_ == ScreenId::Settings && (screen_resources_.settings.page == SettingsPage::DatasetList || screen_resources_.settings.page == SettingsPage::DatasetDetail)) {
         if (data_.datasets().detail) {
             if (screen_resources_.settings.page != SettingsPage::DatasetDetail) { selection_ = 0; screen_resources_.settings.editing = false; }
             screen_resources_.settings.page = SettingsPage::DatasetDetail;
@@ -263,15 +230,14 @@ void UiModel::datasetChanged() {
     }
 }
 
-bool UiModel::canDeleteLog() const {
+bool GpsUiModel::canDeleteLog() const {
     return selection_ < data_.browse().count && !(data_.browse().active_mask & (1u << selection_));
 }
 
-void UiModel::updateDialogState() {
-    if(dialog_.kind()==DialogKind::RegenerateWifi)dialog_.setActionEnabled(data_.storage.wifi.url[0] && data_.storage.wifi.phase!=WifiPhase::Stopping);
+void GpsUiModel::updateDialogState() {
     if (dialog_.kind() == DialogKind::DeleteLog)
         dialog_.setActionEnabled(canDeleteLog());
-    if ((dialog_.kind() == DialogKind::EnterUsbMode || dialog_.kind()==DialogKind::EnterWifiMode)) dialog_.setActionEnabled(screen_resources_.settings.usb_mode && usbEntryAllowed(data_));
+    if (dialog_.kind() == DialogKind::EnterUsbMode || dialog_.kind()==DialogKind::EnterWifiMode) dialog_.setActionEnabled(screen_resources_.settings.usb_mode && usbEntryAllowed(data_));
     if (dialog_.kind() == DialogKind::ClearDataset || dialog_.kind() == DialogKind::RebuildIndex || dialog_.kind() == DialogKind::VerifyIndex)
         dialog_.setActionEnabled(data_.datasets().purpose==screen_resources_.settings.dataset.purpose && selection_<data_.datasets().count &&
             data_.datasets().rows[selection_].number==screen_resources_.settings.dataset.dialog_number && datasetRowBlock(data_,selection_)==DatasetError::None);
@@ -282,21 +248,19 @@ void UiModel::updateDialogState() {
     }
 }
 
-void UiModel::acknowledge(uint32_t action_id, ActionResult result) {
-    if (action_.kind != ActionKind::None && action_id == action_.action_id &&
-        result != ActionResult::None) {
-        if(result==ActionResult::Rejected && action_.kind==ActionKind::UsbExport)screen_resources_.usb.page=screen_resources_.usb.return_page;
+void GpsUiModel::acknowledge(uint32_t action_id, ActionResult result) {
+    if (action_.kind != ActionKind::None && action_id == action_.action_id && result != ActionResult::None) {
         action_ = {};
     }
 }
 
-void UiModel::changed() {
+void GpsUiModel::changed() {
     ++revision_;
     notification_pending_ = true;
     redraw_ = true;
 }
 
-unsigned UiModel::selectionCount() const {
+unsigned GpsUiModel::selectionCount() const {
     if (screen_ == ScreenId::Menu) return MenuCount;
     switch (screen_resources_.settings.page) {
         case SettingsPage::Root: return SettingsRootCount;
@@ -314,7 +278,7 @@ unsigned UiModel::selectionCount() const {
     }
 }
 
-uint32_t UiModel::licenseTarget(UiKey key) const {
+uint32_t GpsUiModel::licenseTarget(UiKey key) const {
     if (key==UiKey::Up && screen_resources_.settings.license_offset) return screen_resources_.settings.license_offset-1;
     if (key==UiKey::Down && screen_resources_.settings.license_offset+SettingsLayout::LicenseRows<licenseLineCount()) return screen_resources_.settings.license_offset+1;
     if (key==UiKey::Right) {
@@ -328,15 +292,11 @@ uint32_t UiModel::licenseTarget(UiKey key) const {
     return screen_resources_.settings.license_offset;
 }
 
-UiKeyGuide UiModel::keyGuide() const {
+UiKeyGuide GpsUiModel::keyGuide() const {
     UiKeyGuide guide;
     guide.accepting=action_.kind==ActionKind::None && !switchingMode(data_) &&
         !(isLogBrowser(screen_) && data_.browse().deleting);
-    if(screen_==ScreenId::WifiManagement) {
-        guide.accepting=guide.accepting && data_.storage.wifi.phase!=WifiPhase::Stopping;
-        guide.back=guide.accepting;guide.horizontal=true;guide.left=guide.right=guide.accepting;
-        return guide;
-    }
+
     guide.root=!data_.boot.maintenance && isScreenRoot(screen_,screen_resources_.settings.page) && !screen_resources_.settings.editing && !screen_resources_.settings.card_info;
     guide.system=!data_.boot.maintenance;
     const bool dataset_page=screen_==ScreenId::Settings && (screen_resources_.settings.page==SettingsPage::DatasetMenu ||
@@ -394,7 +354,7 @@ UiKeyGuide UiModel::keyGuide() const {
 
 // Use the same numeric destinations as direct presses; skip the current view
 // and unavailable destinations. Other means that cycling has no destination.
-UiKey UiModel::nextNumericKey() const {
+UiKey GpsUiModel::nextNumericKey() const {
     const auto guide=keyGuide();
     if(mode_!=DisplayMode::View || dialog_.active() || !guide.accepting || !guide.system)return UiKey::Other;
     if(guide.root) {
@@ -415,21 +375,11 @@ UiKey UiModel::nextNumericKey() const {
 
 // Only advertise Enter where it selects, confirms, retries or returns.
 // Keep disabled choices visible in the same way as other local operations.
-void UiModel::appendEnterShortcut(UiShortcutGuide& row,bool accepting) const {
+void GpsUiModel::appendEnterShortcut(UiShortcutGuide& row,bool accepting) const {
     bool enabled=true;
     if(dialog_.active()) enabled=dialog_.choiceEnabled(dialog_.choice());
     else if(screen_==ScreenId::Boot) {
         if(data_.boot.maintenance || !data_.boot.complete)return;
-    } else if(screen_==ScreenId::UsbStorage) {
-        switch(screen_resources_.usb.page) {
-            case UsbPage::Busy: case UsbPage::Progress:return;
-            case UsbPage::Menu:enabled=selection_ || data_.storage.usb.ready;break;
-            case UsbPage::Files: {
-                const auto& view=data_.browse();
-                enabled=!view.loading && selection_<view.count && view.error==LogReadError::None;break;
-            }
-            default:break;
-        }
     } else if(screen_==ScreenId::Logs) enabled=!data_.browse().loading;
     else if(screen_==ScreenId::LogProperties) {
         const auto& view=data_.browse();
@@ -475,7 +425,7 @@ void UiModel::appendEnterShortcut(UiShortcutGuide& row,bool accepting) const {
     row.key(UiKey::Enter,accepting && enabled);
 }
 
-UiShortcutGuide UiModel::shortcutGuide() const {
+UiShortcutGuide GpsUiModel::shortcutGuide() const {
     UiShortcutGuide row;
     if(mode_==DisplayMode::Background)return row;
     const auto guide=keyGuide();
@@ -490,26 +440,8 @@ UiShortcutGuide UiModel::shortcutGuide() const {
         row.key(UiKey::Left,active && left);row.key(UiKey::Right,active && right);return row;
     }
     if(screen_==ScreenId::Boot) {row.key(UiKey::Escape,active);row.group();appendEnterShortcut(row,active);return row;}
-    if(screen_==ScreenId::WifiManagement) {
-        row.key(UiKey::Escape,active);row.group();
-        row.key(UiKey::Recalculate,active && data_.storage.wifi.url[0]);
-        row.key(UiKey::Left,active);row.key(UiKey::Right,active);return row;
-    }
-    if(screen_==ScreenId::UsbStorage) {
-        const auto page=screen_resources_.usb.page;
-        if(page==UsbPage::Busy || page==UsbPage::Progress)return row;
-        row.key(UiKey::Escape,active);row.group();appendEnterShortcut(row,active);
-        if(page==UsbPage::Menu) {
-            row.key(UiKey::Up,active && selection_>0);row.key(UiKey::Down,active && selection_==0);
-        } else if(page==UsbPage::Files) {
-            const auto& view=data_.browse();const auto ready=active && !view.loading;
-            row.key(UiKey::Up,ready && (selection_>0 || view.has_newer));
-            row.key(UiKey::Down,ready && (selection_+1u<view.count || view.has_older));
-        } else if(page==UsbPage::Format) {
-            row.key(UiKey::Up,active && selection_>0);row.key(UiKey::Down,active && selection_<2);
-        }
-        return row;
-    }
+
+
     // Global shortcuts always precede numeric destinations and local operations.
     row.key(UiKey::Escape,guide.back);
     if(guide.system) {row.key(UiKey::ScreenOff,active);row.key(UiKey::GpsControl,active);}
@@ -539,7 +471,7 @@ UiShortcutGuide UiModel::shortcutGuide() const {
     return row;
 }
 
-void UiModel::keyPressed(UiKey key, uint32_t now_ms) {
+void GpsUiModel::keyPressed(UiKey key, uint32_t now_ms) {
     last_input_ms_ = now_ms;
     // Physical Del remains Back/Cancel, but cannot select maintenance.
     const bool maintenance_key = key == UiKey::Escape;
@@ -573,18 +505,8 @@ void UiModel::keyPressed(UiKey key, uint32_t now_ms) {
         else if (result != DialogInput::Ignored) changed();
         return; // A modal owns all keys, including screen shortcuts.
     }
-    if(screen_==ScreenId::WifiManagement) {
-        if(data_.storage.wifi.phase==WifiPhase::Stopping)return;
-        if(key==UiKey::Escape){dialog_.open(DialogKind::ExitWifiMode);changed();}
-        else if(key==UiKey::Left || key==UiKey::Right) {
-            screen_resources_.wifi_page=static_cast<WifiPage>((static_cast<unsigned>(screen_resources_.wifi_page)+(key==UiKey::Right?1:2))%3);changed();
-        } else if(key==UiKey::Recalculate && data_.storage.wifi.url[0]){dialog_.open(DialogKind::RegenerateWifi);changed();}
-        return;
-    }
-    if (screen_ == ScreenId::UsbStorage) {
-        usbKey(key);
-        return;
-    }
+
+
     if (isLogBrowser(screen_) && data_.browse().deleting) return;
     if (!data_.boot.maintenance) {
         if (key == UiKey::ScreenOff) { action(ActionKind::Sleep); return; }
@@ -636,19 +558,19 @@ void UiModel::keyPressed(UiKey key, uint32_t now_ms) {
     settingsKey(key);
 }
 
-void UiModel::openGpsControls() {
+void GpsUiModel::openGpsControls() {
     gps_dialog_state_ = data_.recording.state;
     dialog_.openActions(DialogKind::GpsControl, gpsControlChoices(data_), gpsControlDefault(gps_dialog_state_));
     updateDialogState();
     changed();
 }
 
-void UiModel::gpsLoggerKey(UiKey key) {
+void GpsUiModel::gpsLoggerKey(UiKey key) {
     if (key == UiKey::Escape) action(ActionKind::ChangeScreen, ScreenId::LivePlace);
     else if (key == UiKey::Enter) openGpsControls();
 }
 
-void UiModel::logBrowserKey(UiKey key) {
+void GpsUiModel::logBrowserKey(UiKey key) {
     const auto& view=data_.browse();
     if(key==UiKey::Escape) {
         action(ActionKind::ChangeScreen,screen_==ScreenId::Logs?ScreenId::LivePlace:
@@ -707,7 +629,7 @@ void UiModel::logBrowserKey(UiKey key) {
     return;
 }
 
-unsigned UiModel::editableSettingChoices() const {
+unsigned GpsUiModel::editableSettingChoices() const {
     if(screen_!=ScreenId::Settings || screen_resources_.settings.card_info)return 0;
     const auto& settings=screen_resources_.settings;
     switch(settings.page) {
@@ -726,7 +648,7 @@ unsigned UiModel::editableSettingChoices() const {
     }
 }
 
-bool UiModel::editDirty() const {
+bool GpsUiModel::editDirty() const {
     const auto& settings=screen_resources_.settings;
     if(!settings.editing)return false;
     if(settings.page==SettingsPage::DatasetDetail)
@@ -734,7 +656,7 @@ bool UiModel::editDirty() const {
     return settings.edit_value!=settings.edit_original;
 }
 
-bool UiModel::commitSettingEdit() {
+bool GpsUiModel::commitSettingEdit() {
     auto& settings=screen_resources_.settings;
     if(!settings.editing)return true;
     if(editDirty()) {
@@ -758,7 +680,7 @@ bool UiModel::commitSettingEdit() {
     settings.editing=false;changed();return true;
 }
 
-void UiModel::settingsKey(UiKey key) {
+void GpsUiModel::settingsKey(UiKey key) {
     auto& edit=screen_resources_.settings;
     if(edit.editing) {
         if(key==UiKey::Escape) {
@@ -942,49 +864,12 @@ void UiModel::settingsKey(UiKey key) {
     }
 }
 
-void UiModel::usbAction(UsbAction kind) {
-    screen_resources_.usb.return_page=screen_resources_.usb.page;
-    action(ActionKind::UsbExport);action_.usb_action=kind;
-    if(kind==UsbAction::Start) {
-        action_.browse_index=screen_resources_.usb.file;action_.browse_revision=data_.browse().revision;
-        action_.export_format=static_cast<ExportFormat>(selection_);
-    }
-    if(kind!=UsbAction::Older && kind!=UsbAction::Newer)screen_resources_.usb.page=UsbPage::Busy;
-}
-void UiModel::usbKey(UiKey key) {
-    if(screen_resources_.usb.page==UsbPage::Menu) {
-        if(key==UiKey::Up && selection_) {selection_=0;changed();}
-        else if(key==UiKey::Down && !selection_) {selection_=1;changed();}
-        else if(key==UiKey::Escape || (key==UiKey::Enter && selection_)) {
-            dialog_.open(DialogKind::ExitUsbMode);changed();
-        } else if(key==UiKey::Enter && data_.storage.usb.ready)usbAction(UsbAction::Begin);
-    } else if(screen_resources_.usb.page==UsbPage::WaitEject) {
-        if(key==UiKey::Escape || key==UiKey::Enter)usbAction(UsbAction::Publish);
-    } else if(screen_resources_.usb.page==UsbPage::Files) {
-        const auto& view=data_.browse();
-        if(key==UiKey::Escape) {usbAction(UsbAction::Publish);return;}
-        if(view.loading)return;
-        if(key==UiKey::Up) {
-            if(selection_) {--selection_;changed();}
-            else if(view.has_newer)usbAction(UsbAction::Newer);
-        } else if(key==UiKey::Down) {
-            if(selection_+1u<view.count) {++selection_;changed();}
-            else if(view.has_older)usbAction(UsbAction::Older);
-        } else if(key==UiKey::Enter && selection_<view.count && view.error==LogReadError::None) {
-            screen_resources_.usb.file=selection_;selection_=0;screen_resources_.usb.page=UsbPage::Format;changed();
-        }
-    } else if(screen_resources_.usb.page==UsbPage::Format) {
-        if(key==UiKey::Escape) {screen_resources_.usb.page=UsbPage::Files;selection_=screen_resources_.usb.file;changed();}
-        else if(key==UiKey::Up && selection_) {--selection_;changed();}
-        else if(key==UiKey::Down && selection_<2) {++selection_;changed();}
-        else if(key==UiKey::Enter)usbAction(UsbAction::Start);
-    } else if(screen_resources_.usb.page==UsbPage::Complete || screen_resources_.usb.page==UsbPage::Error) {
-        if(key==UiKey::Enter || key==UiKey::Escape)usbAction(UsbAction::Publish);
-    }
-}
 
-void UiModel::acceptDialog(DialogKind kind) {
+
+
+void GpsUiModel::acceptDialog(DialogKind kind) {
     switch (kind) {
+    case DialogKind::RegenerateWifi: case DialogKind::ExitUsbMode: case DialogKind::ExitWifiMode: break;
         case DialogKind::RestartLogger:
             action(ActionKind::RestartLogger); action_.confirmed = true; break;
         case DialogKind::DeleteLog:
@@ -996,15 +881,13 @@ void UiModel::acceptDialog(DialogKind kind) {
         case DialogKind::ResetSettings:
             action(ActionKind::ResetSettings); action_.settings = defaultSettings();
             break;
-        case DialogKind::RegenerateWifi:
-            action(ActionKind::Storage);action_.storage_operation=StorageOperation::RegenerateWifi;break;
-        case DialogKind::EnterWifiMode:case DialogKind::ExitWifiMode:
+        case DialogKind::EnterWifiMode:
             action(ActionKind::Storage);
-            action_.storage_operation=kind==DialogKind::EnterWifiMode?StorageOperation::EnterWifiMode:StorageOperation::ExitWifiMode;
+            action_.storage_operation=StorageOperation::EnterWifiMode;
             break;
-        case DialogKind::EnterUsbMode: case DialogKind::ExitUsbMode:
+        case DialogKind::EnterUsbMode:
             action(ActionKind::Storage);
-            action_.storage_operation = kind == DialogKind::EnterUsbMode ? StorageOperation::EnterUsbMode : StorageOperation::ExitUsbMode;
+            action_.storage_operation = StorageOperation::EnterUsbMode;
             break;
         case DialogKind::ClearDataset:
             datasetAction(DatasetAction::Clear);break;
@@ -1016,7 +899,7 @@ void UiModel::acceptDialog(DialogKind kind) {
     action_.confirmed = true;
 }
 
-void UiModel::datasetAction(DatasetAction kind,uint32_t index) {
+void GpsUiModel::datasetAction(DatasetAction kind,uint32_t index) {
     action(ActionKind::Dataset);action_.dataset_action=kind;action_.browse_index=index;
     action_.dataset_purpose=screen_resources_.settings.dataset.purpose;action_.browse_revision=data_.datasets().revision;
     const auto& view=data_.datasets();
@@ -1038,12 +921,12 @@ void UiModel::datasetAction(DatasetAction kind,uint32_t index) {
     if(dataset_borrow_.token)dataset_publishable_=false;
 }
 
-void UiModel::browseAction(BrowseAction kind,uint32_t index) {
+void GpsUiModel::browseAction(BrowseAction kind,uint32_t index) {
     action(ActionKind::Browse);
     action_.browse_action=kind; action_.browse_index=index; action_.browse_revision=data_.browse().revision;
 }
 
-void UiModel::action(ActionKind kind, ScreenId target) {
+void GpsUiModel::action(ActionKind kind, ScreenId target) {
     if (++next_action_id_ == 0) ++next_action_id_;
     action_ = {};
     action_.kind = kind; action_.action_id = next_action_id_;
@@ -1051,11 +934,10 @@ void UiModel::action(ActionKind kind, ScreenId target) {
     changed();
 }
 
-void UiModel::tick(uint32_t now_ms) {
+void GpsUiModel::tick(uint32_t now_ms) {
     const auto previous_second = clock_.secondsJst();
     clock_.tick(now_ms);
-    if (screen_ == ScreenId::LivePlace && mode_ == DisplayMode::View &&
-        clock_.secondsJst() != previous_second) redraw_ = true;
+    if (screen_ == ScreenId::LivePlace && mode_ == DisplayMode::View && clock_.secondsJst() != previous_second) redraw_ = true;
     const bool was_lit = sdAccessLit();
     const bool was_dataset_notice=datasetFailureVisible();
     last_tick_ms_ = now_ms;
@@ -1066,15 +948,13 @@ void UiModel::tick(uint32_t now_ms) {
     // Keep a requested scan visible; the inactivity interval starts at completion.
     // Explicit S still enters Background through the normal key handler.
     if(screen_==ScreenId::LogStatistics && data_.browse().loading) {last_input_ms_=now_ms;return;}
-    if (screen_ == ScreenId::Boot || screen_ == ScreenId::UsbStorage || screen_==ScreenId::WifiManagement || switchingMode(data_) || data_.datasets().applying ||
-        (screen_==ScreenId::Logs && data_.browse().deleting)) return;
+    if (screen_ == ScreenId::Boot || switchingMode(data_) || data_.datasets().applying || (screen_==ScreenId::Logs && data_.browse().deleting)) return;
     if (data_.message[0] && now_ms - data_.message_at_ms >= 3000u) {
         data_.message[0] = '\0';
         redraw_ = true;  // Local toast expiry does not notify App.
     }
     if (!last_input_ms_) last_input_ms_ = now_ms;
-    if (data_.boot.maintenance || mode_ != DisplayMode::View || generation_ == 0 || action_.kind != ActionKind::None ||
-        !validSettings(data_.settings)) return;
+    if (data_.boot.maintenance || mode_ != DisplayMode::View || generation_ == 0 || action_.kind != ActionKind::None || !validSettings(data_.settings)) return;
     const auto timeout = ScreenTimeouts[data_.settings.screen_timeout];
     if (timeout && now_ms - last_input_ms_ >= timeout * 1000u) {
         screen_resources_.settings.editing = false; dialog_.close();
@@ -1082,11 +962,11 @@ void UiModel::tick(uint32_t now_ms) {
     }
 }
 
-UiSnapshot UiModel::snapshot() const {
+UiSnapshot GpsUiModel::snapshot() const {
     return {screen_, generation_, revision_, last_input_ms_, selection_, action_, screen_resources_.settings.page};
 }
 
-bool UiModel::takeRedraw() {
+bool GpsUiModel::takeRedraw() {
     const bool value = redraw_;
     redraw_ = false;
     return value;

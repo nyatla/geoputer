@@ -1,5 +1,5 @@
 // Exercise production App dispatch and logging against queued GPS/UI and a real LogWriter.
-#include "Application.h"
+#include "GpsApplication.h"
 #include "LogReplay.h"
 #include "task/storage/dataset/DatasetReadMemory.h"
 #include "utils/Console.h"
@@ -12,7 +12,7 @@
 #include <filesystem>
 using namespace geoputer;
 namespace {
-Application* app=nullptr;
+GpsApplication* app=nullptr;
 std::vector<MessageKind> calls;
 bool fail_open=false,hold_place_queries=false;
 unsigned audio_starts=0,audio_stops=0;alarm::AudioCommand last_audio{};
@@ -23,9 +23,9 @@ bool reject_screen=false,reject_place_return=false,reject_dataset_return=false,r
 void check(bool ok,const char* why){if(!ok)throw std::runtime_error(why);}
 void route(QueueHandle_t queue) {
     ReturnMessage reply{};
-    if(!app->usb_mode_ && queue==app->gpsMode().gps_.inbox().handle_) {
-        GpsRequest command{};app->gpsMode().gps_.inbox().receive(command);calls.push_back(command.kind);
-        app->gpsMode().gps_.handle(command);app->gpsMode().gps_.sendReturn();return;
+    if(queue==app->gps_.inbox().handle_) {
+        GpsRequest command{};app->gps_.inbox().receive(command);calls.push_back(command.kind);
+        app->gps_.handle(command);app->gps_.sendReturn();return;
     }
     if(queue==app->ui_.inbox().handle_) {
         UiRequest command{};app->ui_.inbox().receive(command);
@@ -89,7 +89,7 @@ void route(QueueHandle_t queue) {
             result.storage.busy=command.kind==MessageKind::DatasetOperation;
             check(app->results_.send(reply),"read request return queue full");return;
         }
-        const auto& log=command.payload.log;auto& writer=app->storage_.gpsMode().log_writer_;
+        const auto& log=command.payload.log;auto& writer=app->storage_.gpsState().log_writer_;
         const auto error=command.kind==MessageKind::OpenLogSession ? (fail_open?LogError::Io:writer.open(log.session_id,log.created_utc_ms)) :
             writer.requestFlush(log.session_id,log.sample_seq,command.kind==MessageKind::CloseLogSession);
         result.status=error==LogError::None?OperationStatus::Ok:OperationStatus::Unavailable;
@@ -108,22 +108,21 @@ void sample(unsigned second) {
     char body[120];std::snprintf(body,sizeof(body),"GNRMC,0100%02u.000,A,3540.98460,N,14001.63164,E,2.0,140.0,251026,,,A",second);
     unsigned crc=0;for(const char* p=body;*p;++p)crc^=static_cast<unsigned char>(*p);
     char sentence[140];std::snprintf(sentence,sizeof(sentence),"$%s*%02X\r\n",body,crc);
-    host_tick+=1000;for(const char* p=sentence;*p;++p)app->gpsMode().gps_.receiver_.feed(*p,host_tick);
-    host_tick+=100;app->gpsMode().gps_.receiver_.poll(host_tick);app->gpsMode().gps_.notify();app->drainNotifications();app->publishUiContent();
+    host_tick+=1000;for(const char* p=sentence;*p;++p)app->gps_.receiver_.feed(*p,host_tick);
+    host_tick+=100;app->gps_.receiver_.poll(host_tick);app->gps_.notify();app->drainNotifications();app->publishUiContent();
 }
 }
 namespace geoputer {
 USBCDC Console;
-void UiTask::run(){} void StorageTask::run(){}
-void StorageTask::sdBegin(){} void StorageTask::sdEnd(){} void StorageTask::cacheState(RgCacheState,bool){}
-LogError StorageTask::tryAppendLog(const LogCommand& command,LogSnapshot& snapshot){const auto error=gpsMode().log_writer_.append(command,taskTimeMs());snapshot=gpsMode().log_writer_.snapshot();return error;}
+void GpsUiTask::run(){} void GpsStorageTask::run(){}
+void GpsStorageTask::sdBegin(){} void GpsStorageTask::sdEnd(){} void GpsStorageTask::cacheState(RgCacheState,bool){}
+LogError GpsStorageTask::tryAppendLog(const LogCommand& command,LogSnapshot& snapshot){const auto error=gpsState().log_writer_.append(command,taskTimeMs());snapshot=gpsState().log_writer_.snapshot();return error;}
 // Unrelated App routes are peer boundaries in this test; reaching them is a failure.
 
 
 
 
-bool Application::operateBootMode(const UiAction&){throw std::runtime_error("unexpected boot mode operation");}
-bool Application::operateUsbExport(const UiAction&){throw std::runtime_error("unexpected export operation");}
+bool GpsApplication::operateBootMode(const UiAction&){throw std::runtime_error("unexpected boot mode operation");}
 
 
 
@@ -131,9 +130,9 @@ bool Application::operateUsbExport(const UiAction&){throw std::runtime_error("un
 int main(){
     char directory[]="/tmp/rgp-app-log-XXXXXX";check(mkdtemp(directory)!=nullptr,"temp directory");
     const std::string log_directory=std::string(directory)+"/logs";
-    Application instance;app=&instance;check(app->selectBootMode(false),"select GPS resources before queues");check(&app->storage_.gpsMode().selected_dataset_==&app->storage_.gpsMode().place_lookup_.selected_,
-        "Storage owns one session borrowed by lookup; App stores no second session");app->storage_.gpsMode().log_writer_.directory_=LogDirectory(log_directory);
-    check(app->results_.initialize() && app->notifications_.initialize() && app->gpsMode().gps_.initialize() && app->ui_.initialize() && app->storage_.initialize(),"queues");
+    GpsApplication instance;app=&instance;check(&app->storage_.gpsState().selected_dataset_==&app->storage_.gpsState().place_lookup_.selected_,
+        "Storage owns one session borrowed by lookup; App stores no second session");app->storage_.gpsState().log_writer_.directory_=LogDirectory(log_directory);
+    check(app->results_.initialize() && app->notifications_.initialize() && app->gps_.initialize() && app->ui_.initialize() && app->storage_.initialize(),"queues");
     hostQueueHook=route;app->screen_=ScreenId::GpsLogger;app->generation_=1;app->data_.settings=defaultSettings();app->data_.settings.log_interval=0;
     app->data_.storage.card_state=CardState::Mounted;app->data_.storage.revision=1;
     app->ui_.model_.setScreen({app->screen_,DisplayMode::View,1,app->data_,0,ActionResult::None});
@@ -141,22 +140,22 @@ int main(){
     check(calls.size()==2 && calls[0]==MessageKind::StartGpsReception && calls[1]==MessageKind::OpenLogSession,"GPS starts before session");
     sample(1);check(app->data_.recording.state==RecordingState::Recording && app->data_.storage.log.accepted==1,"next fixed sample records");
     const auto session=app->data_.storage.log.session_id;
-    operation(LogAction::Pause);check(app->data_.recording.state==RecordingState::Paused && app->gpsMode().gps_.ready_ && calls.back()==MessageKind::FlushLog,"pause flushes but keeps GPS");
-    check(app->storage_.gpsMode().log_writer_.flush(host_tick),"flush pause");app->data_.storage.log=app->storage_.gpsMode().log_writer_.snapshot();app->publishUiContent();
+    operation(LogAction::Pause);check(app->data_.recording.state==RecordingState::Paused && app->gps_.ready_ && calls.back()==MessageKind::FlushLog,"pause flushes but keeps GPS");
+    check(app->storage_.gpsState().log_writer_.flush(host_tick),"flush pause");app->data_.storage.log=app->storage_.gpsState().log_writer_.snapshot();app->publishUiContent();
     check(app->data_.storage.log.name[0] && app->data_.storage.log.saved==1,"published name and saved count");
     sample(2);check(app->data_.storage.log.accepted==1,"paused samples are not logged");
     operation(LogAction::Resume);sample(3);check(app->data_.recording.state==RecordingState::Recording && app->data_.storage.log.accepted==2 && app->data_.storage.log.session_id==session,"resume same session");
     operation(LogAction::Stop);check(app->data_.recording.state==RecordingState::Stopped && app->data_.storage.log.closing && app->data_.gps.fix.valid,"stop closes asynchronously and preserves GPS fix");
-    check(calls.back()==MessageKind::CloseLogSession && app->gpsMode().gps_.serial_.sent.empty(),"log stop leaves GPS continuously receiving without standby TX");
-    check(app->storage_.gpsMode().log_writer_.flush(host_tick),"finish close");app->data_.storage.log=app->storage_.gpsMode().log_writer_.snapshot();app->publishUiContent();
+    check(calls.back()==MessageKind::CloseLogSession && app->gps_.serial_.sent.empty(),"log stop leaves GPS continuously receiving without standby TX");
+    check(app->storage_.gpsState().log_writer_.flush(host_tick),"finish close");app->data_.storage.log=app->storage_.gpsState().log_writer_.snapshot();app->publishUiContent();
     // Stale notifications cannot replace the newer receiver snapshot.
     AppNotification old{};old.source=TaskId::GPS;old.kind=MessageKind::GpsSampleReady;old.payload.gps.revision=1;old.payload.gps.fix.valid=false;
     app->handleNotification(old);check(app->data_.gps.fix.valid,"late notification replaced current fix");
     operation(LogAction::Start);check(app->data_.recording.state==RecordingState::Starting && app->data_.gps.fix.valid,"restart keeps continuously received fix");
     sample(4);
     check(app->data_.recording.state==RecordingState::Recording && app->data_.storage.log.accepted==1 && app->data_.storage.log.session_id!=session,"restart uses fresh session and sequence");
-    operation(LogAction::Stop);app->storage_.gpsMode().log_writer_.flush(host_tick);app->data_.storage.log=app->storage_.gpsMode().log_writer_.snapshot();app->publishUiContent();
-    fail_open=true;operation(LogAction::Start);check(app->data_.recording.state==RecordingState::Stopped && !app->gpsMode().log_accepting_,"failed session start cannot enable recording");
+    operation(LogAction::Stop);app->storage_.gpsState().log_writer_.flush(host_tick);app->data_.storage.log=app->storage_.gpsState().log_writer_.snapshot();app->publishUiContent();
+    fail_open=true;operation(LogAction::Start);check(app->data_.recording.state==RecordingState::Stopped && !app->gpsState().log_accepting_,"failed session start cannot enable recording");
     // Display sleep/wake never changes task, record or current screen state.
     app->ui_.model_.keyPressed(UiKey::ScreenOff,host_tick);app->readUiContent();check(app->mode_==DisplayMode::Background,"S sleep");
     app->ui_.model_.keyPressed(UiKey::OpenMap,host_tick);app->readUiContent();check(app->mode_==DisplayMode::View && app->screen_==ScreenId::GpsLogger,"wake preserves screen without shortcut execution");
@@ -168,7 +167,7 @@ int main(){
     app->data_.storage.card_state=CardState::Mounted;
     app->data_.dataset={PlaceState::Ready,1,1500,42,10000,10000};
     app->data_.gps.fix={35.68,140.02,1000,true};app->data_.gps.reception=GpsReception::Fix;
-    app->data_.gps.sample_seq=500;app->data_.map.scale=1;app->gpsMode().place_flow_.refresh();
+    app->data_.gps.sample_seq=500;app->data_.map.scale=1;app->gpsState().place_flow_.refresh();
     check(app->setScreen(ScreenId::Map),"enter map through the production generation transition");
     map::FrameInfo shown{};shown.width=240;shown.height=101;shown.region=17;shown.meters_per_pixel=9;
     shown.request.token=77;shown.request.screen_generation=app->generation_;
@@ -188,10 +187,10 @@ int main(){
         reply.place=placeCompletion(output);
         if(hidden)app->mode_=DisplayMode::Background;
         app->handleNotification(event);
-        check(app->gpsMode().place_flow_.pending(),"notification handler must defer UI sync until the main loop");
+        check(app->gpsState().place_flow_.pending(),"notification handler must defer UI sync until the main loop");
         app->processPlace();app->publishUiContent();
         if(hidden) {
-            check(app->gpsMode().place_flow_.waitMs(app->data_.gps.sample_seq,app->data_.gps.fix,10000,10000)==0,
+            check(app->gpsState().place_flow_.waitMs(app->data_.gps.sample_seq,app->data_.gps.fix,10000,10000)==0,
                   "hidden completion must not suppress the lookup after wake");
             app->mode_=DisplayMode::View;app->publishUiContent();
         } else check(!std::strcmp(app->ui_.model_.data().place[0],name),"map accepts current-place result without rebuilding image");
@@ -202,18 +201,18 @@ int main(){
     app->data_.gps.fix.longitude+=0.00001;++app->data_.gps.sample_seq;app->requestPlace();
     StorageRequest no_query{};check(!app->storage_.inbox().receive(no_query),"same lattice cell sends no storage query");
     app->data_.gps.fix.longitude+=0.00006;++app->data_.gps.sample_seq;lookup("SECOND AREA");
-    app->gpsMode().map_request_.token=123;++app->data_.gps.sample_seq;app->data_.gps.fix.longitude+=0.0001;app->requestPlace();
+    app->gpsState().map_request_.token=123;++app->data_.gps.sample_seq;app->data_.gps.fix.longitude+=0.0001;app->requestPlace();
     check(!app->storage_.inbox().receive(no_query),"map job ownership prevents a silently discarded search request");
-    app->gpsMode().map_request_={};app->mode_=DisplayMode::Background;app->requestPlace();
+    app->gpsState().map_request_={};app->mode_=DisplayMode::Background;app->requestPlace();
     check(!app->storage_.inbox().receive(no_query),"background mode does not start place IO");
     app->mode_=DisplayMode::View;lookup("HIDDEN",true);lookup("THIRD AREA");
     // UI lending may succeed while Storage's queue is full. Retain and return
     // the unsubmitted loan even if the first UI return itself is rejected.
-    app->gpsMode().place_flow_.refresh();StorageRequest blocker{};blocker.kind=MessageKind::GetStorageStatus;
+    app->gpsState().place_flow_.refresh();StorageRequest blocker{};blocker.kind=MessageKind::GetStorageStatus;
     check(app->storage_.inbox().send(blocker),"fill Storage before place query");
-    app->requestPlace();check(app->gpsMode().place_borrow_.token && !app->gpsMode().place_queued_ && !app->gpsMode().place_flow_.pending(),"queue-full search must retain an unsubmitted loan");
-    reject_place_return=true;app->processPlace();check(app->gpsMode().place_borrow_.token && app->ui_.model_.mapFrame().leased(),"failed UI return keeps memory unavailable");
-    app->processPlace();check(!app->gpsMode().place_borrow_.token && !app->ui_.model_.mapFrame().leased(),"unsubmitted loan returns on retry");
+    app->requestPlace();check(app->gpsState().place_borrow_.token && !app->gpsState().place_queued_ && !app->gpsState().place_flow_.pending(),"queue-full search must retain an unsubmitted loan");
+    reject_place_return=true;app->processPlace();check(app->gpsState().place_borrow_.token && app->ui_.model_.mapFrame().leased(),"failed UI return keeps memory unavailable");
+    app->processPlace();check(!app->gpsState().place_borrow_.token && !app->ui_.model_.mapFrame().leased(),"unsubmitted loan returns on retry");
     check(app->storage_.inbox().receive(blocker) && blocker.kind==MessageKind::GetStorageStatus,"failed search did not replace queued Storage work");
     // The writer may finish after both App and UI replaced their screen data.
     app->requestPlace();StorageRequest departing{};check(app->storage_.inbox().receive(departing),"place pending before screen switch");
@@ -225,9 +224,9 @@ int main(){
     auto& completion=finished.payload.storage_completion;completion.request_id=departing.request_id;
     completion.read_kind=StorageReadKind::Place;completion.snapshot=app->data_.storage;completion.snapshot.settings=app->data_.settings;
     completion.place.request=departing.payload.place_request;
-    app->handleNotification(finished);check(app->gpsMode().place_flow_.pending(),"late notification only stages completion");
-    reject_place_return=true;app->processPlace();check(app->gpsMode().place_borrow_.token,"stale result return can be retried");
-    app->processPlace();check(!app->gpsMode().place_borrow_.token && !app->gpsMode().place_flow_.pending() &&
+    app->handleNotification(finished);check(app->gpsState().place_flow_.pending(),"late notification only stages completion");
+    reject_place_return=true;app->processPlace();check(app->gpsState().place_borrow_.token,"stale result return can be retried");
+    app->processPlace();check(!app->gpsState().place_borrow_.token && !app->gpsState().place_flow_.pending() &&
         std::strcmp(app->data_.place[0],"LATE SCREEN NAME"),"old screen result is returned without publication");
     check(app->setScreen(ScreenId::Map),"restore map after place-lifetime scenarios");
     std::puts("PASS: shared current-place lookup on map, changed-cell dispatch, same-cell suppression and map-job exclusion");
@@ -237,7 +236,7 @@ int main(){
     check(app->setScreen(ScreenId::Settings),"enter settings before catalog read");
     DatasetRequest catalog{};catalog.action=DatasetAction::Open;
     check(app->requestDataset(catalog) && !app->data_.hasDatasets() && app->ui_.model_.data().datasets().loading,"UI owns pending catalog, App holds control only");
-    auto request=app->gpsMode().dataset_borrow_;check(validDatasetMemory(request) && app->ui_.model_.mapFrame().leased(),"catalog borrows the fixed back image");
+    auto request=app->gpsState().dataset_borrow_;check(validDatasetMemory(request) && app->ui_.model_.mapFrame().leased(),"catalog borrows the fixed back image");
     auto makeCatalog=[&](const DatasetRequest& req,const char* title) {
         auto& view=*datasetResultMemory(req);view={};view.revision=req.token;view.count=1;view.rows[0].number=2;
         std::snprintf(view.rows[0].title,sizeof(view.rows[0].title),"%s",title);
@@ -248,47 +247,47 @@ int main(){
     };
     late_dataset=makeCatalog(request,"DELAYED DATASET");deliver_dataset_on_ui_send=true;
     check(app->setScreen(ScreenId::Logs),"shortcut to logs during catalog write");
-    check(app->gpsMode().dataset_waiting_ && app->ui_.model_.mapFrame().leased(),"notification cannot return a loan from inside a sync wait");
+    check(app->gpsState().dataset_waiting_ && app->ui_.model_.mapFrame().leased(),"notification cannot return a loan from inside a sync wait");
     app->processDataset();
-    check(!app->gpsMode().dataset_waiting_ && !app->ui_.model_.mapFrame().leased() && app->data_.hasBrowse() && !app->data_.browse().names[0][0],"late catalog returns loan without replacing Logs");
+    check(!app->gpsState().dataset_waiting_ && !app->ui_.model_.mapFrame().leased() && app->data_.hasBrowse() && !app->data_.browse().names[0][0],"late catalog returns loan without replacing Logs");
     app->processBrowser();check(last_read.kind==MessageKind::ListLogs,"browser queues read");
     const auto log_request=last_read.payload.log_read;
     check(app->setScreen(ScreenId::Settings) && app->requestDataset(catalog),"catalog intent can wait for an old log read");
     LogReadReply late_log{};late_log.request=log_request;late_log.count=1;std::strcpy(late_log.data.list.names[0],"must-not-overwrite-dataset.gps.dat");
     app->completeBrowser(late_log);app->processDataset();
-    check(app->gpsMode().dataset_waiting_ && !app->data_.hasDatasets(),"App never stores catalog result");
-    auto current=makeCatalog(app->gpsMode().dataset_borrow_,"CURRENT DATASET");app->handleNotification(current);app->processDataset();
-    check(!app->gpsMode().dataset_waiting_ && !std::strcmp(app->ui_.model_.data().datasets().rows[0].title,"CURRENT DATASET"),"current catalog publishes in UI");
+    check(app->gpsState().dataset_waiting_ && !app->data_.hasDatasets(),"App never stores catalog result");
+    auto current=makeCatalog(app->gpsState().dataset_borrow_,"CURRENT DATASET");app->handleNotification(current);app->processDataset();
+    check(!app->gpsState().dataset_waiting_ && !std::strcmp(app->ui_.model_.data().datasets().rows[0].title,"CURRENT DATASET"),"current catalog publishes in UI");
     app->publishUiContent();
     check(!std::strcmp(app->ui_.model_.data().datasets().rows[0].title,"CURRENT DATASET"),"general App updates cannot overwrite the UI-owned page");
     // Superseding read, failed return and resubmission preserve the old lease.
-    app->data_.storage.busy=false;check(app->requestDataset(catalog),"first superseded read");request=app->gpsMode().dataset_borrow_;
-    catalog.number=2;check(app->requestDataset(catalog) && app->gpsMode().dataset_borrow_.token==request.token,"new intent cannot revoke Storage loan");
+    app->data_.storage.busy=false;check(app->requestDataset(catalog),"first superseded read");request=app->gpsState().dataset_borrow_;
+    catalog.number=2;check(app->requestDataset(catalog) && app->gpsState().dataset_borrow_.token==request.token,"new intent cannot revoke Storage loan");
     auto superseded=makeCatalog(request,"SUPERSEDED");app->handleNotification(superseded);reject_dataset_return=true;app->processDataset();
-    check(app->gpsMode().dataset_borrow_.token==request.token,"failed return retains owner");app->processDataset();
-    check(app->gpsMode().dataset_borrow_.token && app->gpsMode().dataset_borrow_.token!=request.token,"next read begins after old loan returns");
-    current=makeCatalog(app->gpsMode().dataset_borrow_,"LATEST");app->handleNotification(current);app->processDataset();
+    check(app->gpsState().dataset_borrow_.token==request.token,"failed return retains owner");app->processDataset();
+    check(app->gpsState().dataset_borrow_.token && app->gpsState().dataset_borrow_.token!=request.token,"next read begins after old loan returns");
+    current=makeCatalog(app->gpsState().dataset_borrow_,"LATEST");app->handleNotification(current);app->processDataset();
     check(!std::strcmp(app->ui_.model_.data().datasets().rows[0].title,"LATEST"),"superseded text never publishes");
-    reject_dataset_once=true;check(app->requestDataset(catalog) && app->gpsMode().dataset_ready_,"rejected Storage submission schedules loan return");
-    app->processDataset();check(app->gpsMode().dataset_borrow_.token && app->gpsMode().dataset_queued_,"rejected request retries after returning UI back");
-    current=makeCatalog(app->gpsMode().dataset_borrow_,"RETRIED");app->handleNotification(current);app->processDataset();
+    reject_dataset_once=true;check(app->requestDataset(catalog) && app->gpsState().dataset_ready_,"rejected Storage submission schedules loan return");
+    app->processDataset();check(app->gpsState().dataset_borrow_.token && app->gpsState().dataset_queued_,"rejected request retries after returning UI back");
+    current=makeCatalog(app->gpsState().dataset_borrow_,"RETRIED");app->handleNotification(current);app->processDataset();
     DatasetRequest verify{};verify.action=DatasetAction::VerifyIndex;verify.purpose=DatasetPurpose::Verify;verify.number=app->data_.settings.dataset;
-    check(app->requestDataset(verify) && app->gpsMode().dataset_applying_,"maintenance enters busy state without an App result payload");
+    check(app->requestDataset(verify) && app->gpsState().dataset_applying_,"maintenance enters busy state without an App result payload");
     AppNotification progress_event{};progress_event.source=TaskId::Storage;progress_event.kind=MessageKind::DatasetProgress;
-    progress_event.payload.index_progress.token=app->gpsMode().dataset_waiting_;progress_event.payload.index_progress.percent=55;
+    progress_event.payload.index_progress.token=app->gpsState().dataset_waiting_;progress_event.payload.index_progress.percent=55;
     app->handleNotification(progress_event);app->processDataset();
     check(app->ui_.model_.data().datasets().progress.percent==55,"App forwards progress without copying display text");
-    current=makeCatalog(app->gpsMode().dataset_borrow_,"UNUSED MAINTENANCE TEXT");app->handleNotification(current);app->processDataset();
-    check(app->gpsMode().dataset_check_needed_ && !app->gpsMode().dataset_applying_ && !app->ui_.model_.data().datasets().applying,"maintenance completion schedules dataset check and releases UI loan");
-    app->gpsMode().dataset_check_needed_=false;
+    current=makeCatalog(app->gpsState().dataset_borrow_,"UNUSED MAINTENANCE TEXT");app->handleNotification(current);app->processDataset();
+    check(app->gpsState().dataset_check_needed_ && !app->gpsState().dataset_applying_ && !app->ui_.model_.data().datasets().applying,"maintenance completion schedules dataset check and releases UI loan");
+    app->gpsState().dataset_check_needed_=false;
     // Scratch contention during initialization is retryable and keeps the selected dataset.
-    const auto selected=app->data_.settings.dataset;app->gpsMode().dataset_check_waiting_=123;
+    const auto selected=app->data_.settings.dataset;app->gpsState().dataset_check_waiting_=123;
     AppNotification busy{};busy.source=TaskId::Storage;busy.kind=MessageKind::ReadCompleted;
     auto& blocked=busy.payload.storage_completion;blocked.read_kind=StorageReadKind::Dataset;blocked.request_id=123;
     blocked.snapshot=app->data_.storage;++blocked.snapshot.revision;blocked.place.state=PlaceState::Waiting;
     app->handleNotification(busy);
-    check(!app->gpsMode().dataset_check_waiting_ && app->gpsMode().dataset_check_needed_ && app->data_.settings.dataset==selected,"initialization scratch contention retries without unselecting dataset");
-    app->gpsMode().dataset_check_needed_=false;
+    check(!app->gpsState().dataset_check_waiting_ && app->gpsState().dataset_check_needed_ && app->data_.settings.dataset==selected,"initialization scratch contention retries without unselecting dataset");
+    app->gpsState().dataset_check_needed_=false;
     std::puts("PASS: UI dataset loans, App control-only state, stale/superseded results, retryable returns and init scratch contention");
     // Preserve list names and selection through detail/point/back navigation.
     check(app->setScreen(ScreenId::Logs),"reopen browser after dataset use");
@@ -303,16 +302,16 @@ int main(){
     std::puts("PASS: exclusive UI page payloads, delayed dataset/log responses and retained browser hierarchy");
     // Map work may still be owned by Storage when its display is left. App
     // releases its own union; late map results and cancellation must spare Logs.
-    app->data_.storage.busy=false;app->data_.settings.dataset=1;app->gpsMode().place_flow_.refresh();
+    app->data_.storage.busy=false;app->data_.settings.dataset=1;app->gpsState().place_flow_.refresh();
     app->data_.gps.fix.valid=true;app->data_.gps.reception=GpsReception::Fix;
     check(app->setScreen(ScreenId::Map),"enter map resource group");
-    app->processMap();check(map_backend.occupied() && app->gpsMode().map_request_.token,"map job accepted by Storage peer");
+    app->processMap();check(map_backend.occupied() && app->gpsState().map_request_.token,"map job accepted by Storage peer");
     const auto old_map=map_backend.info();
-    check(app->setScreen(ScreenId::Logs) && app->screenResources().hasLogs() && app->gpsMode().map_cancel_,"Map -> Logs releases App map work and retains cancellation identity");
+    check(app->setScreen(ScreenId::Logs) && app->screenResources().hasLogs() && app->gpsState().map_cancel_,"Map -> Logs releases App map work and retains cancellation identity");
     auto& log_work=app->screenResources().logs();log_work.cache_count=1;log_work.records[0][0]=0x5a;
     app->completeMap(old_map);
     check(log_work.cache_count==1 && log_work.records[0][0]==0x5a,"late map completion overwrote log work");
-    app->processMap();check(!map_backend.occupied() && !app->gpsMode().map_request_.token && log_work.records[0][0]==0x5a,
+    app->processMap();check(!map_backend.occupied() && !app->gpsState().map_request_.token && log_work.records[0][0]==0x5a,
           "off-screen cancellation must release Storage map job without reading App map union");
     // A record request can finish after the work union has become a map again.
     auto& point_view=app->data_.editBrowse();point_view.summary.session_id=81;point_view.summary.records=20;
@@ -325,7 +324,7 @@ int main(){
     const auto stale_records=last_read.payload.log_read;
     check(app->setScreen(ScreenId::Map) && app->screenResources().hasMap(),"Logs -> Map replaces log work");
     auto& map_work=app->screenResources().map();map_work.info.region=0xa5;map_work.retry_at=17;
-    app->processMap();check(!app->gpsMode().map_request_.token,"new map request must wait for the old read's terminal result");
+    app->processMap();check(!app->gpsState().map_request_.token,"new map request must wait for the old read's terminal result");
     app->processBrowser(); // Send pending cancellation even without log work.
     LogReadReply stale{};stale.request=stale_records;stale.count=1;
     std::memset(stale.data.records,0xee,sizeof(stale.data.records));app->completeBrowser(stale);
@@ -392,19 +391,19 @@ int main(){
     check(!std::strcmp(app->data_.place[0],"HISTORICAL REGION") && app->data_.gps.fix.latitude==40.,"historical lookup leaves live GPS intact");
     app->data_.gps.fix.valid=false;app->data_.gps.reception=GpsReception::NoFix;
     app->publishUiContent();app->processMap();
-    check(app->gpsMode().map_request_.token && app->gpsMode().map_request_.latitude==v.point.latitude,"historical map uses saved coordinates without live GPS fix");
+    check(app->gpsState().map_request_.token && app->gpsState().map_request_.latitude==v.point.latitude,"historical map uses saved coordinates without live GPS fix");
     MapSourceResult source(shared_map_pixels);source.info.request=map_backend.info().request;
     check(map::planViewport(v.point.latitude,v.point.longitude,10000,10000,96*1024,source.plan)==map::Error::None,"historical viewport");
     source.info.width=240;source.info.height=101;source.info.meters_per_pixel=source.plan.meters_per_pixel;
     source.reserve(source.view().count);std::fill_n(source.pixels,source.view().count,11u);
     map_backend.loaded(std::move(source));while(!map_backend.complete())map_backend.step();app->completeMap(map_backend.info());
-    for(unsigned n=0;n<20 && app->gpsMode().map_request_.token;++n)app->processMap();
-    check(!app->gpsMode().map_request_.token && app->ui_.model_.mapFrame().image().bytes(),"historical map reaches UI atomically");
+    for(unsigned n=0;n<20 && app->gpsState().map_request_.token;++n)app->processMap();
+    check(!app->gpsState().map_request_.token && app->ui_.model_.mapFrame().image().bytes(),"historical map reaches UI atomically");
     const auto anchor=app->screenResources().map().anchor;
     host_tick+=999;app->processReplay();check(v.index==0,"replay waits a full second");
     host_tick+=1;app->processReplay();check(v.index==1 && v.playing,"replay advances one point from cache");
-    app->requestPlace();check(!app->gpsMode().place_flow_.pending() && app->data_.place_fix.latitude==v.point.latitude,"same cell reuses shared place lookup");
-    app->processMap();check(!app->gpsMode().map_request_.token && app->screenResources().map().anchor.request.token==anchor.request.token,
+    app->requestPlace();check(!app->gpsState().place_flow_.pending() && app->data_.place_fix.latitude==v.point.latitude,"same cell reuses shared place lookup");
+    app->processMap();check(!app->gpsState().map_request_.token && app->screenResources().map().anchor.request.token==anchor.request.token,
           "nearby historical point moves cursor without rebuilding map");
     app->publishUiContent();check(app->ui_.model_.mapCursor().valid && std::abs(app->ui_.model_.mapCursor().y)>.01,"log cursor follows historical point");
     app->publishUiContent();
@@ -466,7 +465,7 @@ int main(){
     stale_result.state=PlaceState::Ready;stale_result.dataset=app->data_.dataset;
     std::strcpy(stale_result.lines[0],"STALE POINT NAME");c.place=placeCompletion(stale_result);
     app->handleNotification(name);app->processPlace();
-    check(!app->gpsMode().place_flow_.pending() && !std::strcmp(app->data_.place[0],"HISTORICAL REGION"),
+    check(!app->gpsState().place_flow_.pending() && !std::strcmp(app->data_.place[0],"HISTORICAL REGION"),
           "late point result is rejected while the last completed label remains visible");
     app->publishUiContent();
     check(!std::strcmp(ui.data().place[0],"HISTORICAL REGION"),"discarding a stale lookup does not blank the UI label");
@@ -542,8 +541,8 @@ int main(){
     operation(LogAction::Start);sample(5);
     check(app->data_.recording.state==RecordingState::Recording && app->data_.storage.log.accepted==1 &&
           v.index==displayed_index && v.point.latitude==displayed_latitude,"live recording replaced a historical point or stopped during viewing");
-    operation(LogAction::Stop);check(app->storage_.gpsMode().log_writer_.flush(host_tick),"finish log recorded while viewing");
-    app->data_.storage.log=app->storage_.gpsMode().log_writer_.snapshot();
+    operation(LogAction::Stop);check(app->storage_.gpsState().log_writer_.flush(host_tick),"finish log recorded while viewing");
+    app->data_.storage.log=app->storage_.gpsState().log_writer_.snapshot();
     std::puts("PASS: log viewer modes, historical map and names, cursor tracking, skips, cache boundaries, replay timing, end/error/modal/screen-off pause and dataset constraints");
     // Direct entry also terminates cleanly for empty or invalid files.
     check(app->setScreen(ScreenId::Logs),"return to the retained file list");
@@ -564,8 +563,8 @@ int main(){
     std::puts("PASS: direct text entry, automatic initial batch, empty/header-error completion and Esc-to-list");
     // A fresh App exercises live alerts while a historical point is displayed
     // and the display is dark. No test substitutes the App scheduling logic.
-    static Application alarm_instance;app=&alarm_instance;check(app->selectBootMode(false),"select alarm GPS resources");
-    check(app->results_.initialize() && app->notifications_.initialize() && app->ui_.initialize() && app->gpsMode().gps_.initialize() && app->storage_.initialize(),"alarm App queues");
+    static GpsApplication alarm_instance;app=&alarm_instance;
+    check(app->results_.initialize() && app->notifications_.initialize() && app->ui_.initialize() && app->gps_.initialize() && app->storage_.initialize(),"alarm App queues");
     app->screen_=ScreenId::LogPoint;app->generation_=1;app->mode_=DisplayMode::Background;
     app->data_.settings=defaultSettings();app->data_.settings.dataset=1;
     app->data_.dataset.state=PlaceState::Ready;app->data_.storage.card_state=CardState::Mounted;
@@ -586,27 +585,27 @@ int main(){
         AppNotification completed{};completed.source=TaskId::Storage;completed.kind=MessageKind::ReadCompleted;
         auto& body=completed.payload.storage_completion;body.request_id=query.request_id;body.snapshot=app->data_.storage;
         body.snapshot.revision=app->data_.storage.revision+1;body.read_kind=StorageReadKind::Place;body.place=placeCompletion(result);
-        app->handleNotification(completed);check(app->gpsMode().place_completion_ready_,"alarm async result is staged without a display search token");
-        app->processPlace();check(!app->gpsMode().place_borrow_.token && !std::strcmp(app->data_.place[0],"HISTORY LABEL"),"alarm returns UI loan without replacing replay labels");
+        app->handleNotification(completed);check(app->gpsState().place_completion_ready_,"alarm async result is staged without a display search token");
+        app->processPlace();check(!app->gpsState().place_borrow_.token && !std::strcmp(app->data_.place[0],"HISTORY LABEL"),"alarm returns UI loan without replacing replay labels");
     };
     alarmSample(1,9);check(!audio_starts,"first live position establishes quiet alarm baseline");
     ++app->data_.gps.sample_seq;alarmSample(2,6);check(!audio_starts,"standard waits for seven adjacent-cell votes");
-    ++app->data_.gps.sample_seq;alarmSample(2,7);check(audio_starts==1 && app->gpsMode().alarm_audio_owned_,"standard crossing starts audio on the qualifying sample in dark-screen mode");
+    ++app->data_.gps.sample_seq;alarmSample(2,7);check(audio_starts==1 && app->gpsState().alarm_audio_owned_,"standard crossing starts audio on the qualifying sample in dark-screen mode");
     alarm_ui.keyPressed(UiKey::OpenMap,host_tick);app->readUiContent();
-    check(!app->gpsMode().alarm_audio_owned_ && audio_stops==1 && app->mode_==DisplayMode::View && app->screen_==ScreenId::LogPoint,"first key silences and wakes without executing map shortcut");
+    check(!app->gpsState().alarm_audio_owned_ && audio_stops==1 && app->mode_==DisplayMode::View && app->screen_==ScreenId::LogPoint,"first key silences and wakes without executing map shortcut");
     ++app->data_.gps.sample_seq;alarmSample(1,1);check(audio_starts==1,"silence preserves accepted region and the return threshold");
     ++app->data_.gps.sample_seq;alarmSample(3,7);check(audio_starts==2,"third region can trigger another live alarm");
-    app->data_.storage.card_state=CardState::NoCard;app->processAlarm();check(!app->gpsMode().alarm_audio_owned_ && audio_stops==2,"SD unavailable stops sounding alarm");
+    app->data_.storage.card_state=CardState::NoCard;app->processAlarm();check(!app->gpsState().alarm_audio_owned_ && audio_stops==2,"SD unavailable stops sounding alarm");
     app->data_.storage.card_state=CardState::Mounted;alarm_profile.settings.enabled=false;++alarm_profile.revision;app->processAlarm();
     check(app->playAlarm(alarm_profile.settings,true),"audition works while notifications are OFF");
     host_tick+=alarm::SoundSession::cycleMs(alarm_profile.settings.tone)+1;app->processAlarm();
-    check(!app->gpsMode().alarm_audio_owned_,"audition ends after one pattern");
+    check(!app->gpsState().alarm_audio_owned_,"audition ends after one pattern");
     app->data_.settings.power_level=power::Level::Normal;
     check(app->playAlarm(alarm_profile.settings,true),"managed audition accepted");
     host_tick+=alarm::SoundSession::cycleMs(alarm_profile.settings.tone)+1;app->processAlarm();
-    check(app->gpsMode().alarm_audio_owned_,"App preserves managed one-shot during bounded preparation budget");
+    check(app->gpsState().alarm_audio_owned_,"App preserves managed one-shot during bounded preparation budget");
     host_tick+=power::AudioPreparationBudgetMs;app->processAlarm();
-    check(!app->gpsMode().alarm_audio_owned_,"managed audition watchdog ends after pattern and preparation budget");
+    check(!app->gpsState().alarm_audio_owned_,"managed audition watchdog ends after pattern and preparation budget");
     check(app->setScreen(ScreenId::Settings),"enter settings for tone-switch collaboration");
     for(unsigned i=0;i<settingsRootIndex(SettingsRootItem::Alarm);++i)alarm_ui.keyPressed(UiKey::Down,host_tick);
     alarm_ui.keyPressed(UiKey::Enter,host_tick);for(unsigned i=0;i<3;++i)alarm_ui.keyPressed(UiKey::Down,host_tick);
@@ -618,30 +617,6 @@ int main(){
     check(last_audio.tone==alarm::Tone::Falling && alarm_ui.snapshot().action.kind==ActionKind::None,"next tone replaces active preview and is acknowledged");
     app->stopAlarm();
     std::puts("PASS: production App alarms use live GPS on dark replay screen, async ownership, quiet baseline, cell thresholds/mute/wake, SD failure and audition");
-    // A real USB App has no GPS member. Exercise common dispatch under asserts.
-    Application usb_instance;app=&usb_instance;
-    check(app->selectBootMode(true),"select USB outer union");
-    check(app->results_.initialize() && app->notifications_.initialize() && app->ui_.initialize() && app->storage_.initialize(),"USB queues");
-    app->data_.settings=defaultSettings();app->data_.revision=1;
-    check(app->setScreen(ScreenId::UsbStorage),"USB screen entry never reads GPS mode resources");
-    StorageSnapshot usb_state{};usb_state.revision=1;usb_state.settings=defaultSettings();usb_state.settings_state=SettingsState::Loaded;
-    usb_state.card_state=CardState::Mounted;usb_state.usb.ready=usb_state.usb.local=true;usb_state.export_job.phase=ExportPhase::Selecting;
-    app->applyStorage(usb_state);app->processBrowser();
-    check(last_read.kind==MessageKind::ListLogs && app->browse_waiting_,"USB file list uses only its own mode state");
-    LogReadReply usb_list{};usb_list.request=last_read.payload.log_read;usb_list.count=1;
-    usb_list.data.list.total_files=1;std::strcpy(usb_list.data.list.names[0],"usb.gps.dat");
-    app->completeBrowser(usb_list);app->runOnce();
-    check(!app->browse_waiting_ && app->data_.browse().count==1 && !app->data_.browse().loading,"USB list completion publishes without touching GPS");
-    AppNotification ignored{};ignored.source=TaskId::GPS;ignored.kind=MessageKind::GpsSampleReady;ignored.payload.gps.revision=9;
-    app->handleNotification(ignored);
-    ignored.source=TaskId::Storage;ignored.kind=MessageKind::MapCompleted;app->handleNotification(ignored);
-    ignored.kind=MessageKind::DatasetProgress;app->handleNotification(ignored);
-    app->ui_.model_.action(ActionKind::MapScale);app->ui_.model_.action_.map_scale=2;
-    app->readUiContent();
-    check(app->ui_.model_.snapshot().action.kind==ActionKind::None && app->mode_resources_.isUsb(),"USB rejects GPS-only UI actions before accessing the inactive member");
-    app->restart_pending_=true;app->runOnce();
-    check(app->mode_resources_.isUsb(),"restart preparation retains the USB member until reset");
-    std::puts("PASS: USB App screen entry, local file list, async completion, ignored GPS/GIS events and restart without inactive-union access");
     hostQueueHook=nullptr;std::filesystem::remove_all(directory);
     std::puts("PASS: production App logging, GPS pause/stop/restart, fresh epochs, async close, filename, failures and wake");
 }

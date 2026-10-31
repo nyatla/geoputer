@@ -4,7 +4,8 @@
 #include <stdexcept>
 #include <Preferences.h>
 #include "BootMode.h"
-#include "task/ui/UiModel.h"
+#include "apps/usb/UsbUiModel.h"
+#include "task/ui/GpsUiModel.h"
 #include "task/storage/usb/UsbBlockIo.h"
 using namespace geoputer;
 namespace {
@@ -32,12 +33,12 @@ void persistence() {
 }
 void ui() {
     UiData data{}; data.settings = defaultSettings(); data.storage.settings_state = SettingsState::Loaded;
-    auto openMode = [&](UiModel& model) {
+    auto openMode = [&](GpsUiModel& model) {
         model.setScreen({ScreenId::Settings,DisplayMode::View,1,data,0,ActionResult::None});
         for (unsigned n=0;n<SettingsSystemRow;++n) model.keyPressed(UiKey::Down,n+2);
         model.keyPressed(UiKey::Enter,20);
     };
-    auto stageUsb = [&](UiModel& model) {
+    auto stageUsb = [&](GpsUiModel& model) {
         openMode(model);
         check(model.snapshot().page == SettingsPage::System && !model.confirming(), "System opens a submenu");
         model.keyPressed(UiKey::Right,22);
@@ -49,7 +50,7 @@ void ui() {
         check(!model.editing() && model.snapshot().action.kind == ActionKind::None, "GPS source remains read-only");
         model.keyPressed(UiKey::Down,26);
     };
-    UiModel draft; openMode(draft);
+    GpsUiModel draft; openMode(draft);
     draft.keyPressed(UiKey::Enter,21); draft.keyPressed(UiKey::Right,22); draft.keyPressed(UiKey::Escape,23);
     check(!draft.systemUsbMode() && !draft.editing(), "Escape discards the mode preview");
     draft.keyPressed(UiKey::Down,24); draft.keyPressed(UiKey::Down,25); draft.keyPressed(UiKey::Enter,26);
@@ -57,7 +58,7 @@ void ui() {
     draft.keyPressed(UiKey::Escape,27);
     check(draft.snapshot().page==SettingsPage::Root && draft.snapshot().selected_setting==SettingsSystemRow,
           "System back preserves the root selection");
-    UiModel model; stageUsb(model); model.keyPressed(UiKey::Enter,28);
+    GpsUiModel model; stageUsb(model); model.keyPressed(UiKey::Enter,28);
     check(model.dialog().kind() == DialogKind::EnterUsbMode && !model.confirmChoice(), "Save opens a Cancel-default dialog");
     model.keyPressed(UiKey::Enter,29);
     check(model.snapshot().action.kind == ActionKind::None && model.systemUsbMode(), "cancelling confirmation retains the draft without reboot");
@@ -79,7 +80,7 @@ void ui() {
     model.keyPressed(UiKey::Right,100002);model.keyPressed(UiKey::Enter,100003);
     check(model.snapshot().action.kind==ActionKind::None,"disabled confirmation cannot request mode switch");
     for (auto state : {RecordingState::Recording,RecordingState::Paused,RecordingState::Starting}) {
-        data.recording.state = state; UiModel blocked; stageUsb(blocked);
+        data.recording.state = state; GpsUiModel blocked; stageUsb(blocked);
         blocked.keyPressed(UiKey::Enter,30);
         check(!blocked.confirming() && blocked.snapshot().action.kind == ActionKind::None, "recording, paused and starting block Save");
     }
@@ -91,69 +92,66 @@ void ui() {
     data.storage.busy = true; check(!usbEntryAllowed(data), "storage busy blocks entry"); data.storage.busy = false;
     data.editDatasets().loading = true; check(!usbEntryAllowed(data), "dataset read blocks entry"); data.editDatasets().loading = false;
     data.storage.settings_state=SettingsState::Unavailable;
-    UiModel noNvs; stageUsb(noNvs);noNvs.keyPressed(UiKey::Enter,30);
+    GpsUiModel noNvs; stageUsb(noNvs);noNvs.keyPressed(UiKey::Enter,30);
     check(!noNvs.confirming(),"known NVS unavailability blocks Save");
     data.storage.settings_state=SettingsState::Loaded;
-    UiModel leave; stageUsb(leave);leave.keyPressed(UiKey::Escape,30);leave.keyPressed(UiKey::Enter,31);
+    GpsUiModel leave; stageUsb(leave);leave.keyPressed(UiKey::Escape,30);leave.keyPressed(UiKey::Enter,31);
     check(!leave.systemUsbMode(),"leaving System discards unsaved draft");
-    data.dataset.state = PlaceState::TooManyChunks; // USB mode does not require a usable dataset or SD card.
-    UiModel usb; usb.setScreen({ScreenId::UsbStorage,DisplayMode::View,1,data,0,ActionResult::None});
+    UsbUiModel usb; usb.update(UsbUiData{},0);
     check(!usb.confirming() && usb.usbPage()==UsbPage::Menu, "USB boot shows menu independent of GIS");
     usb.tick(2); usb.tick(100000);
-    check(usb.snapshot().action.kind == ActionKind::None && !usb.confirming(), "USB menu never sleeps automatically");
-    for (auto key : {UiKey::OpenGpsLogger,UiKey::OpenSettings,UiKey::OpenLogs,UiKey::Other,UiKey::DeleteLog}) usb.keyPressed(key,100001);
-    check(usb.snapshot().action.kind == ActionKind::None, "normal shortcuts cannot leave the USB screen");
-    usb.keyPressed(UiKey::Escape,100002); usb.keyPressed(UiKey::Right,100003); usb.keyPressed(UiKey::Enter,100004);
-    check(usb.snapshot().action.kind == ActionKind::Storage && usb.snapshot().action.confirmed &&
-          usb.snapshot().action.storage_operation == StorageOperation::ExitUsbMode, "exit requests flag save and reboot through Storage");
+    check(usb.action().kind == UsbActionKind::None && !usb.confirming(), "USB menu never sleeps automatically");
+    for (auto key : {UiKey::OpenGpsLogger,UiKey::OpenSettings,UiKey::OpenLogs,UiKey::Other,UiKey::DeleteLog}) usb.key(key);
+    check(usb.action().kind == UsbActionKind::None, "normal shortcuts cannot leave the USB screen");
+    usb.key(UiKey::Escape); usb.key(UiKey::Right); usb.key(UiKey::Enter);
+    check(usb.action().kind == UsbActionKind::Exit, "exit requests flag save and reboot through Storage");
 }
 void exportUi() {
-    UiData data{};data.settings=defaultSettings();data.storage.usb.ready=true;data.storage.usb.connected=true;
-    UiModel ui;ui.setScreen({ScreenId::UsbStorage,DisplayMode::View,1,data,0,ActionResult::None});
-    UiModel exit;exit.setScreen({ScreenId::UsbStorage,DisplayMode::View,1,data,0,ActionResult::None});
-    exit.keyPressed(UiKey::Escape,1);exit.keyPressed(UiKey::Right,2);
-    check(exit.dialog().actionEnabled() && exit.confirmChoice(),"connected PC does not disable explicitly confirmed exit");
-    exit.updateContent({DisplayMode::View,1,data,0,ActionResult::None});
-    check(exit.confirmChoice(),"USB state updates do not clear the selected Exit choice");
-    exit.keyPressed(UiKey::Enter,3);
-    check(exit.snapshot().action.kind==ActionKind::Storage && exit.snapshot().action.confirmed &&
-          exit.snapshot().action.storage_operation==StorageOperation::ExitUsbMode,
+    UsbUiData data{};data.storage.usb.ready=true;data.storage.usb.connected=true;
+    UsbUiModel ui;ui.update(data,0);
+    UsbUiModel exit;exit.update(data,0);
+    exit.key(UiKey::Escape);exit.key(UiKey::Right);
+    check(exit.dialog().actionEnabled() && exit.dialog().selected(),"connected PC does not disable explicitly confirmed exit");
+    exit.update(data,0,ActionResult::None);
+    check(exit.dialog().selected(),"USB state updates do not clear the selected Exit choice");
+    exit.key(UiKey::Enter);
+    check(exit.action().kind==UsbActionKind::Exit,
           "exit can be requested without an OS eject notification");
-    ui.keyPressed(UiKey::Enter,5);
-    check(ui.snapshot().action.kind==ActionKind::UsbExport && ui.snapshot().action.usb_action==UsbAction::Begin,
+    ui.key(UiKey::Enter);
+    check(ui.action().kind==UsbActionKind::Begin,
           "menu requests asynchronous preparation");
     auto ack=[&](ExportPhase phase) {
-        const auto id=ui.snapshot().action.action_id;data.storage.export_job.phase=phase;
-        ui.updateContent({DisplayMode::View,1,data,id,ActionResult::Applied});
+        const auto id=ui.action().id;data.storage.export_job.phase=phase;
+        ui.update(data,id,ActionResult::Applied);
     };
     ack(ExportPhase::WaitEject);
     check(ui.usbPage()==UsbPage::WaitEject,"connected export waits for safe removal");
-    ui.keyPressed(UiKey::Escape,6);
-    check(ui.snapshot().action.kind==ActionKind::UsbExport && ui.snapshot().action.usb_action==UsbAction::Publish,"safe-removal wait can be cancelled");
+    ui.key(UiKey::Escape);
+    check(ui.action().kind==UsbActionKind::Publish,"safe-removal wait can be cancelled");
     ack(ExportPhase::Idle);data.storage.usb.connected=false;
-    ui.updateContent({DisplayMode::View,1,data,0,ActionResult::None});
-    ui.keyPressed(UiKey::Enter,7);ack(ExportPhase::Preparing);
+    ui.update(data,0,ActionResult::None);
+    ui.key(UiKey::Enter);ack(ExportPhase::Preparing);
     check(ui.usbPage()==UsbPage::Busy,"disconnected entry skips safe-removal prompt");
-    data.storage.usb.local=true;data.editBrowse().revision=7;data.editBrowse().count=4;data.editBrowse().has_older=true;
-    for(unsigned n=0;n<4;++n)std::strcpy(data.editBrowse().names[n],"20261017_093012_0.gps.dat");
+    data.storage.usb.local=true;data.storage.files.revision=7;data.storage.files.count=4;data.storage.files.has_older=true;
+    for(unsigned n=0;n<4;++n)std::strcpy(data.storage.files.names[n],"20261017_093012_0.gps.dat");
     ack(ExportPhase::Selecting);
     check(ui.usbPage()==UsbPage::Files,"prepared local storage exposes file selection");
-    ui.keyPressed(UiKey::Down,8);ui.keyPressed(UiKey::Down,9);ui.keyPressed(UiKey::Enter,10);
+    ui.key(UiKey::Down);ui.key(UiKey::Down);ui.key(UiKey::Enter);
     check(ui.usbPage()==UsbPage::Format && ui.usbFile()==2,"file selection is pinned before choosing format");
-    ui.keyPressed(UiKey::Left,11);ui.keyPressed(UiKey::Down,12);ui.keyPressed(UiKey::Enter,13);
-    check(ui.snapshot().action.kind==ActionKind::UsbExport && ui.snapshot().action.usb_action==UsbAction::Start && ui.snapshot().action.export_format==ExportFormat::Kml &&
-          ui.snapshot().action.browse_index==2 && ui.snapshot().action.browse_revision==7,"format request preserves selected file and list revision");
-    ack(ExportPhase::Running);ui.keyPressed(UiKey::Escape,14);ui.keyPressed(UiKey::Enter,15);
-    check(ui.usbPage()==UsbPage::Progress && ui.snapshot().action.kind==ActionKind::None,"conversion blocks premature publish and exit");
+    ui.key(UiKey::Left);ui.key(UiKey::Down);ui.key(UiKey::Enter);
+    check(ui.action().kind==UsbActionKind::Start && ui.action().format==ExportFormat::Kml &&
+          ui.action().index==2,"format request preserves selected file and list revision");
+    ack(ExportPhase::Running);ui.key(UiKey::Escape);ui.key(UiKey::Enter);
+    check(ui.usbPage()==UsbPage::Progress && ui.action().kind==UsbActionKind::None,"conversion blocks premature publish and exit");
     data.storage.usb.local=false;ack(ExportPhase::Complete);
-    data.storage.usb.connected=true;ui.updateContent({DisplayMode::View,1,data,0,ActionResult::None});
+    data.storage.usb.connected=true;ui.update(data,0,ActionResult::None);
     check(ui.usbPage()==UsbPage::Complete,"reconnection updates completion without reopening a job");
-    ui.keyPressed(UiKey::Enter,16);ack(ExportPhase::Publishing);ack(ExportPhase::Idle);
+    ui.key(UiKey::Enter);ack(ExportPhase::Publishing);ack(ExportPhase::Idle);
     check(ui.usbPage()==UsbPage::Menu,"completed export returns to USB menu");
-    data.storage.usb.ejected=true;ui.updateContent({DisplayMode::View,1,data,0,ActionResult::None});
+    data.storage.usb.ejected=true;ui.update(data,0,ActionResult::None);
     check(!usbHostNeedsEject(data.storage.usb),"safe removal permits local ownership even if cable remains attached");
-    ui.keyPressed(UiKey::Escape,17);ui.keyPressed(UiKey::Right,18);ui.keyPressed(UiKey::Enter,19);
-    check(ui.snapshot().action.storage_operation==StorageOperation::ExitUsbMode,"safely ejected exit reaches flag-save request");
+    ui.key(UiKey::Escape);ui.key(UiKey::Right);ui.key(UiKey::Enter);
+    check(ui.action().kind==UsbActionKind::Exit,"safely ejected exit reaches flag-save request");
 }
 void blocks() {
     std::array<uint8_t,1536> disk{}, expected{}; uint8_t scratch[512]; unsigned reads=0,writes=0;

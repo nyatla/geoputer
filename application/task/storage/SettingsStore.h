@@ -5,7 +5,7 @@
 
 namespace geoputer {
 
-// Accessed only by StorageTask. SD initialization is not a prerequisite.
+// Accessed only by GpsStorageTask. SD initialization is not a prerequisite.
 class SettingsStore {
 public:
     bool begin();

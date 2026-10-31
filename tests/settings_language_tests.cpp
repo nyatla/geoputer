@@ -4,7 +4,7 @@
 #include "BuildInfo.h"
 #include "task/storage/SettingsStore.h"
 #include "task/ui/SettingsText.h"
-#include "task/ui/UiModel.h"
+#include "task/ui/GpsUiModel.h"
 #include "task/ui/Shinonome.h"
 
 using namespace geoputer;
@@ -45,7 +45,7 @@ void testSettingsLanguage() {
     encodeSettings(restored, record); record[11] = 5; updateChecksum(record);
     check(!decodeSettings(record, sizeof(record), after_reboot), "invalid volume remains rejected");
 
-    UiModel ui; UiData data{}; data.settings = defaultSettings();
+    GpsUiModel ui; UiData data{}; data.settings = defaultSettings();
     ui.setScreen({ScreenId::Settings, DisplayMode::View, 1, data, 0, ActionResult::None});
     ui.keyPressed(UiKey::Enter, 1); ui.keyPressed(UiKey::Enter, 2); ui.keyPressed(UiKey::Right, 3);
     check(ui.editValue() == 1 && ui.data().settings.language == UiLanguage::Japanese, "language preview does not apply before confirmation");
@@ -83,7 +83,7 @@ void testSettingsLanguage() {
     check(std::strcmp(ProductName,"ReverseGeoputer")==0 && std::strlen(ApplicationVersion)>0,
           "About identifies the application separately from OSS licenses");
     for (auto language : {UiLanguage::Japanese,UiLanguage::English}) {
-        UiModel about;UiData info{};info.settings=defaultSettings();info.settings.language=language;
+        GpsUiModel about;UiData info{};info.settings=defaultSettings();info.settings.language=language;
         about.setScreen({ScreenId::Settings,DisplayMode::View,1,info,0,ActionResult::None});
         for(unsigned n=0;n<settingsRootIndex(SettingsRootItem::About);++n)about.keyPressed(UiKey::Down,10+n);
         about.keyPressed(UiKey::Enter,20);

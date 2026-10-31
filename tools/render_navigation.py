@@ -7,12 +7,12 @@ SCENE=r"""
 #include <cstdio>
 #include <cstring>
 #include <stdexcept>
-#include "task/ui/UiRenderer.h"
+#include "task/ui/GpsUiRenderer.h"
 using namespace geoputer;
 int main(int argc,char** argv){
     if(argc!=3)return 1;
     const bool ja=!std::strcmp(argv[2],"ja");const char* mode=argv[1];
-    M5GFX display;UiRenderer renderer(display);if(!renderer.begin(previewColorDepth()))return 1;
+    M5GFX display;GpsUiRenderer renderer(display);if(!renderer.begin(previewColorDepth()))return 1;
     UiData data{};data.settings=defaultSettings();data.settings.language=ja?UiLanguage::Japanese:UiLanguage::English;
     data.storage.card_state=CardState::Mounted;data.recording.state=RecordingState::Recording;
     data.recording.elapsed_ms=3*3600000+42*60000+18000;data.recording.now_ms=120000;
@@ -31,7 +31,7 @@ int main(int argc,char** argv){
     if(!std::strcmp(mode,"long-name"))std::strcpy(data.storage.log.name,"undated_0123456789abcdef_4294967295.gps.dat");
     if(!std::strcmp(mode,"save-error"))data.storage.log.error=LogError::Io;
     const auto screen=!std::strcmp(mode,"menu")?ScreenId::Menu:ScreenId::GpsLogger;
-    UiModel model;model.tick(120000);model.setScreen({screen,DisplayMode::View,1,data,0,ActionResult::None});
+    GpsUiModel model;model.tick(120000);model.setScreen({screen,DisplayMode::View,1,data,0,ActionResult::None});
     const bool dialog=std::strcmp(mode,"menu") && std::strcmp(mode,"details") && std::strcmp(mode,"zero") &&
         std::strcmp(mode,"wide") && std::strcmp(mode,"no-fix") && std::strcmp(mode,"long-name") && std::strcmp(mode,"save-error");
     if(dialog){model.keyPressed(UiKey::Enter,120001);if(!std::strcmp(mode,"stop-selected")){model.keyPressed(UiKey::Left,120002);}}
@@ -54,13 +54,13 @@ int main(int argc,char** argv){
 }
 """
 def main():
-    renderer=(ROOT/'application/task/ui/UiRenderer.cpp').read_text()+(ROOT/'application/task/ui/UiCanvas.h').read_text()
+    renderer=(ROOT/'application/task/ui/GpsUiRenderer.cpp').read_text()+(ROOT/'application/task/ui/UiCanvas.h').read_text()
     enums=(M5GFX/'v1/misc/enum.hpp').read_text();colors=[]
     for name in sorted(set(re.findall(r'\bTFT_[A-Z]+\b',SCENE+renderer))):
         value=re.search(rf'\b{name}\s*=\s*(0x[0-9A-Fa-f]+)',enums)[1];colors.append(f'inline constexpr uint16_t {name}={value};')
     with tempfile.TemporaryDirectory(prefix='reversegeoputer-navigation-') as directory:
         work=Path(directory);(work/'M5GFX.h').write_text(ADAPTER+'\n'+'\n'.join(colors));(work/'scene.cpp').write_text(SCENE)
-        sources=[ROOT/'application/task/ui'/f'{name}.cpp' for name in ('PixelFont','UiRenderer','UsbRenderer','UiModel','LicenseText','SettingsText','Shinonome')]
+        sources=[ROOT/'application/task/ui'/f'{name}.cpp' for name in ('PixelFont','GpsUiRenderer','GpsUiModel','LicenseText','SettingsText','Shinonome')]
         exe=work/'render'
         subprocess.run(['g++','-std=c++17','-O1','-Wall','-Wextra','-Werror','-pedantic','-fsanitize=undefined','-fno-sanitize-recover=all',
             '-I',str(work),'-I',str(ROOT/'application'),'-I',str(ROOT/'tests/support'),'-I',str(M5GFX/'Fonts'),str(work/'scene.cpp'),*map(str,sources),str(ROOT/'application/Settings.cpp'),'-o',str(exe)],check=True,timeout=180)

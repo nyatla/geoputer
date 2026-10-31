@@ -6,7 +6,7 @@
 #include "task/storage/galuchat/PlaceLineOutput.h"
 #include "task/storage/PlaceSearchFlow.h"
 #include "task/ui/PlacePresentation.h"
-#include "task/ui/UiModel.h"
+#include "task/ui/GpsUiModel.h"
 
 using namespace geoputer;
 namespace {
@@ -16,7 +16,7 @@ void check(bool value, const char* detail) { if (!value) throw std::runtime_erro
 static void testPlaceLoans() {
     UiData data{};data.settings=defaultSettings();data.settings.dataset=1;
     data.dataset={PlaceState::Ready,1,1500,4};
-    UiModel ui;check(ui.setScreen({ScreenId::LivePlace,DisplayMode::View,1,data,0,ActionResult::None})==OperationStatus::Ok,"place loan root screen");
+    GpsUiModel ui;check(ui.setScreen({ScreenId::LivePlace,DisplayMode::View,1,data,0,ActionResult::None})==OperationStatus::Ok,"place loan root screen");
     PlaceRequest request{1,17,{35.68,140.02,0,true}};
     request.token=100;request.dataset_generation=4;request.work_bytes=config::IndexReadBufferBytes;
     check(ui.beginPlaceSearch(request,request.buffer)==OperationStatus::Ok && validPlaceMemory(request),"main screen lends aligned scratch and result space");
@@ -197,7 +197,7 @@ void testPlace() {
           data.place_fix.latitude == request.fix.latitude,
           "completion replaces all name rows and coordinates together independently of SD activity");
 
-    UiModel model;
+    GpsUiModel model;
     model.tick(1000);
     model.setScreen({ScreenId::LivePlace, DisplayMode::View, 7, data, 0, ActionResult::None});
     check(model.sdAccessLit(), "coalesced start/completion still produces a visible access pulse");
@@ -266,10 +266,10 @@ void testPlace() {
         check(placeIssue(rejected)==failure && mainError(rejected)==nullptr,"dataset-only fault does not create duplicate red band");
         rejected.gps.fix.valid=false;
         check(placeIssue(rejected)==failure,"NO FIX cannot replace dataset error");
-        UiModel warning;warning.setScreen({ScreenId::LivePlace,DisplayMode::View,1,rejected,0,ActionResult::None});
+        GpsUiModel warning;warning.setScreen({ScreenId::LivePlace,DisplayMode::View,1,rejected,0,ActionResult::None});
         warning.keyPressed(UiKey::OpenSettings,10);
         check(warning.snapshot().action.target==ScreenId::Settings,"dataset fault never blocks direct settings access");
-        UiModel recovery;recovery.setScreen({ScreenId::LivePlace,DisplayMode::View,1,rejected,0,ActionResult::None});
+        GpsUiModel recovery;recovery.setScreen({ScreenId::LivePlace,DisplayMode::View,1,rejected,0,ActionResult::None});
         recovery.keyPressed(UiKey::Escape,10);
         check(recovery.snapshot().action.kind==ActionKind::ChangeScreen && recovery.snapshot().action.target==ScreenId::Menu,"dataset error retains MENU access for settings recovery");
         DatasetInfo state{failure,2000,1500,7};

@@ -1,7 +1,7 @@
 #include <stdexcept>
 #include <cstring>
 #include "Settings.h"
-#include "task/ui/UiModel.h"
+#include "task/ui/GpsUiModel.h"
 #include "task/ui/LicenseText.h"
 #include "task/storage/SettingsStore.h"
 #include "task/ui/SettingsLayout.h"
@@ -94,7 +94,7 @@ void navigationAndEditing() {
         check(first <= selected && selected < first + SettingsLayout::VisibleRows && first + SettingsLayout::VisibleRows <= SettingCount,
               "all seven operation settings remain selectable inside the four-row large-font window");
     }
-    UiModel ui;
+    GpsUiModel ui;
     auto command = screen();
     ui.setScreen(command);
     for (unsigned i = 0; i < 10; ++i) ui.keyPressed(UiKey::Down, 10 + i);
@@ -146,7 +146,7 @@ void directEditing() {
     for(const auto language:{UiLanguage::Japanese,UiLanguage::English})for(unsigned row=0;row<OperationRowCount;++row) {
         if(!settingEditable(row))continue;
         UiData data{};data.settings=defaultSettings();data.settings.language=language;
-        UiModel model;model.setScreen({ScreenId::Settings,DisplayMode::View,1,data,0,ActionResult::None});
+        GpsUiModel model;model.setScreen({ScreenId::Settings,DisplayMode::View,1,data,0,ActionResult::None});
         uint32_t now=0;auto key=[&](UiKey k){model.keyPressed(k,++now);};
         key(UiKey::Enter);for(unsigned n=0;n<row;++n)key(UiKey::Down);
         const auto original=settingValue(data.settings,row);
@@ -168,7 +168,7 @@ void directEditing() {
         model.updateContent({DisplayMode::View,1,data,saved.action_id,ActionResult::Applied});
         key(UiKey::Enter);check(model.snapshot().action.kind==ActionKind::None,"unchanged next item never repeats the save");
     }
-    UiData data{};data.settings=defaultSettings();UiModel busy;
+    UiData data{};data.settings=defaultSettings();GpsUiModel busy;
     busy.setScreen({ScreenId::Settings,DisplayMode::View,1,data,0,ActionResult::None});
     busy.keyPressed(UiKey::Enter,1);busy.keyPressed(UiKey::Right,2);
     data.storage.busy=true;++data.revision;busy.updateContent({DisplayMode::View,1,data,0,ActionResult::None});
@@ -181,7 +181,7 @@ void directEditing() {
 }
 
 void destructiveConfirmationAndSleep() {
-    UiModel ui;
+    GpsUiModel ui;
     auto command = screen();
     ui.setScreen(command);
     for(unsigned n=0;n<settingsRootIndex(SettingsRootItem::Storage);++n)ui.keyPressed(UiKey::Down,10+n);
@@ -203,7 +203,7 @@ void destructiveConfirmationAndSleep() {
           ui.snapshot().action.storage_operation == StorageOperation::Format && ui.snapshot().action.confirmed,
           "only explicit OK creates a confirmed format action");
 
-    UiModel reset;
+    GpsUiModel reset;
     reset.setScreen(command);
     for(unsigned n=0;n<SettingsSystemRow;++n)reset.keyPressed(UiKey::Down,10+n);
     reset.keyPressed(UiKey::Enter, 20);
@@ -221,7 +221,7 @@ void destructiveConfirmationAndSleep() {
     check(reset.snapshot().action.kind == ActionKind::ResetSettings && reset.snapshot().action.confirmed &&
           sameSettings(reset.snapshot().action.settings, defaultSettings()), "reset contains defaults only");
 
-    UiModel idle;
+    GpsUiModel idle;
     idle.setScreen(command);
     idle.tick(100); idle.tick(15100);
     check(idle.snapshot().action.kind == ActionKind::Sleep, "configured timeout requests background mode");
@@ -233,7 +233,7 @@ void destructiveConfirmationAndSleep() {
     check(idle.snapshot().action.kind == ActionKind::Wake && !idle.confirming() && !idle.editing(),
           "wake key cannot execute the screen's Enter action");
 
-    UiModel always_on;
+    GpsUiModel always_on;
     command.data.settings.screen_timeout = 4;
     always_on.setScreen(command);
     always_on.tick(100);
@@ -243,7 +243,7 @@ void destructiveConfirmationAndSleep() {
               "Never keeps display active during long inactivity and tick wrap");
     }
     command.data.settings.screen_timeout = 3;
-    UiModel sixty_seconds;
+    GpsUiModel sixty_seconds;
     sixty_seconds.setScreen(command);
     sixty_seconds.tick(100); sixty_seconds.tick(60099);
     check(sixty_seconds.snapshot().action.kind == ActionKind::None, "60 seconds remains active before its deadline");

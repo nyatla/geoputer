@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include "UiPrimitives.h"
 #include <cstring>
 #include <new>
 #include <type_traits>
@@ -11,18 +12,10 @@
 
 namespace geoputer {
 
-enum class ScreenId : uint8_t { LivePlace, Settings, Boot, GpsLogger, Logs, LogPoint, UsbStorage, Map, Menu, LogProperties, LogStatistics, WifiManagement };
 inline bool isLogBrowser(ScreenId screen) { return screen==ScreenId::Logs || screen==ScreenId::LogPoint || screen==ScreenId::LogProperties || screen==ScreenId::LogStatistics; }
-enum class DisplayMode : uint8_t { Background, View };
-enum class LogAction : uint8_t { Start, Pause, Resume, Stop };
-struct BatteryStatus { int8_t percent = -1; bool charging = false; bool charge_known = false; };
 
-enum class ActionKind : uint8_t { None, ChangeScreen, SaveSettings, ResetSettings, Storage, Sleep, Wake, Logging, Browse, Dataset, UsbExport, Maintenance, RestartLogger, MapScale, SaveAlarm, ReloadAlarm, PreviewAlarm, SilenceAlarm };
-enum class UsbPage : uint8_t { Menu, WaitEject, Files, Format, Progress, Complete, Error, Busy };
-enum class UsbAction : uint8_t { Begin, Start, Publish, Older, Newer };
+enum class ActionKind : uint8_t { None, ChangeScreen, SaveSettings, ResetSettings, Storage, Sleep, Wake, Logging, Browse, Dataset, Maintenance, RestartLogger, MapScale, SaveAlarm, ReloadAlarm, PreviewAlarm, SilenceAlarm };
 enum class BrowseAction : uint8_t { OpenFile, Older, Newer, Reload, Point, Delete, Playback, PausePlayback, OpenPoint, Text, Map, Statistics, Recalculate, ReplayFaster, ReplaySlower, ReplayForward, ReplayReverse };
-enum class ActionResult : uint8_t { None, Applied, Rejected };
-enum class UiKey : uint8_t { OpenGpsLogger, OpenSettings, OpenLogs, DeleteLog, Escape, Up, Down, Left, Right, Enter, Other, Back, OpenLivePlace, OpenMap, ScreenOff, GpsControl, Tab, ZoomIn, FirstPoint, LastPoint, Playback, ZoomOut, Recalculate };
 enum class SettingsPage : uint8_t { Root, Operation, Storage, Reset, Licenses, DatasetList, DatasetDetail, About, DatasetIndex, DatasetMenu, System, Alarm };
 // Menu commands are separate from persisted settings and page identifiers.
 enum class SettingsRootItem : uint8_t { Operation, System, Storage, About, Licenses, Alarm, Count };
@@ -46,8 +39,6 @@ struct UiAction {
     DatasetPurpose dataset_purpose;
     uint8_t dataset_number=0;
     uint32_t browse_index, browse_revision;
-    UsbAction usb_action;
-    ExportFormat export_format;
     uint8_t map_scale;
     alarm::Settings alarm_settings{};
     uint32_t alarm_identity=0;

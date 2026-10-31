@@ -74,7 +74,7 @@ inline void removeFixtures() {
 }
 }
 ''')
-p=app/'task/storage/StorageTask.cpp';s=replace_once(p.read_text(),'#include "StorageTask.h"','#include "StorageTask.h"\n#include "../../benchmark/StatisticsBenchmark.h"')
+p=app/'task/storage/GpsStorageTask.cpp';s=replace_once(p.read_text(),'#include "GpsStorageTask.h"','#include "GpsStorageTask.h"\n#include "../../benchmark/StatisticsBenchmark.h"')
 s=replace_once(s,'        sendReturn();\n        notify();','''        sendReturn();
         notify();
         if(initialized_ && state_.card_state==CardState::Mounted && !hasJob() && !has_read_ && !state_.busy && taskTimeMs()>5000 && benchmark::ready==0)benchmark::fixtures(drive_);
@@ -137,8 +137,8 @@ if(benchmark::ready==1 && bench_stage<3 && data_.boot.complete && screen_!=Scree
 }
 if(bench_stage==3 && benchmark::cleanup==2) {Console.println("[STATS-BENCH-DONE] OK fixtures removed; NVS/user logs unchanged");bench_stage=4;}
 ''')
-p=app/'Application.cpp';s=replace_once(p.read_text(),'#include "Application.h"','#include "Application.h"\n#include "benchmark/StatisticsBenchmark.h"')
-s=replace_once(s,'void Application::runOnce() {\n    drainNotifications();','void Application::runOnce() {\n    drainNotifications();\n#include "benchmark/StatisticsBenchmark.inc"');p.write_text(s)
-p=app/'task/ui/UiModel.cpp';p.write_text(replace_once(p.read_text(),'const auto timeout = ScreenTimeouts[data_.settings.screen_timeout];','const auto timeout = 0u; // Diagnostic automation only; NVS is unchanged.'))
+p=app/'GpsApplication.cpp';s=replace_once(p.read_text(),'#include "GpsApplication.h"','#include "GpsApplication.h"\n#include "benchmark/StatisticsBenchmark.h"')
+s=replace_once(s,'void GpsApplication::runOnce() {\n    drainNotifications();','void GpsApplication::runOnce() {\n    drainNotifications();\n#include "benchmark/StatisticsBenchmark.inc"');p.write_text(s)
+p=app/'task/ui/GpsUiModel.cpp';p.write_text(replace_once(p.read_text(),'const auto timeout = ScreenTimeouts[data_.settings.screen_timeout];','const auto timeout = 0u; // Diagnostic automation only; NVS is unchanged.'))
 (r/'.pio/log-statistics-bench.ini').write_text(diagnostic_config(r,w))
 print(w)

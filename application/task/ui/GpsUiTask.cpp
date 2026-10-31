@@ -1,15 +1,15 @@
 #include "../../utils/Console.h"
-#include "UiTask.h"
+#include "GpsUiTask.h"
 #include "../../utils/HeapDiagnostics.h"
 #include <M5Cardputer.h>
-#include "UiRenderer.h"
+#include "GpsUiRenderer.h"
 #include "KeyBindings.h"
 #include "../../utils/SyncClient.h"
 #include "../../hardware/AdvKeyboardReader.h"
 
 namespace geoputer {
 
-void UiTask::handle(const UiRequest& request, bool ready) {
+void GpsUiTask::handle(const UiRequest& request, bool ready) {
     if (request.source != TaskId::Application || request.request_id == 0) {
         Console.println("[UI] invalid request envelope");
         return;
@@ -64,14 +64,14 @@ void UiTask::handle(const UiRequest& request, bool ready) {
     has_return_ = true;
 }
 
-void UiTask::sendReturn() {
+void GpsUiTask::sendReturn() {
     if (has_return_ && sendSpeculative(results_, pending_return_) == SpeculativeResult::Queued) {
         has_return_ = false;
     }
     // On a full queue keep this same result; never repeat the request's operation.
 }
 
-void UiTask::notifyContentChanged() {
+void GpsUiTask::notifyContentChanged() {
     if (!model_.notificationPending()) return;
     const auto content = model_.snapshot();
     AppNotification event{};
@@ -83,7 +83,7 @@ void UiTask::notifyContentChanged() {
     if (sendSpeculative(notifications_, event) == SpeculativeResult::Queued) model_.notificationSent();
 }
 
-void UiTask::run() {
+void GpsUiTask::run() {
     // LCD, keyboard and their M5Stack driver state are only accessed by this task.
     auto config = M5.config();
     config.internal_spk = power_manager_.current().audio_available;
@@ -112,8 +112,7 @@ void UiTask::run() {
         model_.keyPressed(UiKey::Escape, taskTimeMs());
         Console.println("[UI] startup ESC held; maintenance latched");
     }
-    wifi::QrCode wifi_qr; // Lifetime matches this UI loop; no heap or display buffer.
-    UiRenderer renderer(M5Cardputer.Display,&wifi_qr);
+    GpsUiRenderer renderer(M5Cardputer.Display);
     const bool ready = renderer.begin(config::UiColorDepth, frame_buffer_.data, sizeof(frame_buffer_.data));
     Console.println(ready ? "[UI] ready (240x135)" : "[UI] initialization failed");
     uint8_t was_viewer=0;
@@ -218,8 +217,6 @@ void UiTask::run() {
         if (!up && !down) repeat_at = 0;
         notifyContentChanged();
         if (ready && model_.takeRedraw()) {
-            if(model_.snapshot().screen==ScreenId::WifiManagement && model_.wifiPage()!=WifiPage::Text)
-                wifi_qr.update(model_.data().storage.wifi,model_.wifiPage());
             renderer.draw(model_);
         }
         // Rendering/SD-driven updates can exceed 10 ms. An absolute deadline

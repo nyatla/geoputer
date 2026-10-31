@@ -6,7 +6,7 @@
 
 namespace geoputer {
 
-// Subtask base: one receive queue and one FreeRTOS task. Application runs on loopTask.
+// Subtask base: one receive queue and one FreeRTOS task. Each App runs on loopTask.
 template <typename Message, size_t QueueCapacity>
 class Task {
 public:

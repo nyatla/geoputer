@@ -18,7 +18,7 @@ USBのデバイス処理はTinyUSBのシステムタスクで実行する。通�
 
 ## 動作モード別の固定領域
 
-GPS用・USB用・Wi-Fi用のApp・Storage資源は、最上位のApplicationModeMemoryにある一つのunionへ配置する。起動フラグを読んだ後に使う側だけを構築し、稼働中には切り替えない。共通UI・キュー・SPI等を除いた予約量はGPS・USB・Wi-Fi一式の最大値となる。詳細は[動作モード別メモリ構成設計](18_動作モード別メモリ構成設計.md)に従う。
+GPS・USB・Wi-Fiは、専用App・UI・Storageタスクと専用の通信型を持つ独立アプリケーションとする。最上位のApplicationMemoryはアプリ全体をunionへ配置し、起動フラグを読んだ後に一つだけ構築する。固定予約は各アプリの最大値と管理領域の合計であり、USB型にGPSの地図・記録資源を含めない。稼働中の切替は行わない。詳細は[動作モード別メモリ構成設計](18_動作モード別メモリ構成設計.md)に従う。
 
 ## Wi-Fi管理モードの追加仕様
 
@@ -68,7 +68,7 @@ SDのSPI配線と`Config.h`の`SdSpiHz = 25'000'000`（指定上限25MHz、現�
 
 USBの準備完了・取り外し・I/O異常はStorageが最新状態を保持し、通常のApp通知キューへ投機的に通知する。通知できないときも保持して再試行する。TinyUSBのコールバックからAppへ同期要求を送らず、UIやGPSのキューとも混在させない。
 
-実装は`BootMode`、`OperatingMode`、`task/storage/usb`、共通UiModel / UiRendererに配置する。[Espressif USB MSC API](https://docs.espressif.com/projects/arduino-esp32/en/latest/api/usb_msc.html)と、使用中のArduino-ESP32 2.0.17の実装を基準とする。
+実装は`BootMode`、`ApplicationRuntime`、`apps/usb`、`task/storage/usb`、共用描画部品`apps/common/PanelRenderer`に配置する。[Espressif USB MSC API](https://docs.espressif.com/projects/arduino-esp32/en/latest/api/usb_msc.html)と、使用中のArduino-ESP32 2.0.17の実装を基準とする。
 
 ## 画面例
 

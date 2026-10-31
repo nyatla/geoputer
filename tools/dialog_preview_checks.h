@@ -1,15 +1,15 @@
 #pragma once
 
-#include "task/ui/UiRenderer.h"
+#include "task/ui/GpsUiRenderer.h"
 #include "task/ui/SdCardIcon.h"
 #include <cstring>
 #include <stdexcept>
 
 // Host-only pixel contract shared by the real UI preview generators.
-inline void renderAndCheckDialog(geoputer::UiRenderer& renderer, geoputer::UiModel& model, M5GFX& display) {
+inline void renderAndCheckDialog(geoputer::GpsUiRenderer& renderer, geoputer::GpsUiModel& model, M5GFX& display) {
     using namespace geoputer;
     if (!model.confirming()) { renderer.draw(model); return; }
-    // UiModel owns noncopyable map buffers. Hide only the optional dialog in
+    // GpsUiModel owns noncopyable map buffers. Hide only the optional dialog in
     // this host fixture; restore it even when rendering throws. Cancellation
     // itself is covered by the native input tests.
     auto drawBackground = [&] {

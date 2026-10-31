@@ -15,7 +15,7 @@ namespace geoputer {
 class BorrowedReadBuffer;
 class ReadFileSlots;
 
-// Owned and called exclusively by StorageTask. No file handles cross task queues.
+// Owned and called exclusively by GpsStorageTask. No file handles cross task queues.
 class PlaceLookup {
 public:
     // root is a borrowed filesystem fixture prefix; production uses DatasetRoot.

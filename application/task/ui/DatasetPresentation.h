@@ -1,5 +1,5 @@
 #pragma once
-#include "UiTypes.h"
+#include "GpsUiTypes.h"
 #include <algorithm>
 #include <cstdio>
 #include <cstring>

@@ -11,15 +11,15 @@ SCENE = r'''
 #include <cstdio>
 #include <cstring>
 #include <stdexcept>
-#include "task/ui/UiRenderer.h"
+#include "task/ui/GpsUiRenderer.h"
 #include "task/ui/EscapeIcon.h"
 #include "task/ui/DatasetPresentation.h"
 using namespace geoputer;
 int main(int argc,char** argv) {
     if(argc!=3) return 2;
     const bool ja=!std::strcmp(argv[2],"ja");const char* mode=argv[1];
-    M5GFX display;UiRenderer renderer(display);if(!renderer.begin(previewColorDepth())) return 3;
-    UiModel ui;UiData data{};data.settings=defaultSettings();data.settings.language=ja?UiLanguage::Japanese:UiLanguage::English;
+    M5GFX display;GpsUiRenderer renderer(display);if(!renderer.begin(previewColorDepth())) return 3;
+    GpsUiModel ui;UiData data{};data.settings=defaultSettings();data.settings.language=ja?UiLanguage::Japanese:UiLanguage::English;
     data.storage.settings_state=SettingsState::Loaded;data.storage.card_state=CardState::Mounted;
     ui.setScreen({ScreenId::Settings,DisplayMode::View,1,data,0,ActionResult::None});
     auto key=[&](UiKey k){ui.keyPressed(k,100);};
@@ -89,14 +89,14 @@ int main(int argc,char** argv) {
 
 def main():
     colors_source=(M5GFX/'v1/misc/enum.hpp').read_text()
-    renderer=(ROOT/'application/task/ui/UiRenderer.cpp').read_text()+(ROOT/'application/task/ui/UiCanvas.h').read_text()
+    renderer=(ROOT/'application/task/ui/GpsUiRenderer.cpp').read_text()+(ROOT/'application/task/ui/UiCanvas.h').read_text()
     colors=[]
     for name in sorted(set(re.findall(r'\bTFT_[A-Z]+\b',SCENE+renderer))):
         value=re.search(rf'\b{name}\s*=\s*(0x[0-9A-Fa-f]+)',colors_source)[1]
         colors.append(f'inline constexpr uint16_t {name}={value};')
     with tempfile.TemporaryDirectory(prefix='geoputer-dataset-render-') as directory:
         work=Path(directory);(work/'M5GFX.h').write_text(ADAPTER+'\n'+'\n'.join(colors));(work/'scene.cpp').write_text(SCENE)
-        sources=[ROOT/'application/task/ui'/f'{name}.cpp' for name in ('PixelFont','UiRenderer','UsbRenderer','UiModel','LicenseText','SettingsText','Shinonome')]
+        sources=[ROOT/'application/task/ui'/f'{name}.cpp' for name in ('PixelFont','GpsUiRenderer','GpsUiModel','LicenseText','SettingsText','Shinonome')]
         exe=work/'render'
         subprocess.run(['g++','-std=c++17','-Wall','-Wextra','-Werror','-pedantic','-fsanitize=undefined','-fno-sanitize-recover=all','-I',str(work),'-I',str(ROOT/'application'),'-I',str(ROOT/'tests/support'),'-I',str(M5GFX/'Fonts'),str(work/'scene.cpp'),*map(str,sources),str(ROOT/'application/Settings.cpp'),'-o',str(exe)],check=True,timeout=180)
         for language in ('ja','en'):

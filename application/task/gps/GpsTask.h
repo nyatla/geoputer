@@ -1,7 +1,7 @@
 #pragma once
 
 #include <HardwareSerial.h>
-#include "../../TaskMessages.h"
+#include "../../GpsMessages.h"
 #include "../../utils/Task.h"
 #include "GpsReceiver.h"
 
