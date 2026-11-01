@@ -5,6 +5,7 @@
 #include "utils/Console.h"
 #include "task/storage/log/LogFormat.h"
 #include "task/ui/KeyBindings.h"
+#include "task/ui/AlarmText.h"
 #include <stdexcept>
 #include <cstring>
 #include <cstdio>
@@ -580,8 +581,8 @@ int main(){
               query.payload.place_request.fix.latitude==app->data_.gps.fix.latitude,"background alarm samples actual GPS instead of replay point");
         hold_place_queries=false;
         auto& result=*placeResultMemory(query.payload.place_request);result={};result.request=query.payload.place_request;
-        result.state=PlaceState::Ready;result.dataset=app->data_.dataset;result.alarm.center.depth=1;
-        result.alarm.center.path[0]=region;result.alarm.valid_points=9;result.alarm.agreeing=agreeing;
+        result.state=PlaceState::Ready;result.dataset=app->data_.dataset;result.alarm.center=region;
+        result.alarm.valid_points=9;result.alarm.agreeing=agreeing;
         AppNotification completed{};completed.source=TaskId::Storage;completed.kind=MessageKind::ReadCompleted;
         auto& body=completed.payload.storage_completion;body.request_id=query.request_id;body.snapshot=app->data_.storage;
         body.snapshot.revision=app->data_.storage.revision+1;body.read_kind=StorageReadKind::Place;body.place=placeCompletion(result);
@@ -608,7 +609,7 @@ int main(){
     check(!app->gpsState().alarm_audio_owned_,"managed audition watchdog ends after pattern and preparation budget");
     check(app->setScreen(ScreenId::Settings),"enter settings for tone-switch collaboration");
     for(unsigned i=0;i<settingsRootIndex(SettingsRootItem::Alarm);++i)alarm_ui.keyPressed(UiKey::Down,host_tick);
-    alarm_ui.keyPressed(UiKey::Enter,host_tick);for(unsigned i=0;i<3;++i)alarm_ui.keyPressed(UiKey::Down,host_tick);
+    alarm_ui.keyPressed(UiKey::Enter,host_tick);for(unsigned i=0;i<AlarmSoundRow;++i)alarm_ui.keyPressed(UiKey::Down,host_tick);
     alarm_ui.keyPressed(UiKey::Right,host_tick);const auto before_preview=audio_starts;app->readUiContent();
     check(audio_starts==before_preview+1 && last_audio.preview && last_audio.tone==alarm::Tone::Rising && last_audio.duration==0,
           "UI candidate goes through App to audio once, even with notifications OFF");

@@ -7,6 +7,7 @@
 
 using namespace geoputer;
 void testMaps();
+void testUiNotices();
 void testStorageReplies();
 void testGps();
 void testSettings();
@@ -389,6 +390,7 @@ int main() {
         testUiActionOwnershipAndStaleUpdates();
         testRepeatedUiRoundTripsAndValueCopies();
         testStorageReplies();
+        testUiNotices();
         testMaps();
         testGps();
         testSettings();

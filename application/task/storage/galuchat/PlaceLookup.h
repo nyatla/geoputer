@@ -55,6 +55,11 @@ private:
     WordBookCache wordbook_cache_;
     StorageObserver* observer_ = nullptr;
     ReadFileSlots* files_=nullptr;
+    // One deterministic cell observation; the full-resolution plane remains shared.
+    alarm::Observation alarm_observation_{};
+    int alarm_cell_x_=0,alarm_cell_y_=0;
+    alarm::Judgement alarm_judgement_=alarm::Judgement::Standard;
+    bool alarm_cell_valid_=false;
 };
 
 }  // namespace geoputer

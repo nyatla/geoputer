@@ -23,6 +23,27 @@ inline const char* menuLabel(unsigned row, bool ja) {
     return row < MenuCount ? (ja ? MenuScreens[row].japanese : MenuScreens[row].english) : "";
 }
 
+inline constexpr bool hasScreenName(ScreenId screen) {
+    return screen==ScreenId::LivePlace || screen==ScreenId::Map ||
+        screen==ScreenId::GpsLogger || screen==ScreenId::Logs;
+}
+inline const char* screenName(ScreenId screen) {
+    switch(screen) {
+        case ScreenId::LivePlace:return "1 LIVE";
+        case ScreenId::Map:return "2 MAP";
+        case ScreenId::GpsLogger:return "3 GPS / LOGGER";
+        case ScreenId::Logs:return "4 LOGS";
+        default:return "";
+    }
+}
+inline bool hasRuntimeHeader(ScreenId screen,const UiData&) {
+    return screen==ScreenId::LivePlace || screen==ScreenId::Map || screen==ScreenId::GpsLogger ||
+        screen==ScreenId::Logs;
+}
+inline bool hasPlaybackHeader(ScreenId screen,const UiData& data) {
+    return screen==ScreenId::LogPoint && data.browse().map_mode;
+}
+
 // Numeric keys select local views after a log file has been opened.
 struct LogViewShortcut {UiKey key;BrowseAction action;};
 inline constexpr LogViewShortcut LogViewShortcuts[]={

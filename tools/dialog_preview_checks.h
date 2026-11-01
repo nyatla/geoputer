@@ -2,6 +2,7 @@
 
 #include "task/ui/GpsUiRenderer.h"
 #include "task/ui/SdCardIcon.h"
+#include "task/ui/GpsHeaderLayout.h"
 #include <cstring>
 #include <stdexcept>
 
@@ -38,7 +39,7 @@ inline void renderAndCheckDialog(geoputer::GpsUiRenderer& renderer, geoputer::Gp
             throw std::runtime_error("modal must have white one-pixel horizontal rules");
     for (int y = 0; y < 121; ++y) for (int x = 0; x < 240; ++x) {
         if (x >= 8 && x < 232 && y >= top && y <= bottom) continue;
-        const bool status=y<16 && x>=sd_icon::ReservedLeft;
+        const bool status=y<16 && x>=gps_header::IconsLeft;
         const auto expected = status ? original[y*240+x] : original[y * 240 + x] == TFT_BLACK ? TFT_BLACK : TFT_DARKGREY;
         if (display.pixels[y * 240 + x] != expected)
             throw std::runtime_error("modal backdrop must preserve and dim the original screen");

@@ -11,6 +11,8 @@
 #include "SettingsLayout.h"
 #include "SettingsText.h"
 #include "AlarmText.h"
+#include "AlarmBellIcon.h"
+#include "GpsHeaderLayout.h"
 #include "LivePlaceLayout.h"
 #include "GpsPresentation.h"
 #include "PlacePresentation.h"
@@ -196,12 +198,6 @@ void GpsUiRenderer::draw(const GpsUiModel& model) {
         drawLivePlace(model, content, settings);
     } else if(viewingLogPoint(content.screen) && data.browse().map_mode) {
         drawMap(model);
-        const auto& view=data.browse();const auto color=view.playing?TFT_GREEN:TFT_YELLOW;
-        text(4,ViewHeaderTextY,view.playing?"PLAY":"PAUSE",color);
-        text(44,ViewHeaderTextY,view.replay_reverse?"<":">",color);
-        text(52,ViewHeaderTextY,replay::speedLabel(view),color);
-        char date[24];formatLogDateTime(view.point.fields&GpsTime?view.point.utc_epoch_ms:UINT64_MAX,date,sizeof(date));
-        text(88,ViewHeaderTextY,std::strlen(date)>=19?date+11:"--:--:--");
         if(!data.browse().loading && data.browse().error!=LogReadError::None)text(4,48,logReadErrorName(data.browse().error),TFT_RED);
     } else if(isLogBrowser(content.screen)) {
         drawLogBrowser(model, content, settings);
@@ -221,17 +217,45 @@ void GpsUiRenderer::draw(const GpsUiModel& model) {
     present(model,language);
 }
 
-// Present every screen through the same overlay, including USB and dialogs.
+// GPS screens share status icons; dialogs retain priority over transient names.
 void GpsUiRenderer::present(const GpsUiModel& model,UiLanguage language) {
+    frame_.setDimmed(model.confirming());
+    if(hasPlaybackHeader(model.snapshot().screen,model.data()))drawPlaybackHeader(model);
+    else if(hasRuntimeHeader(model.snapshot().screen,model.data()))drawRuntimeHeader(model);
     frame_.setDimmed(false);
+    if(model.screenNameVisible())drawScreenName(model);
     if(model.confirming())drawDialog(model,language);
     frame_.fillRect(0,121,240,14,TFT_BLACK);
     drawScreenGuide(model);
     drawHeaderStatus(model);
     frame_.pushSprite(0,0);
 }
+void GpsUiRenderer::drawRuntimeHeader(const GpsUiModel& model) {
+    frame_.fillRect(0,0,gps_header::IconsLeft,16,TFT_BLACK);
+    const auto& data=model.data();const auto state=data.recording.state;
+    const bool error=mainError(data)!=nullptr;
+    const char* status=error?"ERROR":data.storage.log.closing?"SAVING":recordingName(state);
+    const auto color=error?TFT_RED:state==RecordingState::Recording?TFT_GREEN:state==RecordingState::Paused?TFT_YELLOW:TFT_LIGHTGREY;
+    text(gps_header::StatusX,ViewHeaderTextY,status,color);
+    char clock[16];model.clock().format(clock,sizeof(clock));text(gps_header::ClockX,ViewHeaderTextY,clock);
+}
+void GpsUiRenderer::drawPlaybackHeader(const GpsUiModel& model) {
+    frame_.fillRect(0,0,gps_header::IconsLeft,16,TFT_BLACK);
+    const auto& view=model.data().browse();
+    text(gps_header::StatusX,ViewHeaderTextY,view.playing?"PLAY":"PAUSE",view.playing?TFT_GREEN:TFT_YELLOW);
+    text(60,ViewHeaderTextY,view.replay_reverse?"<":">");
+    text(76,ViewHeaderTextY,replay::speedLabel(view));
+}
+void GpsUiRenderer::drawScreenName(const GpsUiModel& model) {
+    const char* label=model.screenNameText();const auto role=TextRole::UI;
+    // Cover only the status/clock for one second; body, controls and icons stay visible.
+    frame_.fillRect(0,0,gps_header::IconsLeft,16,TFT_BLACK);
+    font_.draw(frame_,gps_header::StatusX,ViewHeaderTextY,label,role,TFT_CYAN);
+}
 void GpsUiRenderer::drawHeaderStatus(const GpsUiModel& model) {
-    frame_.fillRect(sd_icon::ReservedLeft,0,240-sd_icon::ReservedLeft,16,TFT_BLACK);
+    frame_.fillRect(gps_header::IconsLeft,0,240-gps_header::IconsLeft,16,TFT_BLACK);
+    if(model.alarmSet())for(unsigned y=0;y<alarm_icon::Height;++y)for(unsigned x=0;x<alarm_icon::Width;++x)
+        if(alarm_icon::Rows[y]&(1u<<(alarm_icon::Width-1-x)))frame_.drawPixel(gps_header::AlarmX+x,gps_header::AlarmY+y,model.alarmRinging()?TFT_YELLOW:TFT_WHITE);
     const bool active=model.sdAccessLit();
     for(int y=0;y<sd_icon::Height;++y)
         for(int x=0;x<sd_icon::Width;++x)
@@ -258,7 +282,7 @@ void GpsUiRenderer::drawBoot(const GpsUiModel& model, const Settings& settings) 
     const auto& data = model.data();
     char line[64];
     text(4, 8, "GEOPUTER", TFT_CYAN);
-    text(92, 8, "STARTUP", TFT_LIGHTGREY);
+    text(76, 8, "STARTUP", TFT_LIGHTGREY);
     for (unsigned i = 0; i < BootStatus::Count; ++i) {
         const auto& check = data.boot.checks[i];
         const bool passed = check.state == BootCheckState::Passed;
@@ -289,11 +313,6 @@ void GpsUiRenderer::drawLivePlace(const GpsUiModel& model, const UiSnapshot& con
     if(model.datasetFailureVisible() && !data.storage.dataset_failure.save_failed) {
         formatDatasetRelease(data.storage.dataset_failure,dataset_notice,sizeof(dataset_notice));error=dataset_notice;
     }
-    const bool storage_error = error != nullptr;
-    const auto rec = data.recording.state;
-    text(4, ViewHeaderTextY, storage_error ? "ERROR" : recordingName(rec), storage_error ? TFT_RED :
-         rec == RecordingState::Recording ? TFT_GREEN : rec == RecordingState::Paused ? TFT_YELLOW : TFT_LIGHTGREY);
-    model.clock().format(line, sizeof(line)); text(52, 4, line);
     if(content.screen==ScreenId::Map)return;
     const auto issue = placeIssue(data);
     if (datasetInactive(issue)) {
@@ -393,7 +412,7 @@ void GpsUiRenderer::drawLogBrowser(const GpsUiModel& model, const UiSnapshot& co
         return;
     }
     const bool points=content.screen==ScreenId::LogPoint;
-    text(4,ViewHeaderTextY,points?"POINT":"LOGS",TFT_LIGHTGREY);
+    if(points)text(4,ViewHeaderTextY,"POINT",TFT_LIGHTGREY);
     if(!points) {
         for(unsigned n=0;n<view.count && n<LogListRows;++n) {
             const int y=27+n*12;
@@ -415,7 +434,7 @@ void GpsUiRenderer::drawLogBrowser(const GpsUiModel& model, const UiSnapshot& co
         }
     } else {
         std::snprintf(line,sizeof(line),"%lu/%lu",static_cast<unsigned long>(view.summary.records?view.index+1:0),static_cast<unsigned long>(view.summary.records));
-        valueText(52,sd_icon::HeaderRight,ViewHeaderTextY,line);
+        valueText(52,gps_header::TitleRight,ViewHeaderTextY,line);
         if(view.point.valid) {
             char date[24]; formatLogDateTime(view.point.fields&GpsTime?view.point.utc_epoch_ms:UINT64_MAX,date,sizeof(date));
             std::snprintf(line,sizeof(line),"%s%s",date,view.point.fields&GpsTime?" JST":""); text(4,27,line);
@@ -454,8 +473,6 @@ void GpsUiRenderer::drawGpsLogger(const GpsUiModel& model) {
     const auto& gps = data.gps;
     const auto& log = data.storage.log;
     char line[80];
-    text(4,ViewHeaderTextY,"GPS / LOGGER",TFT_LIGHTGREY);
-    valueText(104,sd_icon::HeaderRight,ViewHeaderTextY,log.closing ? "SAVING" : recordingName(data.recording.state),TFT_CYAN);
     const auto detail = formatGpsText(gps, {}, true);
     // Two 116-pixel columns. Coordinates share a row; labels never depend on values.
     text(4,23,"LAT"); valueText(28,116,23,detail.latitude);
@@ -519,7 +536,7 @@ void GpsUiRenderer::drawSettings(const GpsUiModel& model, const UiSnapshot& cont
                 (row==AlarmReloadRow?logMapAvailable(data):profile.usable());
             const auto color=!enabled?TFT_DARKGREY:selected?(model.editDirty()?TFT_YELLOW:TFT_CYAN):TFT_WHITE;
             item(4,y,selected?">":" ",TFT_CYAN);item(SettingsLayout::LabelX,y,alarmLabel(row,japanese),color);
-            char value[32];alarmValueText(row,selected&&model.editing()?model.editValue():alarmValue(profile.settings,row),profile.depth,japanese,value,sizeof(value));
+            char value[32];alarmValueText(row,selected&&model.editing()?model.editValue():alarmValue(profile.settings,row),japanese,value,sizeof(value));
             // Keep long English choices from crossing the field label.
             font_.draw(frame_,SettingsLayout::ValueRight-PixelFont::width(value,item_role),y,value,item_role,!enabled?TFT_DARKGREY:selected&&model.editDirty()?TFT_YELLOW:TFT_CYAN);
         }
@@ -531,7 +548,7 @@ void GpsUiRenderer::drawSettings(const GpsUiModel& model, const UiSnapshot& cont
     }
     if (content.page == SettingsPage::Licenses) {
         std::snprintf(line,sizeof(line),"%lu/%lu",static_cast<unsigned long>(model.licenseOffset()+1),static_cast<unsigned long>(licenseLineCount()));
-        valueText(80,sd_icon::HeaderRight,ViewHeaderTextY,line,TFT_LIGHTGREY);
+        valueText(80,gps_header::TitleRight,ViewHeaderTextY,line,TFT_LIGHTGREY);
     }
     if (content.page == SettingsPage::DatasetList || content.page == SettingsPage::DatasetDetail) {
         const auto& view = data.datasets();

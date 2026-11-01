@@ -6,14 +6,14 @@ class Engine {
 public:
     void reset() {known_={};}
     bool observe(const Observation& o,const Settings& s) {
-        if(!s.enabled || unsigned(s.judgement)>2 || !o.center.valid() ||
+        if(!s.enabled || unsigned(s.judgement)>2 || !o.center ||
            !o.valid_points || o.valid_points>9 || !o.agreeing || o.agreeing>o.valid_points)return false;
-        if(!known_.valid()) {known_=o.center;return false;}
-        if(same(known_,o.center) || o.agreeing<requiredPoints(s.judgement))return false;
+        if(!known_) {known_=o.center;return false;}
+        if(known_==o.center || o.agreeing<requiredPoints(s.judgement))return false;
         known_=o.center;return true;
     }
 private:
-    Region known_{};
+    uint32_t known_=0;
 };
 // A re-alert extends the selected duration, never the first-start hard deadline.
 class SoundSession {

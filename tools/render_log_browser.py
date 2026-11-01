@@ -32,10 +32,6 @@ int main(int argc,char** argv) {
     data.editBrowse().summary={100,113376,1789309921000ull,1789321921000ull,3527,0};
     data.storage.log.session_id=100;data.storage.log.open=true;data.recording.state=RecordingState::Recording;
     auto screen=ScreenId::Logs;
-    const bool usb_mode=!std::strncmp(mode,"usb",3);
-    if(usb_mode){screen=ScreenId::UsbStorage;data.storage.usb.ready=true;}
-    if(!std::strcmp(mode,"usb-error")){data.storage.usb.ready=false;data.storage.usb.io_error=true;}
-    if(!std::strcmp(mode,"usb-ejected"))data.storage.usb.ejected=true;
     if(!std::strcmp(mode,"point")||!std::strcmp(mode,"unknown")||!std::strcmp(mode,"loading")||!std::strcmp(mode,"crc-error")||!std::strcmp(mode,"bounds"))screen=ScreenId::LogPoint;
     if(!std::strcmp(mode,"empty")){data.editBrowse().total_files=0;data.editBrowse().count=0;data.editBrowse().has_older=false;}
     if(!std::strcmp(mode,"sd-error")){data.editBrowse().count=0;data.editBrowse().error=LogReadError::NoCard;}
@@ -102,8 +98,6 @@ int main(int argc,char** argv) {
             if(x==53 || x==176 || y==63 || x+y==140)image.set(x,y,2);
         if(model.commitMapFrame(info)!=OperationStatus::Ok)throw std::runtime_error("log map commit");
     }
-    if(usb_mode && (!std::strcmp(mode,"usb") || !std::strcmp(mode,"usb-selected")))model.keyPressed(UiKey::Escape,1);
-    if(!std::strcmp(mode,"usb-selected"))model.keyPressed(UiKey::Right,2);
     if(delete_confirm)model.keyPressed(UiKey::DeleteLog,1);
     if(!std::strcmp(mode,"delete-selected"))model.keyPressed(UiKey::Right,2);
     renderAndCheckDialog(renderer,model,display);
@@ -113,10 +107,6 @@ int main(int argc,char** argv) {
             if(display.pixels.at((y+row)*240+x+col)!=(ink?color:TFT_BLACK))throw std::runtime_error("menu item is not using native language font");
         }
     };
-    if(usb_mode && model.confirming()) {
-        glyph(56,84,english?'C':U'取',!std::strcmp(mode,"usb-selected")?TFT_WHITE:TFT_CYAN);
-        glyph(152,84,english?'E':U'終',!std::strcmp(mode,"usb-selected")?TFT_CYAN:TFT_WHITE);
-    }
     if(delete_confirm) {
         const bool short_name=!std::strcmp(mode,"delete-short");
         const int y=short_name?80:85;
@@ -141,7 +131,14 @@ int main(int argc,char** argv) {
             if(display.pixels[(84+y)*240+4+x]!=((first[y]&(0x8000u>>x))?TFT_WHITE:TFT_BLACK))
                 throw std::runtime_error("POINT first place row must use native Shinonome 16x16 at y=84");
     }
-    const int header=usb_mode?22:16;
+    // An error label at y=48 intentionally outlines the adjacent row y=47.
+    const int map_band_end=data.map.error==map::Error::None?48:47;
+    if(log_map)for(int y=40;y<map_band_end;++y)for(int x=4;x<220;++x) {
+        const bool boundary=x==53 || x==176 || y-18==63 || x+y-18==140;
+        if(display.pixels[y*240+x]!=(boundary?TFT_WHITE:TFT_BLACK))
+            throw std::runtime_error("obsolete playback/time row covers map boundary pixels");
+    }
+    const int header=16;
     if(screen!=ScreenId::LivePlace && !log_map)for(int y=0;y<135;++y)for(int x=236;x<240;++x)
         if(y!=header && y!=118 && display.pixels[y*240+x]!=TFT_BLACK)throw std::runtime_error("text exceeded right margin");
     if(screen!=ScreenId::LivePlace)for(int x=0;x<240;++x)for(int y:{header,log_map?120:118})
@@ -155,6 +152,7 @@ def main():
     import argparse
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output',type=Path,default=ROOT/'doc/画面・操作')
+    parser.add_argument('--mode',action='append',help='Render only the named scene (repeatable)')
     args=parser.parse_args()
     renderer=(ROOT/'application/task/ui/GpsUiRenderer.cpp').read_text()+(ROOT/'application/task/ui/UiCanvas.h').read_text()
     enums=(M5GFX/'v1/misc/enum.hpp').read_text()
@@ -162,7 +160,10 @@ def main():
     for name in sorted(set(re.findall(r'\bTFT_[A-Z]+\b',SCENE+renderer))):
         value=re.search(rf'\b{name}\s*=\s*(0x[0-9A-Fa-f]+)',enums)[1]
         colors.append(f'inline constexpr uint16_t {name}={value};')
-    modes=('properties', 'statistics', 'statistics-loading', 'statistics-error', 'usb', 'usb-screen', 'usb-selected', 'usb-error', 'usb-ejected', 'list', 'delete-confirm', 'delete-selected', 'delete-protected', 'delete-short', 'delete-longest', 'deleting', 'delete-error', 'point-empty', 'point', 'long-name', 'unknown', 'loading', 'crc-error', 'empty', 'sd-error', 'bounds', 'point-no-dataset', 'log-map', 'log-map-play', 'log-map-reverse', 'log-map-fast', 'log-map-slow', 'log-map-loading', 'log-map-error')
+    modes=('properties', 'statistics', 'statistics-loading', 'statistics-error', 'list', 'delete-confirm', 'delete-selected', 'delete-protected', 'delete-short', 'delete-longest', 'deleting', 'delete-error', 'point-empty', 'point', 'long-name', 'unknown', 'loading', 'crc-error', 'empty', 'sd-error', 'bounds', 'point-no-dataset', 'log-map', 'log-map-play', 'log-map-reverse', 'log-map-fast', 'log-map-slow', 'log-map-loading', 'log-map-error')
+    if args.mode:
+        if set(args.mode)-set(modes):parser.error('Unknown scene: '+', '.join(sorted(set(args.mode)-set(modes))))
+        modes=tuple(args.mode)
     with tempfile.TemporaryDirectory(prefix='geoputer-browser-') as directory:
         work=Path(directory);(work/'M5GFX.h').write_text(ADAPTER+'\n'+'\n'.join(colors));(work/'scene.cpp').write_text(SCENE)
         sources=[ROOT/'application/task/ui'/f'{name}.cpp' for name in ('PixelFont','GpsUiRenderer','GpsUiModel','LicenseText','SettingsText','Shinonome')]
@@ -173,7 +174,7 @@ def main():
                 ppm=work/'screen.ppm'
                 with ppm.open('wb') as target:target.write(reference_frame(exe,mode,language))
                 with Image.open(ppm) as source: image=source.convert('RGB')
-                folder=args.output/('usb-storage' if mode.startswith('usb') else 'logs' if mode in ('list','long-name','empty','sd-error','delete-confirm','delete-selected','delete-protected','delete-short','delete-longest','deleting','delete-error') else 'log-detail')
+                folder=args.output/('logs' if mode in ('list','long-name','empty','sd-error','delete-confirm','delete-selected','delete-protected','delete-short','delete-longest','deleting','delete-error') else 'log-detail')
                 folder.mkdir(parents=True,exist_ok=True)
                 stem=f'log-browser-{mode}' if language=='ja' else f'log-browser-en-{mode}'
                 image.save(folder/f'{stem}.png')

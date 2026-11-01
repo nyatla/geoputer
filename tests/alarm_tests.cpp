@@ -9,14 +9,13 @@
 #include <cstdio>
 using namespace geoputer;
 void check(bool ok,const char* message){if(!ok)throw std::runtime_error(message);}
-alarm::Region region(uint32_t a,uint32_t b=20) {alarm::Region r;r.depth=2;r.path[0]=a;r.path[1]=b;return r;}
-alarm::Observation observation(uint32_t code,unsigned agree=9) {return {region(code),uint8_t(agree),9};}
+alarm::Observation observation(uint32_t code,unsigned agree=9) {return {code,uint8_t(agree),9};}
 void engineTests() {
-    alarm::Settings s;s.enabled=true;s.level=2;s.judgement=alarm::Judgement::Immediate;alarm::Engine engine;
+    alarm::Settings s;s.enabled=true;s.judgement=alarm::Judgement::Immediate;alarm::Engine engine;
     check(!engine.observe(observation(1),s),"first position quietly establishes baseline");
     check(engine.observe(observation(2,1),s) && engine.observe(observation(1,1),s),"immediate reports each center region crossing");
     check(!engine.observe(observation(1),s),"moving cells within the same region is not a crossing");
-    check(!alarm::same(region(1),region(2)),"parent identity remains part of a selected hierarchy region");
+    check(!engine.observe(observation(0),s),"undefined code never becomes an alert destination");
     engine.reset();s.judgement=alarm::Judgement::Standard;engine.observe(observation(1),s);
     for(unsigned i=0;i<100;++i)check(!engine.observe(observation(i%2+1,6),s),"six votes and boundary oscillation never change the accepted region");
     check(engine.observe(observation(2,7),s),"standard changes at seven of nine cells without waiting for a timer");
@@ -58,21 +57,21 @@ void fileTests(const char* root) {
     namespace fs=std::filesystem;fs::create_directories(fs::path(root)/"01");ReadFileSlot slot;
     AlarmFile file(0,slot,nullptr,root);auto p=file.load(1,4,123);
     check(p.state==alarm::State::Created && !p.settings.enabled && fs::file_size(fs::path(root)/"01/_alert.dat")==64,"missing profile creates fixed OFF file");
-    p.settings.enabled=true;p.settings.level=3;p.settings.duration=4;check(file.save(p),"profile transactional save");
+    p.settings.enabled=true;p.settings.duration=4;check(file.save(p),"profile transactional save");
     auto loaded=file.load(1,4,123);check(loaded.state==alarm::State::Ready && alarm::same(loaded.settings,p.settings),"profile round trip");
     uint8_t encoded[AlarmFile::Bytes];AlarmFile::encode(p,encoded);
     for(unsigned i=0;i<sizeof(encoded);++i) {encoded[i]^=1;auto bad=p;check(!AlarmFile::decode(encoded,bad),"any damaged byte fails checksum or header");encoded[i]^=1;}
-    for(unsigned judgement=0;judgement<3;++judgement) {
-        AlarmFile::encode(p,encoded);encoded[4]=1;encoded[14]=judgement;encoded[15]=5;checksum(encoded);
+    for(unsigned version:{1u,2u})for(unsigned judgement=0;judgement<3;++judgement) {
+        AlarmFile::encode(p,encoded);encoded[4]=version;encoded[13]=3;encoded[14]=judgement;encoded[15]=version==1?5:0;checksum(encoded);
         {std::ofstream out(fs::path(root)/"01/_alert.dat",std::ios::binary|std::ios::trunc);out.write(reinterpret_cast<char*>(encoded),sizeof(encoded));}
         auto legacy=file.load(1,4,123);
         check(legacy.state==alarm::State::Ready && legacy.settings.judgement==static_cast<alarm::Judgement>(judgement) &&
               legacy.settings.enabled==p.settings.enabled && legacy.settings.tone==p.settings.tone,"v1 preserves notification/tone and maps the three judgement choices");
         std::ifstream in(fs::path(root)/"01/_alert.dat",std::ios::binary);in.read(reinterpret_cast<char*>(encoded),sizeof(encoded));
-        check(encoded[4]==2 && encoded[15]==0 && AlarmFile::decode(encoded,legacy),"legacy migration publishes valid version 2 with reserved zero width");
+        check(encoded[4]==3 && encoded[13]==0 && encoded[15]==0 && AlarmFile::decode(encoded,legacy),"legacy migration publishes valid version 3 with removed hierarchy and width fields zero");
     }
-    encoded[15]=1;checksum(encoded);auto badReserved=p;check(!AlarmFile::decode(encoded,badReserved),"v2 rejects a nonzero removed-width field even with valid CRC");
-    auto changed=file.load(1,3,456);check(changed.state==alarm::State::Repaired && !changed.settings.enabled,"replaced dataset and invalid hierarchy use same corrupt/OFF policy");
+    encoded[15]=1;checksum(encoded);auto badReserved=p;check(!AlarmFile::decode(encoded,badReserved),"v3 rejects a nonzero removed-width field even with valid CRC");
+    auto changed=file.load(1,3,456);check(changed.state==alarm::State::Repaired && !changed.settings.enabled,"replaced dataset or mismatched Wordbook metadata use the corrupt/OFF policy");
     {std::ofstream bad(fs::path(root)/"01/_alert.dat",std::ios::binary|std::ios::trunc);bad<<"broken";}
     auto repaired=file.load(1,3,456);check(repaired.state==alarm::State::Repaired && !repaired.settings.enabled,"truncated file reports repair and generates OFF");
     check(file.load(1,3,456).state==alarm::State::Ready,"repair leaves a valid new file");
@@ -116,8 +115,8 @@ void uiTests() {
     check(!model.editing() && model.snapshot().page==SettingsPage::Alarm,"alarm Escape restores the item without leaving its page");
     model.keyPressed(UiKey::Right,27);model.keyPressed(UiKey::Down,28);
     check(model.snapshot().action.kind==ActionKind::SaveAlarm && model.snapshot().action.alarm_settings.enabled && model.snapshot().action.alarm_identity==123,"alarm editing produces file save command rather than NVS settings");
-    check(AlarmRows==6 && alarmChoices(2,4)==3 && !std::strcmp(alarmLabel(2,true),"区域判定"),"one three-choice region judgement row, no width/test rows");
-    char text[32];alarmValueText(2,1,4,true,text,sizeof(text));check(!std::strcmp(text,"標準"),"standard has a word label rather than a numeric threshold");
+    check(AlarmRows==5 && alarmChoices(1)==3 && !std::strcmp(alarmLabel(1,true),"区域判定"),"one three-choice region judgement row, no width/test rows");
+    char text[32];alarmValueText(1,1,true,text,sizeof(text));check(!std::strcmp(text,"標準"),"standard has a word label rather than a numeric threshold");
     GpsUiModel sound;sound.setScreen({ScreenId::Settings,DisplayMode::View,1,data,0,ActionResult::None});
     for(unsigned i=0;i<settingsRootIndex(SettingsRootItem::Alarm);++i)sound.keyPressed(UiKey::Down,40+i);
     sound.keyPressed(UiKey::Enter,50);for(unsigned i=0;i<AlarmSoundRow;++i)sound.keyPressed(UiKey::Down,51+i);
@@ -139,6 +138,6 @@ void uiTests() {
 }
 int main(int argc,char** argv) {
     try {check(argc==2,"test root required");engineTests();soundTests();fileTests(argv[1]);settingsTests();uiTests();
-        std::puts("PASS: alarm boundaries/hierarchy, three region thresholds, adjacent cell grids, v1 migration, tone-change previews, sound durations/cap/wrap, file repair/transaction failures, NVS migration, UI and dark-screen borrowing");
+        std::puts("PASS: alarm raw-code boundaries, three region thresholds, adjacent cell grids, v1/v2 migration, tone-change previews, sound durations/cap/wrap, file repair/transaction failures, NVS migration, UI and dark-screen borrowing");
     } catch(const std::exception& e){std::fprintf(stderr,"FAIL: %s\n",e.what());return 1;}
 }

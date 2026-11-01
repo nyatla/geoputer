@@ -64,6 +64,8 @@ void testClock() {
     ui.setScreen(command);
     ui.takeRedraw();
     ui.tick(4000);
+    check(!ui.takeRedraw(), "Settings has no screen-name overlay or clock redraw");
+    ui.tick(4500);
     check(!ui.takeRedraw(), "hidden clock does not trigger Settings redraws");
     command.screen = ScreenId::LivePlace;
     command.mode = DisplayMode::Background;
@@ -76,4 +78,11 @@ void testClock() {
     command.generation = 4;
     ui.setScreen(command);
     text(ui.clock(), "09:00:14");
+    GpsUiModel log_ui;
+    SetUiScreen log_screen{};log_screen.screen=ScreenId::LogPoint;log_screen.mode=DisplayMode::View;log_screen.generation=1;
+    log_screen.data.settings=defaultSettings();log_screen.data.gps.fix={35,140,10000,true};
+    log_screen.data.editBrowse().map_mode=true;
+    log_ui.setScreen(log_screen);log_ui.takeRedraw();log_ui.tick(1000);
+    check(!log_ui.takeRedraw(),"log map hides wall clock and does not redraw on second boundaries");
+
 }

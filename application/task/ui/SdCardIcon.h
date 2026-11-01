@@ -2,8 +2,8 @@
 #include <cstdint>
 
 namespace geoputer::sd_icon {
-inline constexpr int X=160,Y=2,Width=12,Height=12;
-inline constexpr int ReservedLeft=156,HeaderRight=152;
+inline constexpr int X=166,Y=2,Width=12,Height=12;
+inline constexpr int ReservedLeft=162,HeaderRight=158;
 // Fixed 1-bit planes in Flash/DROM. Shape plus border, contacts and 3x5 SD label.
 inline constexpr uint16_t Rows[Height]={
     0b000111111111,

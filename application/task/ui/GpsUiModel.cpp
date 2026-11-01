@@ -43,6 +43,7 @@ OperationStatus GpsUiModel::setScreen(const SetUiScreen& command) {
         early_maintenance_key_ = false;
         if (screen_ == ScreenId::Boot) action(ActionKind::Maintenance, ScreenId::Settings);
     }
+    updateScreenName();
     return OperationStatus::Ok;
 }
 
@@ -54,6 +55,7 @@ OperationStatus GpsUiModel::updateContent(const UpdateUiContent& command) {
     mode_ = command.mode;
     acknowledge(command.processed_action_id, command.action_result);
     redraw_ = true;
+    updateScreenName();
     return OperationStatus::Ok;
 }
 
@@ -255,6 +257,7 @@ void GpsUiModel::acknowledge(uint32_t action_id, ActionResult result) {
 }
 
 void GpsUiModel::changed() {
+    updateScreenName();
     ++revision_;
     notification_pending_ = true;
     redraw_ = true;
@@ -638,7 +641,7 @@ unsigned GpsUiModel::editableSettingChoices() const {
         case SettingsPage::System:return !data_.storage.busy && selection_==0?3:0;
         case SettingsPage::Alarm:
             return !data_.storage.busy && !data_.storage.nvs_error && data_.storage.alarm.usable()?
-                alarmChoices(selection_,data_.storage.alarm.depth):0;
+                alarmChoices(selection_):0;
         case SettingsPage::DatasetDetail: {
             const auto& view=data_.datasets();const auto count=selectionCount();
             return !view.loading && !view.applying && view.error==DatasetError::None && count>=2 && selection_==count-2?
@@ -934,13 +937,26 @@ void GpsUiModel::action(ActionKind kind, ScreenId target) {
     changed();
 }
 
+void GpsUiModel::updateScreenName() {
+    if(!generation_)return;
+    const uint16_t key=uint16_t(screen_);
+    if(key==screen_name_key_)return;
+    screen_name_key_=key;screen_name_started_ms_=last_tick_ms_;
+    screen_name_active_=hasScreenName(screen_) && mode_==DisplayMode::View;
+    redraw_=true;
+}
+
 void GpsUiModel::tick(uint32_t now_ms) {
+    updateScreenName();
+    const bool was_screen_name=screenNameVisible();
     const auto previous_second = clock_.secondsJst();
     clock_.tick(now_ms);
-    if (screen_ == ScreenId::LivePlace && mode_ == DisplayMode::View && clock_.secondsJst() != previous_second) redraw_ = true;
+    if (hasRuntimeHeader(screen_,data_) && mode_ == DisplayMode::View && clock_.secondsJst() != previous_second) redraw_ = true;
     const bool was_lit = sdAccessLit();
     const bool was_dataset_notice=datasetFailureVisible();
     last_tick_ms_ = now_ms;
+    if(screen_name_active_ && now_ms-screen_name_started_ms_>=ScreenNameMs)screen_name_active_=false;
+    if(was_screen_name!=screenNameVisible())redraw_=true;
     // Start the visible interval when Live Place can actually show the notice.
     if(screen_!=ScreenId::LivePlace || mode_==DisplayMode::Background) dataset_notice_started_ms_=now_ms;
     if(was_dataset_notice!=datasetFailureVisible())redraw_=true;
@@ -967,6 +983,7 @@ UiSnapshot GpsUiModel::snapshot() const {
 }
 
 bool GpsUiModel::takeRedraw() {
+    updateScreenName();
     const bool value = redraw_;
     redraw_ = false;
     return value;

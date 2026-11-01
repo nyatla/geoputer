@@ -46,34 +46,39 @@ int main(int argc,char**argv){try{
     borrowed.prepareInto(prepared,init_work.available());track=false;
     check(!allocations && !four_k && !init_work.inUse() && !files.inUse(),"initialization sequentially borrows 4KiB for GLC/index/Wordbook and returns loans");
     check(own.prepare().state==PlaceState::Ready && prepared.state==PlaceState::Ready,"prepare real lookup pair, including direct destination");
-    // Nine-point alert monitoring uses only hierarchy identifiers, never the
-    // display string decoder or a second map image. Exercise every real depth.
+    // Raw-code alert monitoring shares the full-resolution plane, never a
+    // Wordbook lookup or a second map image.
     map::MapFrameReceiver alarm_work;
-    const auto depth=index_format::get16(borrowed_dataset.book_index.header.data()+index_format::Wordbook::Depth);
+    struct IoObserver:StorageObserver {unsigned accesses=0;void sdBegin()override{++accesses;}void sdEnd()override{}void cacheState(RgCacheState,bool=false)override{}} observer;
+    borrowed.setObserver(&observer);
     const auto names_before=borrowed.wordBookCacheStats();
-    for(unsigned level=1;level<=depth;++level) {
-        PlaceRequest request{1,900+level,{35.681641,140.027194,0,true}};
-        request.token=900+level;request.alarm_sample=true;request.dataset_generation=borrowed.datasetInfo().generation;request.work_bytes=config::IndexReadBufferBytes;
-        check(alarm_work.beginWork(request.token,request.buffer),"lend same UI back for alarm sample");
+    for(auto judgement:{alarm::Judgement::Standard,alarm::Judgement::Immediate,alarm::Judgement::Confirmed}) {
+        PlaceRequest request{1,901,{35.681641,140.027194,0,true}};
+        request.token=901;request.alarm_sample=true;request.dataset_generation=borrowed.datasetInfo().generation;request.work_bytes=config::IndexReadBufferBytes;
+        check(alarm_work.beginWork(request.token,request.buffer),"lend UI back for alarm sample");
         auto* result=beginPlaceMemory(request);auto& bytes=placeReaderMemory(request);BorrowedReadBuffer work(bytes.data(),bytes.size());
-        alarm::Settings settings;settings.enabled=true;settings.level=level;
-        const auto cell_before=borrowed.cacheStats();
+        alarm::Settings settings;settings.enabled=true;settings.judgement=judgement;
+        const auto before=borrowed.cacheStats();
         allocated=allocations=four_k=0;track=true;borrowed.observeAlarmInto(request,*result,settings,&work);track=false;
-        check(result->state==PlaceState::Ready && result->alarm.center.depth==level && result->alarm.valid_points>0 &&
-              result->alarm.agreeing>=1 && result->alarm.agreeing<=result->alarm.valid_points,"real nine-point lookup returns selected parent path and votes");
-        check(!allocations && !four_k && !work.inUse() && !files.inUse(),"alarm hierarchy lookup is heapless and returns FIL/buffer loans");
-        const auto cell_after=borrowed.cacheStats();
-        check((cell_after.hits-cell_before.hits)+(cell_after.misses-cell_before.misses)==9,"standard samples exactly center and eight adjacent source cells");
-        settings.judgement=alarm::Judgement::Immediate;
-        allocated=allocations=four_k=0;track=true;borrowed.observeAlarmInto(request,*result,settings,&work);track=false;
-        const auto one=borrowed.cacheStats();
-        check(!allocations && result->alarm.valid_points==1 && result->alarm.agreeing==1 &&
-              (one.hits-cell_after.hits)+(one.misses-cell_after.misses)==1,"immediate samples one cell and remains heapless");
+        check(result->state==PlaceState::Ready && result->alarm.center==result->region_code && result->alarm.center && result->alarm.agreeing>=1,"alarm returns the raw finest region code");
+        const unsigned count=judgement==alarm::Judgement::Immediate?1:9;
+        const auto after=borrowed.cacheStats();
+        check((after.hits-before.hits)+(after.misses-before.misses)==count,"judgement samples one or nine source cells");
+        check(!allocations && !four_k && !work.inUse() && !files.inUse(),"raw-code sampling is heapless and returns loans");
+        const auto expected=result->alarm;observer.accesses=0;
+        for(unsigned repeat=0;repeat<10;++repeat){++request.sample_seq;borrowed.observeAlarmInto(request,*result,settings,&work);}
+        const auto repeated=borrowed.cacheStats();
+        check(!observer.accesses && repeated.hits==after.hits && repeated.misses==after.misses && result->alarm.center==expected.center && result->alarm.agreeing==expected.agreeing,"unchanged cell reuses observation with zero SD access and zero plane queries");
+        // One adjacent source cell is inside the existing 128x128 plane.
+        request.fix.longitude+=1.0/borrowed.datasetInfo().unit_inv_x;
+        observer.accesses=0;borrowed.observeAlarmInto(request,*result,settings,&work);
+        check(!observer.accesses && result->state==PlaceState::Ready,"moving to an adjacent cached cell performs no Wordbook or SD IO");
         endPlaceMemory(request);check(alarm_work.returnWork(request.token,request.buffer),"return alarm workspace");
     }
+    borrowed.setObserver(nullptr);
     const auto names_after=borrowed.wordBookCacheStats();
-    check(names_before.hits==names_after.hits && names_before.misses==names_after.misses,"alarm path never generates or caches display strings");
-    std::cout<<"PASS: real nine-point hierarchy samples, levels="<<depth<<", C++ allocations=0, no display-wordbook lookups\n";
+    check(names_before.hits==names_after.hits && names_before.misses==names_after.misses,"alarm never performs display Wordbook lookup");
+    std::cout<<"PASS: raw-code alarms, same/adjacent-cell SD accesses=0, one/nine votes, allocations=0, loans returned\n";
     ReadFile retained_log(0,&files.primary());check(retained_log.openRead((dir/"names.giswordbook").string()),"reserve primary FIL as a retained log read");
     map::MapFrameReceiver ui;size_t own_bytes=0,borrowed_bytes=0,own_count=0,borrowed_count=0;unsigned number=0;
     for(double offset:{0.,0.00001,0.03,0.06,0.03,0.,0.}) {

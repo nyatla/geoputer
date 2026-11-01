@@ -19,7 +19,7 @@ with tempfile.TemporaryDirectory(prefix='rgp-status-icons-') as folder:
   from PIL import Image
   import io
   a.output.mkdir(parents=True,exist_ok=True)
-  for screen in ('live','settings','usb'):
+  for screen in ('live','map','gps','logs','settings','usb','alert-live','notice-live','notice-map','notice-gps','notice-logs','notice-live-ja','notice-map-ja','notice-gps-ja','notice-logs-ja'):
    for active in (0,1):
     picture=Image.open(io.BytesIO(subprocess.check_output([str(exe),screen,str(active)]))).convert('RGB')
     stem=f'{screen}-sd-'+('active' if active else 'idle');picture.save(a.output/(stem+'.png'))

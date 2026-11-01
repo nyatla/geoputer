@@ -37,6 +37,15 @@ public:
     const UiData& data() const { return data_; }
     DisplayMode mode() const { return mode_; }
     bool takeRedraw();
+    static constexpr uint32_t ScreenNameMs=1000;
+    bool screenNameVisible()const {
+        return screen_name_active_ && mode_==DisplayMode::View && !dialog_.active() &&
+            !(audio_active_ && !audio_preview_) && last_tick_ms_-screen_name_started_ms_<ScreenNameMs;
+    }
+    const char* screenNameText()const {return screenName(screen_);}
+    bool alarmSet()const {const auto& p=data_.storage.alarm;return p.usable() && p.settings.enabled &&
+        data_.settings.dataset && p.dataset==data_.settings.dataset;}
+    bool alarmRinging()const {return audio_active_ && !audio_preview_;}
     bool notificationPending() const { return notification_pending_; }
     void notificationSent() { notification_pending_ = false; }
     uint8_t systemUsbMode() const { return screen_resources_.settings.usb_mode; }
@@ -82,6 +91,7 @@ private:
     unsigned editableSettingChoices() const;
     bool commitSettingEdit();
 
+    void updateScreenName();
     void copyData(const UiData& data);
     void datasetChanged();
     void updateDialogState();
@@ -113,6 +123,9 @@ private:
     uint32_t last_tick_ms_ = 0;
     uint32_t access_started_ms_ = 0;
     uint32_t dataset_notice_started_ms_ = 0;
+    uint32_t screen_name_started_ms_=0;
+    uint16_t screen_name_key_=UINT16_MAX;
+    bool screen_name_active_=false;
     uint8_t selection_ = 0;
 
 

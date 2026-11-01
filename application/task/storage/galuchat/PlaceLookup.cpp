@@ -19,6 +19,7 @@ void PlaceLookup::configure(uint8_t number,std::string_view language) {
     selected_.info.state=!number?PlaceState::Unselected:number<=99 && valid?PlaceState::Waiting:PlaceState::MetadataError;
 }
 void PlaceLookup::releaseReaders() {
+    alarm_cell_valid_=false;
     const bool had_reader = wordbook_ || map_;
     wordbook_cache_.clear();
     wordbook_.reset(); map_.reset();book_source_.reset();index_source_.reset();map_source_.reset();
@@ -185,22 +186,26 @@ void PlaceLookup::observeAlarmInto(const PlaceRequest& request,PlaceResult& resu
         const int invx=map_->unitInvX(),invy=map_->unitInvY();
         const int cx=galuchat::detail::roundedInt(longitude*invx,"alarm longitude cell");
         const int cy=galuchat::detail::roundedInt(latitude*invy,"alarm latitude cell");
-        const auto center=map_->readGridPoint(cx,cy,work);
-        if(!wordbook_->readRegionPath(center,settings.level,result.alarm.center,work))return;
-        result.region_code=center;
-        result.alarm.valid_points=result.alarm.agreeing=1;
-        if(settings.judgement==alarm::Judgement::Immediate)return;
-        for(int y=-1;y<=1;++y)for(int x=-1;x<=1;++x) {
-            if(!x && !y)continue;
-            alarm::Cell cell;
-            if(!alarm::neighborCell(cx,cy,x,y,invx,invy,cell))continue;
-            const auto code=map_->readGridPoint(cell.x,cell.y,work);if(!code)continue;
-            if(code==center){++result.alarm.valid_points;++result.alarm.agreeing;continue;}
-            alarm::Region region;
-            if(wordbook_->readRegionPath(code,settings.level,region,work)) {
-                ++result.alarm.valid_points;if(alarm::same(region,result.alarm.center))++result.alarm.agreeing;
+        if(alarm_cell_valid_ && alarm_cell_x_==cx && alarm_cell_y_==cy && alarm_judgement_==settings.judgement) {
+            result.alarm=alarm_observation_;result.region_code=result.alarm.center;
+            if(!result.alarm.center)result.state=PlaceState::NotFound;
+            return;
+        }
+        alarm::Observation observation{};
+        observation.center=map_->readGridPoint(cx,cy,work);
+        if(observation.center) {
+            observation.valid_points=observation.agreeing=1;
+            if(settings.judgement!=alarm::Judgement::Immediate)for(int y=-1;y<=1;++y)for(int x=-1;x<=1;++x) {
+                if(!x && !y)continue;
+                alarm::Cell cell;if(!alarm::neighborCell(cx,cy,x,y,invx,invy,cell))continue;
+                const auto code=map_->readGridPoint(cell.x,cell.y,work);if(!code)continue;
+                ++observation.valid_points;if(code==observation.center)++observation.agreeing;
             }
         }
-    } catch(...) {result.state=PlaceState::DataError;result.alarm={};}
+        alarm_observation_=observation;alarm_cell_x_=cx;alarm_cell_y_=cy;
+        alarm_judgement_=settings.judgement;alarm_cell_valid_=true;
+        result.alarm=observation;result.region_code=observation.center;
+        if(!observation.center)result.state=PlaceState::NotFound;
+    } catch(...) {alarm_cell_valid_=false;result.state=PlaceState::DataError;result.alarm={};}
 }
 } // namespace geoputer

@@ -14,6 +14,7 @@ with tempfile.TemporaryDirectory(prefix="geoputer-native-") as directory:
         "-fsanitize=undefined", "-fno-sanitize-recover=all", "-D_GLIBCXX_ASSERTIONS", "-g", "-pthread",
         "-I", str(root / "tests/support"), "-I", str(root / "application"),
         str(root / "tests/native_tests.cpp"),
+        str(root / "tests/ui_notice_tests.cpp"),
         str(root / "tests/storage_reply_tests.cpp"),
         str(root / "tests/logging_tests.cpp"),
         str(root / "tests/log_ring_tests.cpp"),

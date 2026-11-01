@@ -1,4 +1,7 @@
 #include "task/ui/GpsUiRenderer.h"
+#include "task/ui/GpsHeaderLayout.h"
+#include "task/ui/AlarmBellIcon.h"
+#include "task/ui/SdCardIcon.h"
 #include "apps/common/PanelRenderer.h"
 #include "task/ui/GpsControls.h"
 #include "task/ui/PlacePresentation.h"
@@ -13,9 +16,21 @@
 using namespace geoputer;
 namespace {
 void check(bool ok,const char* message) {if(!ok)throw std::runtime_error(message);}
-constexpr int X=160,Y=2,W=12,H=12;
+constexpr int X=sd_icon::X,Y=sd_icon::Y,W=sd_icon::Width,H=sd_icon::Height;
+static_assert(X-(gps_header::AlarmX+alarm_icon::Width)==2,"bell to SD has a two-pixel gap");
+static_assert(180-(X+W)==2,"SD to battery has a two-pixel gap");
 using Mask=std::array<bool,W*H>;
-Mask render(ScreenId screen,int page,bool active,bool japanese,int depth,bool dialog=false,bool output=false,int percent=100,bool charging=false,bool charge_known=true,bool loading=false,unsigned replay_speed=config::LogReplayDefaultSpeed,bool reverse=false,bool playing=false) {
+void checkHeaderName(const M5GFX& display,const GpsUiModel& model) {
+    const auto* label=model.screenNameText();const int length=std::strlen(label);
+    for(int n=0;n<length;++n)check(label[n]>=32 && label[n]<=126,"screen names stay ASCII in every UI language");
+    for(int y=0;y<16;++y)for(int x=0;x<gps_header::IconsLeft;++x) {
+        bool ink=false;const int column=x-gps_header::StatusX;
+        if(y>=4 && y<12 && column>=0 && column<length*8)
+            ink=font8x8_c64[(label[column/8]-32)*8+column%8]&(1u<<(y-4));
+        check(display.pixels[y*240+x]==(ink?TFT_CYAN:TFT_BLACK),"header overlay contains only left-aligned ASCII text, without a frame or old status/clock pixels");
+    }
+}
+Mask render(ScreenId screen,int page,bool active,bool japanese,int depth,bool dialog=false,bool output=false,int percent=100,bool charging=false,bool charge_known=true,bool loading=false,unsigned replay_speed=config::LogReplayDefaultSpeed,bool reverse=false,bool playing=false,bool alert=false,bool sounding=false,bool notice=false) {
     UiData data{};data.settings=defaultSettings();data.settings.language=japanese?UiLanguage::Japanese:UiLanguage::English;
     data.storage.sd={1,1,active};data.storage.card_state=CardState::Mounted;
     data.storage.settings_state=SettingsState::Loaded;data.storage.settings=data.settings;
@@ -33,10 +48,11 @@ Mask render(ScreenId screen,int page,bool active,bool japanese,int depth,bool di
         list.list_records[0]=3527;list.list_records[1]=99;
         std::strcpy(list.names[0],"20261026_120000_0.gps.dat");std::strcpy(list.names[1],"20261025_120000_0.gps.dat");
     }
+    if(alert){data.settings.dataset=1;data.storage.alarm.dataset=1;data.storage.alarm.depth=4;data.storage.alarm.state=alarm::State::Ready;data.storage.alarm.settings.enabled=true;}
     GpsUiModel model;if(screen!=ScreenId::UsbStorage)check(model.setScreen({screen,DisplayMode::View,1,data,0,ActionResult::None})==OperationStatus::Ok,"test screen");
     if(screen==ScreenId::Settings)model.screen_resources_.settings.page=static_cast<SettingsPage>(page);
-    model.setBattery(percent,charging,charge_known);model.tick(200);
-    if(dialog) {model.keyPressed(UiKey::GpsControl,201);check(model.confirming(),"dialog must open");}
+    model.setBattery(percent,charging,charge_known);model.setAudioActive(sounding);model.tick(notice?200:1200);
+    if(dialog) {model.keyPressed(UiKey::GpsControl,1201);check(model.confirming(),"dialog must open");}
     M5GFX display;GpsUiRenderer renderer(display);
     alignas(4) uint8_t backing[240*135*2+4]{};
     check(renderer.begin(depth,backing,sizeof(backing)),"renderer begin");
@@ -47,20 +63,26 @@ Mask render(ScreenId screen,int page,bool active,bool japanese,int depth,bool di
         usb.update(content,0);usb.page_=static_cast<UsbPage>(page);usb.setBattery(percent,charging,charge_known);usb.tick(200);
         PanelRenderer panel(display);check(panel.begin(backing,sizeof(backing),depth),"USB renderer begin");panel.draw(usb);
     }else renderer.draw(model);
-    if(screen==ScreenId::LogPoint && page==-1) {
+    if((hasRuntimeHeader(screen,data) || hasPlaybackHeader(screen,data)) && !notice) {
+        std::array<uint16_t,gps_header::IconsLeft*16> expected{};
         auto label=[&](unsigned x,const char* value,uint16_t color) {
             for(unsigned n=0;value[n];++n)for(unsigned y=0;y<8;++y)for(unsigned col=0;col<8;++col) {
                 const bool ink=font8x8_c64[(value[n]-32)*8+col]&(1u<<y);
-                check(display.pixels[(4+y)*240+x+n*8+col]==(ink?color:TFT_BLACK),"replay state/direction/rate/time anchored header");
+                if(ink)expected[(4+y)*gps_header::IconsLeft+x+n*8+col]=dialog?TFT_DARKGREY:color;
             }
         };
-        const auto color=playing?TFT_GREEN:TFT_YELLOW;
-        static constexpr const char* rates[]={"1/4x","1/2x","1x","2x","4x"};
-        label(4,playing?"PLAY":"PAUSE",color);label(44,reverse?"<":">",color);
-        label(52,rates[replay_speed],color);label(88,"--:--:--",TFT_WHITE);
-        for(unsigned y=0;y<16;++y)for(unsigned x=152;x<156;++x)
-            check(display.pixels[y*240+x]==TFT_BLACK,"replay header fits before SD/battery");
+        if(hasPlaybackHeader(screen,data)) {
+            label(4,playing?"PLAY":"PAUSE",playing?TFT_GREEN:TFT_YELLOW);
+            label(60,reverse?"<":">",TFT_WHITE);label(76,replay::speedLabel(data.browse()),TFT_WHITE);
+        } else {label(4,"PAUSE",TFT_YELLOW);label(gps_header::ClockX,"09:00:01",TFT_WHITE);}
+        for(unsigned y=0;y<16;++y)for(unsigned x=0;x<unsigned(gps_header::IconsLeft);++x)
+            check(display.pixels[y*240+x]==expected[y*gps_header::IconsLeft+x],"root header shows status/time; log-map header only shows playback/direction/rate, without timestamps");
     }
+    if(screen!=ScreenId::UsbStorage)for(unsigned y=0;y<alarm_icon::Height;++y)for(unsigned x=0;x<alarm_icon::Width;++x){
+        const bool ink=alert&&(alarm_icon::Rows[y]&(1u<<(alarm_icon::Width-1-x)));
+        check(display.pixels[(gps_header::AlarmY+y)*240+gps_header::AlarmX+x]==(ink?(sounding?TFT_YELLOW:TFT_WHITE):TFT_BLACK),"ROM bell is white when armed, yellow for actual alerts, absent when off, without overlapping adjacent fields");
+    }
+    if(model.screenNameVisible())checkHeaderName(display,model);
     const auto shortcuts=screen==ScreenId::UsbStorage?usb.shortcutGuide():model.shortcutGuide();
     for(unsigned i=0;i<shortcuts.size();++i)if(shortcuts[i].key==UiKey::Escape)
         check(shortcuts[i].tone!=ShortcutTone::Accent,"ESC is white when available, grey when disabled; never cyan");
@@ -92,7 +114,7 @@ Mask render(ScreenId screen,int page,bool active,bool japanese,int depth,bool di
     }
     Mask mask{};
     const uint16_t expected=active?TFT_WHITE:TFT_DARKGREY;
-    for(int y=0;y<16;++y)for(int x=156;x<176;++x) {
+    for(int y=0;y<16;++y)for(int x=X-2;x<X+W+2;++x) {
         const auto pixel=display.pixels[y*240+x];
         const bool inside=x>=X&&x<X+W&&y>=Y&&y<Y+H;
         check(pixel==TFT_BLACK||(inside&&(pixel==expected || (active&&pixel==TFT_BLUE))),"reserved SD area contains foreign header text or a dimmed icon");
@@ -128,8 +150,8 @@ Mask render(ScreenId screen,int page,bool active,bool japanese,int depth,bool di
     if(screen==ScreenId::Logs && !loading && !dialog) {
         ascii(20,27,"20261026_120000_0",TFT_CYAN);
         ascii(4,106,"1/11",TFT_LIGHTGREY);ascii(172,106,"3527 PTS",TFT_LIGHTGREY);
-        model.keyPressed(UiKey::Down,201);renderer.draw(model);
-        ascii(188,106,"99 PTS",TFT_LIGHTGREY);
+        if(!sounding){model.keyPressed(UiKey::Down,201);renderer.draw(model);
+        ascii(188,106,"99 PTS",TFT_LIGHTGREY);}
     }
     if(output) {
         std::printf("P6\n240 135\n255\n");
@@ -174,11 +196,30 @@ void replayLabelContinuity(bool map_mode,bool japanese,int depth) {
     check(!std::equal(old.begin(),old.end(),display.pixels.begin()+First),"completed lookup replaces the label instead of freezing the old name");
 }
 
+void headerOverlayContinuity(ScreenId screen,bool japanese,int depth) {
+    UiData data{};data.settings=defaultSettings();data.settings.language=japanese?UiLanguage::Japanese:UiLanguage::English;
+    data.storage.card_state=CardState::Mounted;data.recording.state=RecordingState::Paused;
+    GpsUiModel model;check(model.setScreen({screen,DisplayMode::View,1,data,0,ActionResult::None})==OperationStatus::Ok,"overlay fixture screen");
+    model.setBattery(72,false,true);model.tick(200);
+    M5GFX display;GpsUiRenderer renderer(display);alignas(4) uint8_t backing[240*135*2+4]{};
+    check(renderer.begin(depth,backing,sizeof(backing)),"overlay fixture begin");renderer.draw(model);
+    const auto during=display.pixels;check(model.screenNameVisible(),"top overlay initially visible");
+    checkHeaderName(display,model);
+    model.tick(1200);check(!model.screenNameVisible()&&model.takeRedraw(),"overlay expires and requests redraw");renderer.draw(model);
+    check(std::equal(during.begin()+16*240,during.end(),display.pixels.begin()+16*240),"overlay never covers or changes body/footer pixels");
+    for(int y=0;y<16;++y)for(int x=gps_header::IconsLeft;x<240;++x)
+        check(during[y*240+x]==display.pixels[y*240+x],"bell, SD and battery remain visible through the overlay");
+}
+
 int main(int argc,char** argv) {
     try {
         if(argc==3) {
             const bool active=std::atoi(argv[2])!=0;const char* screen=argv[1];
-            render(!std::strcmp(screen,"usb")?ScreenId::UsbStorage:!std::strcmp(screen,"settings")?ScreenId::Settings:ScreenId::LivePlace,0,active,false,4,false,true);
+            const bool notice=std::strstr(screen,"notice-")!=nullptr,alert=notice||std::strstr(screen,"alert-")!=nullptr;
+            const auto selected=std::strstr(screen,"usb")?ScreenId::UsbStorage:std::strstr(screen,"settings")?ScreenId::Settings:
+                std::strstr(screen,"gps")?ScreenId::GpsLogger:std::strstr(screen,"logs")?ScreenId::Logs:std::strstr(screen,"map")?ScreenId::Map:ScreenId::LivePlace;
+            render(selected,0,active,std::strstr(screen,"-ja")!=nullptr,4,false,true,72,false,true,false,
+                config::LogReplayDefaultSpeed,false,false,alert,false,notice);
             return 0;
         }
         const auto reference=render(ScreenId::LivePlace,0,false,false,4);
@@ -211,6 +252,13 @@ int main(int argc,char** argv) {
             const int page=screen==ScreenId::UsbStorage?static_cast<int>(UsbPage::Files):screen==ScreenId::Settings?static_cast<int>(SettingsPage::DatasetList):0;
             check(render(screen,page,true,false,4,false,false,72,false,true,true)==reference,"loading changes common status");++cases;
         }
+        for(auto screen:{ScreenId::LivePlace,ScreenId::Map,ScreenId::GpsLogger,ScreenId::Logs,ScreenId::LogProperties,ScreenId::LogStatistics,ScreenId::Settings})
+            for(bool ja:{false,true})for(int depth:{4,16})for(bool sounding:{false,true}){
+                check(render(screen,0,true,ja,depth,false,false,72,false,true,false,config::LogReplayDefaultSpeed,false,false,true,sounding)==reference,"armed/ringing bell preserves SD icon");++cases;
+            }
+        for(auto screen:{ScreenId::LivePlace,ScreenId::Map,ScreenId::GpsLogger,ScreenId::Logs})
+            for(bool ja:{false,true})for(int depth:{4,16})headerOverlayContinuity(screen,ja,depth);
+        std::puts("PASS: 16 header-only overlay cases; body/footer and status icons remain pixel-identical across expiry");
         for(bool map_mode:{false,true})for(bool ja:{false,true})for(int depth:{4,16})replayLabelContinuity(map_mode,ja,depth);
         std::puts("PASS: 8 log label continuity cases; Ready/Waiting/Searching pixel identity and completed replacement, text/map, both languages and color depths");
         std::printf("PASS: %u renderer cases; common shortcut footer and SD/battery header on all screens/pages, battery thresholds/charging/unknown, loading, dialogs, languages and 4/16-bit pixels\n",cases);

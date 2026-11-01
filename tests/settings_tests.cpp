@@ -99,7 +99,6 @@ void navigationAndEditing() {
     ui.setScreen(command);
     for (unsigned i = 0; i < 10; ++i) ui.keyPressed(UiKey::Down, 10 + i);
     check(ui.snapshot().selected_setting == SettingsRootCount-1, "Settings root includes alert settings");
-    ui.keyPressed(UiKey::Up,29); // Licenses precedes the new Alerts entry.
     ui.keyPressed(UiKey::Enter, 30);
     check(ui.snapshot().page == SettingsPage::Licenses, "license entry opens licenses");
     ui.keyPressed(UiKey::Down, 40);

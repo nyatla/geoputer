@@ -15,6 +15,9 @@ public:
 
 private:
     void present(const GpsUiModel& model,UiLanguage language);
+    void drawRuntimeHeader(const GpsUiModel& model);
+    void drawPlaybackHeader(const GpsUiModel& model);
+    void drawScreenName(const GpsUiModel& model);
     void drawHeaderStatus(const GpsUiModel& model);
     void drawMap(const GpsUiModel& model);
     void drawScreenGuide(const GpsUiModel& model);

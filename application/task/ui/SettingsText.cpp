@@ -15,8 +15,8 @@ const char* at(UiLanguage language, const Translation (&table)[N], unsigned row)
 }
 
 const char* settingsRootLabel(UiLanguage language, unsigned row) {
-    static const Translation values[] = {{"動作設定", "Operation"}, {"システム設定", "System settings"}, {"ストレージ操作", "Storage"},
-        {"バージョン情報", "About"}, {"ライセンス情報", "Licenses"}, {"アラート", "Alerts"}};
+    static const Translation values[] = {{"動作設定", "Operation"}, {"システム設定", "System settings"}, {"アラート", "Alerts"}, {"ストレージ操作", "Storage"},
+        {"バージョン情報", "About"}, {"ライセンス情報", "Licenses"}};
     return at(language, values, row);
 }
 const char* settingsModeValue(UiLanguage language, uint8_t usb) {

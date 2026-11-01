@@ -55,8 +55,8 @@ int main(int argc,char** argv){
                     SettingsLabel::ResetScope,SettingsLabel::KeepSd})
         check(width(settingsLabel(language,label),english)<=232,"confirmation text exceeds screen");
     check(width(settingsLabel(language,SettingsLabel::ResetAction),english)<=216,"reset action exceeds screen");
-    for(unsigned row=0;row<6;++row)for(unsigned choice=0;choice<alarmChoices(row,32);++choice){
-        char value[32];alarmValueText(row,choice,32,!english,value,sizeof(value));
+    for(unsigned row=0;row<AlarmRows;++row)for(unsigned choice=0;choice<alarmChoices(row);++choice){
+        char value[32];alarmValueText(row,choice,!english,value,sizeof(value));
         check(20+width(alarmLabel(row,!english),english)+8<=236-width(value,english),"alert field overlaps value");
     }
     M5GFX display;GpsUiRenderer renderer(display);check(renderer.begin(previewColorDepth()),"renderer init");
@@ -80,7 +80,7 @@ int main(int argc,char** argv){
         for(unsigned n=0;n<settingsRootIndex(SettingsRootItem::Alarm);++n)key(UiKey::Down);
         key(UiKey::Enter);
         if(!std::strcmp(mode,"alarms-bottom"))for(unsigned n=0;n<AlarmRows-1;++n)key(UiKey::Down);
-        if(!std::strcmp(mode,"alarms-edit")){key(UiKey::Down);key(UiKey::Down);key(UiKey::Enter);key(UiKey::Right);}
+        if(!std::strcmp(mode,"alarms-edit")){key(UiKey::Down);key(UiKey::Enter);key(UiKey::Right);}
     }else if(!std::strcmp(mode,"mode")||!std::strcmp(mode,"mode-confirm")||!std::strcmp(mode,"mode-blocked")) {
         for(unsigned n=0;n<SettingsSystemRow;++n)key(UiKey::Down);
         key(UiKey::Enter);
@@ -121,7 +121,7 @@ int main(int argc,char** argv){
     if(!std::strcmp(mode,"license-baseline")){
         const unsigned last=licenseLineCount()-SettingsLayout::LicenseRows;
         for(unsigned n=0;n<=last;++n){
-            if(n==0||n==17||n==last){renderer.draw(ui);std::fwrite(display.pixels.data(),2,display.pixels.size(),stdout);}
+            if(n==0||n==17||n==last){ui.tick(2000);renderer.draw(ui);std::fwrite(display.pixels.data(),2,display.pixels.size(),stdout);}
             key(UiKey::Down);
         }
         return 0;
@@ -153,7 +153,7 @@ int main(int argc,char** argv){
                 model.keyPressed(UiKey::Enter,10);
                 if(choice!=static_cast<unsigned>(language))model.keyPressed(UiKey::Right,11);
             }
-            renderer.draw(model);
+            model.tick(2000);renderer.draw(model);
             const auto color=settingEditable(row)||row==static_cast<unsigned>(SettingId::Dataset)?(model.editDirty()?TFT_YELLOW:TFT_CYAN):TFT_DARKGREY;
             const int y=27+(row-SettingsLayout::firstVisible(row,OperationRowCount))*20;
             verifyText(20,y,settingsOperationLabel(language,row),english,color);
@@ -163,7 +163,7 @@ int main(int argc,char** argv){
                 check(display.pixels.at(yy*240+x)==TFT_BLACK,"value crossed the right margin");
         }
     }
-    renderAndCheckDialog(renderer,ui,display);
+    ui.tick(2000);renderAndCheckDialog(renderer,ui,display);
     auto pixel=[&](int x,int y,uint16_t color){check(display.pixels.at(y*240+x)==color,"native font pixel mismatch");};
     auto ascii=[&](int x,int y,char c,uint16_t color){
         for(int row=0;row<16;++row)for(int col=0;col<8;++col)
@@ -181,7 +181,7 @@ int main(int argc,char** argv){
         if(english)ascii(20,47,'S',TFT_WHITE);else japanese(20,27,U'動',TFT_CYAN);
     }
     if(!std::strcmp(mode,"root-bottom")){
-        if(english)ascii(20,87,'A',TFT_CYAN);else japanese(20,87,U'ア',TFT_CYAN);
+        if(english)ascii(20,87,'L',TFT_CYAN);else japanese(20,87,U'ラ',TFT_CYAN);
     }
     if(!std::strcmp(mode,"operation")){
         if(english)ascii(20,27,'L',TFT_CYAN);else japanese(20,27,U'表',TFT_CYAN);

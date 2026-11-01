@@ -4,7 +4,6 @@
 #include "ScopedReaderSource.h"
 #include "WordBookWorkspace.h"
 #include "TextEncoding.h"
-#include "../../../alarm/AlarmTypes.h"
 
 namespace geoputer {
 // Owns validated header only. Input descriptions outlive this consumer.
@@ -17,7 +16,6 @@ public:
                              const PlaceDisplayFormat& format,WordBookWorkspace& scratch,
                              BorrowedReadBuffer* work) const;
     unsigned pathDepth()const;
-    bool readRegionPath(uint32_t code,unsigned level,alarm::Region&,BorrowedReadBuffer*)const;
 private:
     DatasetWordBookIndex info_;
     ScopedReaderSource book_,index_;
