@@ -40,10 +40,10 @@ void testWordBookIndex(const std::string& dir,const std::string& map,const std::
     // The SDK is an independent format oracle; the app only uses fixed output.
     auto query=[&](const DiskIndexedWordBookReader& input,int64_t code,std::vector<std::string>& rows) {
         const bool found=input.readPlaceLinesByCode(code,fixed,{},scratch,&work);
-        rows.clear();if(found)for(auto& line:fixed) {char short_line[64];PlaceLineBuilder b;b.append(line);b.finish(short_line);rows.emplace_back(short_line);}
+        rows.clear();if(found)for(auto& line:fixed) {char short_line[config::PlaceCachedLineBytes];PlaceLineBuilder b(PlaceTextMode::Japanese16,placeLogicalLinePixels());b.append(line);b.finish(short_line);rows.emplace_back(short_line);}
         check(!work.inUse() && !slot.inUse(),"query retained caller resources");return found;
     };
-    auto expectedRows=[&](size_t code) {char rows[2][64];formatPlaceLines(legacy.readStringSet(code),rows);return std::vector<std::string>{rows[0],rows[1]};};
+    auto expectedRows=[&](size_t code) {char rows[2][config::PlaceCachedLineBytes];formatPlaceLines(legacy.readStringSet(code),rows,{},PlaceTextMode::Japanese16,placeLogicalLinePixels());return std::vector<std::string>{rows[0],rows[1]};};
     const auto count=legacy.recordCount();
     std::vector<size_t> points{0,count-1,count/4,count/2,count*3/4};
     if(count>66081)points.push_back(66081);

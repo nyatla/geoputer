@@ -53,6 +53,8 @@ PlaceState PlaceLookup::readSelection() {
     }
     if(!selected_.setLanguage(metadata.language))return PlaceState::MetadataError;
     selected_.display = metadata.display;
+    selected_.info.place_text_mode = std::string_view(metadata.language)=="ja"
+        ? PlaceTextMode::Japanese16 : PlaceTextMode::Ascii8x16;
     if(!selected_.setNames(metadata.map,metadata.wordbook))return PlaceState::MetadataError;
     SdAccessScope access(observer_);
     struct stat status{};
@@ -149,7 +151,7 @@ void PlaceLookup::searchInto(const PlaceRequest& request,PlaceResult& result,Bor
                 result.region_code = code;
                 return;
             }
-            if (!wordbook_->readPlaceLinesByCode(code,result.lines,selected_.display,*scratch,work))
+            if (!wordbook_->readPlaceLinesByCode(code,result.lines,selected_.display,*scratch,work,selected_.info.place_text_mode))
                 throw std::runtime_error("invalid region code");
         }
         result.region_code = code;

@@ -10,7 +10,7 @@ def check_exports(folder):
     base = '20261017_093012_0.gps.dat'
     ns = {'g': 'http://www.topografix.com/GPX/1/1', 'k': 'http://www.opengis.net/kml/2.2'}
     gpx = ET.parse(folder / (base + '.gpx')).getroot()
-    assert gpx.attrib == {'version': '1.1', 'creator': 'GeoPuter'}
+    assert gpx.attrib == {'version': '1.1', 'creator': 'Geoputer'}
     points = gpx.findall('g:trk/g:trkseg/g:trkpt', ns)
     assert len(points) == 25
     assert points[0].get('lat') == '35.681641'

@@ -81,10 +81,15 @@ int main(int argc, char** argv) {
         if (!std::strcmp(mode,"long-address")) parts[2]="あいうえおかきくけこさしすせ";
         if (!std::strcmp(mode,"space-width")) parts={"日 日"};
         if (!std::strcmp(mode,"space-boundary")) parts={"日日日日日日日日日日日日日日 "};
-        char formatted[2][64];
+        char formatted[2][config::PlaceCachedLineBytes];
         if (!std::strcmp(mode,"empty-address")) formatPlaceLines(parts,formatted,PlaceDisplayFormat{{"",""},true});
         else formatPlaceLines(parts,formatted);
         for(unsigned row=0;row<2;++row)std::strcpy(place.lines[row],formatted[row]);
+        if (!std::strcmp(mode,"english-long")) {
+            place.dataset.place_text_mode=PlaceTextMode::Ascii8x16;
+            std::strcpy(place.lines[0],"Northwest Territory of British Columbia");
+            std::strcpy(place.lines[1],"Administrative District and Regional Municipality");
+        }
         completePlacePresentation(data,place);
     }
     model.setScreen({ScreenId::LivePlace,DisplayMode::View,1,data,0,ActionResult::None});
@@ -113,7 +118,7 @@ int main(int argc, char** argv) {
     }
     if (!std::strcmp(mode,"empty-address"))
         for(int y=20;y<56;++y)for(int x=4;x<236;++x)check_pixel(x,y,TFT_BLACK);
-    for(int y=20;y<56;++y)for(int x=236;x<240;++x)check_pixel(x,y,TFT_BLACK);
+    for(int y=20;y<58;++y)for(int x=236;x<240;++x)check_pixel(x,y,TFT_BLACK);
     // These independent region checks cover all scenes, including long numbers.
     for (int y=60;y<=106;++y) check_pixel(120,y,TFT_WHITE);
     for (int x=0;x<240;++x) { check_pixel(x,16,TFT_WHITE); check_pixel(x,60,TFT_WHITE); check_pixel(x,106,TFT_WHITE); check_pixel(x,120,TFT_WHITE); }
@@ -198,7 +203,7 @@ def main():
             str(ROOT / "application/task/ui/Shinonome.cpp"),
             "-o", str(executable),
         ], check=True, timeout=180)
-        image_modes = ("rec", "pause", "sd-error", "gps-error", "reload", "n03", "sd-write", "sd-read", "dictionary-read", "unprepared")
+        image_modes = ("rec", "pause", "sd-error", "gps-error", "reload", "n03", "sd-write", "sd-read", "dictionary-read", "unprepared", "english-long")
         verification_modes = ("speed-long", "speed-sub-one", "speed-integer", "speed-one", "speed-ten", "speed-hundred", "speed-round-ten", "speed-round-hundred", "full-battery", "bounds", "missing", "heading-wrap", "overflow", "zero", "long-address", "space-width", "space-boundary", "empty-address")
         for mode in image_modes + verification_modes:
             ppm = work / f"{mode}.ppm"
@@ -210,7 +215,7 @@ def main():
             assert len(image.getcolors(256)) <= 9
             assert image.getpixel((124, 2)) == (0, 0, 0)  # RG has been removed.
             active = mode in ("sd-read", "sd-write", "reload", "dictionary-read")
-            assert image.getpixel((163, 2)) == ((255, 255, 255) if active else (123, 125, 123))
+            assert image.getpixel((169, 2)) == ((255, 255, 255) if active else (123, 125, 123))
             if mode in ("sd-error", "gps-error"):
                 assert image.getpixel((0, 107)) == (255, 0, 0)
                 assert image.getpixel((0, 119)) == (255, 0, 0)

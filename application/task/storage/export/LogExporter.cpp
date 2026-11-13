@@ -61,7 +61,7 @@ bool LogExporter::open() {
     owns_partial_=true;
     switch(state_.format) {
         case ExportFormat::Gpx:
-            std::snprintf(line_,sizeof(line_),"<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<gpx version=\"1.1\" creator=\"GeoPuter\" xmlns=\"http://www.topografix.com/GPX/1/1\"><trk><name>%s</name><trkseg>\n",state_.name);
+            std::snprintf(line_,sizeof(line_),"<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<gpx version=\"1.1\" creator=\"Geoputer\" xmlns=\"http://www.topografix.com/GPX/1/1\"><trk><name>%s</name><trkseg>\n",state_.name);
             return append(line_);
         case ExportFormat::Kml:
             std::snprintf(line_,sizeof(line_),"<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<kml xmlns=\"http://www.opengis.net/kml/2.2\"><Document><Placemark><name>%s</name><%s><altitudeMode>clampToGround</altitudeMode><coordinates>\n",state_.name,state_.total==1?"Point":"LineString");

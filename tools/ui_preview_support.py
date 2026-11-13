@@ -9,7 +9,7 @@ import re
 import os
 
 ROOT = Path(__file__).resolve().parents[1]
-OUTPUT = ROOT / "doc/画面・操作/live-place"
+OUTPUT = ROOT / "doc/dev/画面・操作/live-place"
 M5GFX = ROOT / ".pio/libdeps/cardputer-adv/M5GFX/src/lgfx"
 if not M5GFX.is_dir():
     M5GFX = ROOT / ".pio/libdeps/cardputer-adv/M5GFX@0.2.33/src/lgfx"

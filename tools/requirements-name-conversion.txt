@@ -1,0 +1,5 @@
+# Host-side data preparation only; these libraries are not linked into firmware.
+pykakasi==2.3.0
+pypinyin==0.55.0
+koroman==1.0.16
+pypdf==6.21.4

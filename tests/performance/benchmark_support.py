@@ -42,4 +42,4 @@ def diagnostic_config(root, work):
     name = work.name
     source = replace_once((root / 'platformio.ini').read_text(), 'src_dir = application',
                           f'src_dir = .pio/{name}/application\nbuild_dir = .pio/{name}/build\nlibdeps_dir = .pio/libdeps')
-    return replace_once(source, '    -Wall', '    -Wall\n    -DREVERSEGEOPUTER_DIAGNOSTICS=1')
+    return replace_once(source, '    -Wall', '    -Wall\n    -DGEOPUTER_DIAGNOSTICS=1')

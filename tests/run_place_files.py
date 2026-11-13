@@ -14,7 +14,7 @@ root = Path(__file__).resolve().parents[1]
 with tempfile.TemporaryDirectory(prefix="geoputer-place-") as directory:
     binary = Path(directory) / "place-tests"
     subprocess.run([
-        "g++", "-std=c++17", "-pthread", "-DREVERSEGEOPUTER_DIAGNOSTICS=1", "-Wall", "-Wextra", "-Werror", "-pedantic",
+        "g++", "-std=c++17", "-pthread", "-DGEOPUTER_DIAGNOSTICS=1", "-Wall", "-Wextra", "-Werror", "-pedantic",
         "-fsanitize=undefined", "-fno-sanitize-recover=all", "-D_GLIBCXX_ASSERTIONS", "-g",
         "-I", str(root / "tests/support"), "-I", str(root / "application"), "-I", str(root / "third_party/galuchat/include"),
         str(root / "tests/place_file_tests.cpp"),

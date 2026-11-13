@@ -4,6 +4,7 @@
 #include "ScopedReaderSource.h"
 #include "WordBookWorkspace.h"
 #include "TextEncoding.h"
+#include "../../../PlaceText.h"
 
 namespace geoputer {
 // Owns validated header only. Input descriptions outlive this consumer.
@@ -14,7 +15,7 @@ public:
         :info_(info),book_(book),index_(index){}
     bool readPlaceLinesByCode(int64_t code,char (&lines)[2][config::PlaceResultLineBytes],
                              const PlaceDisplayFormat& format,WordBookWorkspace& scratch,
-                             BorrowedReadBuffer* work) const;
+                             BorrowedReadBuffer* work,PlaceTextMode mode=PlaceTextMode::Japanese16) const;
     unsigned pathDepth()const;
 private:
     DatasetWordBookIndex info_;

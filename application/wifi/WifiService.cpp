@@ -26,7 +26,7 @@ private:WifiService& owner_;
 bool WifiService::startupCredentials() {
     if(!wifi::loadOrCreatePassword(view_.password,esp_random))return false;
     uint8_t mac[6];WiFi.macAddress(mac);
-    std::snprintf(view_.ssid,sizeof(view_.ssid),"ReverseGeoputer-%02X%02X",mac[4],mac[5]);
+    std::snprintf(view_.ssid,sizeof(view_.ssid),"Geoputer-%02X%02X",mac[4],mac[5]);
     for(unsigned i=0;i<16;++i)std::snprintf(csrf_+i*2,3,"%02x",esp_random()&255);
     return true;
 }
@@ -224,7 +224,7 @@ void WifiService::handle() {
         const auto host=server_.hostHeader(),ip=WiFi.softAPIP().toString();
         if(!wifi::canonicalHost({host.c_str(),host.length()},{ip.c_str(),ip.length()}) || wifi::captiveProbe({uri.c_str(),uri.length()})) {
             headers();server_.sendHeader("Location",String(view_.url)+"connect");
-            server_.send(302,"text/plain","Open ReverseGeoputer connection guide");return;
+            server_.send(302,"text/plain","Open Geoputer connection guide");return;
         }
         if(uri=="/connect"){headers();server_.send_P(200,"text/html; charset=utf-8",wifi::PortalPage);return;}
     }

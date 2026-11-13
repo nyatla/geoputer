@@ -5,7 +5,7 @@ import tempfile
 
 root = Path(__file__).resolve().parents[1]
 sources = root / 'third_party/M5Cardputer/src'
-with tempfile.TemporaryDirectory(prefix='reversegeoputer-keyboard-') as directory:
+with tempfile.TemporaryDirectory(prefix='geoputer-keyboard-') as directory:
     for name, extra in [
         ('keyboard_reader_tests', []),
         ('keyboard_capacity_tests', [

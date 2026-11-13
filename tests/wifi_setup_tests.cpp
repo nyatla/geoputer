@@ -36,9 +36,9 @@ int main(int argc,char** argv) {
     Preferences::fail_open=true;assert(!wifi::loadOrCreatePassword(out,randomWord));Preferences::fail_open=false;
     Preferences::records.clear();assert(wifi::loadOrCreatePassword(out,constantWord));
     const auto before=Preferences::write_calls;assert(!wifi::regeneratePassword(out,constantWord) && before==Preferences::write_calls);
-    WifiView view{};std::strcpy(view.ssid,"ReverseGeoputer-ABCD");std::strcpy(view.password,"ABCD2345EFGH6789");std::strcpy(view.url,"http://192.168.4.1/");
+    WifiView view{};std::strcpy(view.ssid,"Geoputer-ABCD");std::strcpy(view.password,"ABCD2345EFGH6789");std::strcpy(view.url,"http://192.168.4.1/");
     wifi::QrCode qr;assert(qr.update(view,WifiPage::ConnectionQr));
-    assert(!std::strcmp(qr.payload(),"WIFI:T:WPA;S:ReverseGeoputer-ABCD;P:ABCD2345EFGH6789;;"));
+    assert(!std::strcmp(qr.payload(),"WIFI:T:WPA;S:Geoputer-ABCD;P:ABCD2345EFGH6789;;"));
     assert(qr.size()==37 && qr.cell()==2 && qr.offset()>=4*qr.cell());image(qr,argv[1]);
     assert(qr.update(view,WifiPage::ConnectionQr)); // Cached update preserves the matrix.
     assert(qr.update(view,WifiPage::WebQr) && !std::strcmp(qr.payload(),view.url));

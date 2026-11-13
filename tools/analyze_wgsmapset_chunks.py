@@ -69,7 +69,7 @@ def read_chunks(source: Path, sdk_source: Path):
 
 
 def plot_histogram(bins, target: Path):
-    os.environ.setdefault('MPLCONFIGDIR', str(Path(tempfile.gettempdir()) / 'reversegeoputer-mpl'))
+    os.environ.setdefault('MPLCONFIGDIR', str(Path(tempfile.gettempdir()) / 'geoputer-mpl'))
     import matplotlib
     matplotlib.use('Agg')
     import matplotlib.pyplot as plt

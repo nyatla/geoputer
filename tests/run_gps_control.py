@@ -2,7 +2,7 @@
 from pathlib import Path
 import subprocess,tempfile
 r=Path(__file__).resolve().parents[1]
-with tempfile.TemporaryDirectory(prefix='reversegeoputer-gps-control-') as d:
+with tempfile.TemporaryDirectory(prefix='geoputer-gps-control-') as d:
     binary=Path(d)/'gps-control'
     subprocess.run(['g++','-std=c++17','-O1','-Wall','-Wextra','-Werror','-pedantic','-fno-access-control',
         '-fsanitize=undefined','-fno-sanitize-recover=all','-I'+str(r/'tests/support/gps-control'),

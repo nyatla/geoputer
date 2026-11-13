@@ -3,7 +3,7 @@ from pathlib import Path
 import re
 from PIL import Image
 ROOT=Path(__file__).resolve().parents[1]
-folder=ROOT/'doc/画面・操作'
+folder=ROOT/'doc/dev/画面・操作'
 preview=Image.new('RGB',(48,16),'black')
 for name,width,x in [('Escape',24,0),('Enter',12,32)]:
     source=(ROOT/f'application/task/ui/{name}Icon.h').read_text()

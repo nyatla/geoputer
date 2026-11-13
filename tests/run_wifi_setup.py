@@ -19,7 +19,7 @@ with tempfile.TemporaryDirectory(prefix='rgp-wifi-setup-') as folder:
  except ImportError:
   print('Independent QR decoding skipped (optional zxing-cpp/Pillow not installed)')
  else:
-  for name,expected in [('network','WIFI:T:WPA;S:ReverseGeoputer-ABCD;P:ABCD2345EFGH6789;;'),('url','http://192.168.4.1/')]:
+  for name,expected in [('network','WIFI:T:WPA;S:Geoputer-ABCD;P:ABCD2345EFGH6789;;'),('url','http://192.168.4.1/')]:
    result=zxingcpp.read_barcode(Image.open(d/(name+'.pgm')))
    assert result and result.text==expected,(name,result)
   print('PASS independent decoder: both native 100x100 QR images match network credentials / URL')

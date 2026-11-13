@@ -58,7 +58,7 @@ def main():
     enums=(M5GFX/'v1/misc/enum.hpp').read_text();colors=[]
     for name in sorted(set(re.findall(r'\bTFT_[A-Z]+\b',SCENE+renderer))):
         value=re.search(rf'\b{name}\s*=\s*(0x[0-9A-Fa-f]+)',enums)[1];colors.append(f'inline constexpr uint16_t {name}={value};')
-    with tempfile.TemporaryDirectory(prefix='reversegeoputer-navigation-') as directory:
+    with tempfile.TemporaryDirectory(prefix='geoputer-navigation-') as directory:
         work=Path(directory);(work/'M5GFX.h').write_text(ADAPTER+'\n'+'\n'.join(colors));(work/'scene.cpp').write_text(SCENE)
         sources=[ROOT/'application/task/ui'/f'{name}.cpp' for name in ('PixelFont','GpsUiRenderer','GpsUiModel','LicenseText','SettingsText','Shinonome')]
         exe=work/'render'
@@ -79,7 +79,7 @@ def main():
                     elif regions!=fixed_regions:raise AssertionError('GPS labels or units moved with value widths')
                 if mode not in ('menu','details','paused','recording'):
                     continue
-                folder=ROOT/'doc/画面・操作'/('menu' if mode=='menu' else 'gps-logger');folder.mkdir(exist_ok=True)
+                folder=ROOT/'doc/dev/画面・操作'/('menu' if mode=='menu' else 'gps-logger');folder.mkdir(exist_ok=True)
                 if mode=='menu':stem=f'{language}-menu'
                 else:
                     suffix={'details':'logger','paused':'logger-paused','recording':'logger-confirm'}[mode]

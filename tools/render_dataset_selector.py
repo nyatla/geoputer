@@ -102,7 +102,7 @@ def main():
         for language in ('ja','en'):
             for scene in ('list','detail','extent','apply','blocked','saving','missing-boot','boot','boot-ready','maintenance','restart','restart-selected'):
                 frame=reference_frame(exe,scene,language)
-                output=ROOT/'doc/画面・操作'/('boot' if scene in ('missing-boot','boot','boot-ready') else 'settings')/f'dataset-{language}-{scene}-preview.png'
+                output=ROOT/'doc/dev/画面・操作'/('boot' if scene in ('missing-boot','boot','boot-ready') else 'settings')/f'dataset-{language}-{scene}-preview.png'
                 with Image.open(io.BytesIO(frame)) as image:
                     assert image.size==(240,135)
                     image.save(output)

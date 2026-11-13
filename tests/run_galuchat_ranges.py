@@ -4,7 +4,7 @@ import subprocess
 import tempfile
 
 root = Path(__file__).resolve().parents[1]
-with tempfile.TemporaryDirectory(prefix="reversegeoputer-ranges-") as directory:
+with tempfile.TemporaryDirectory(prefix="geoputer-ranges-") as directory:
     for name in ("chunk_storage_test", "sequential_reader_compatibility_test", "rect_without_tail_test", "chunk_range_test", "block_range_test", "rle_span_test", "raw_row_test"):
         binary = Path(directory) / name
         subprocess.run([
@@ -15,7 +15,7 @@ with tempfile.TemporaryDirectory(prefix="reversegeoputer-ranges-") as directory:
         ], check=True, timeout=90)
         subprocess.run([str(binary)], check=True, timeout=30)
 
-with tempfile.TemporaryDirectory(prefix="reversegeoputer-block-index-") as directory:
+with tempfile.TemporaryDirectory(prefix="geoputer-block-index-") as directory:
     binary = Path(directory) / 'block-index'
     subprocess.run([
         'g++', '-O2', '-std=c++17', '-Wall', '-Wextra', '-Werror', '-pedantic',

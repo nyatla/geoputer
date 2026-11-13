@@ -76,6 +76,8 @@ inline void completePlacePresentation(UiData& data, const PlaceResult& result) {
     if (datasetInactive(result.state)) {
         std::memset(data.place, 0, sizeof(data.place)); data.place_fix = {};data.place_region=0; data.place_state = result.state; return;
     }
+    // The place rows and their font mode must become visible in the same frame.
+    data.dataset.place_text_mode = result.dataset.place_text_mode;
     for(unsigned row=0;row<2;++row)
         std::memcpy(data.place[row],result.lines[row],sizeof(data.place[row]));
     for (auto& line : data.place) line[sizeof(line) - 1] = '\0';

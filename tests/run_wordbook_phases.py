@@ -112,7 +112,7 @@ def main():
             subprocess.run(['g++', '-std=c++17', '-O1', '-g', '-no-pie',
                             '-Wall', '-Wextra', '-Werror', '-pedantic',
                             '-fsanitize=address,undefined', '-fno-sanitize-recover=all',
-                            '-D_GLIBCXX_ASSERTIONS', '-DREVERSEGEOPUTER_DIAGNOSTICS=1',
+                            '-D_GLIBCXX_ASSERTIONS', '-DGEOPUTER_DIAGNOSTICS=1',
                             *flags, '-I' + str(root / 'application'),
                             '-I' + str(root / 'third_party/galuchat/include'),
                             str(root / 'tests/wordbook_phase_tests.cpp'),

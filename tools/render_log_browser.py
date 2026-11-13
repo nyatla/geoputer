@@ -151,7 +151,7 @@ int main(int argc,char** argv) {
 def main():
     import argparse
     parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--output',type=Path,default=ROOT/'doc/画面・操作')
+    parser.add_argument('--output',type=Path,default=ROOT/'doc/dev/画面・操作')
     parser.add_argument('--mode',action='append',help='Render only the named scene (repeatable)')
     args=parser.parse_args()
     renderer=(ROOT/'application/task/ui/GpsUiRenderer.cpp').read_text()+(ROOT/'application/task/ui/UiCanvas.h').read_text()

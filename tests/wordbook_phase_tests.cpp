@@ -50,17 +50,25 @@ int main(int argc, char** argv) {
         FileReadSource file_index(native_index,nullptr,&index_io,{4096,0},0,&slot);
         DiskIndexedWordBookReader direct(info,file_book,file_index);
         // Caller-owned fixed output agrees with the independent SDK oracle.
-        WordBookWorkspace scratch;char fixed[2][config::PlaceResultLineBytes];char expected_rows[2][64];
+        WordBookWorkspace scratch;char fixed[2][config::PlaceResultLineBytes];
+        char expected_rows[2][config::PlaceCachedLineBytes];
         PlaceDisplayFormat format{{"%2 %0 %% %2","%9%1"},true};
         for(const auto& setting:{PlaceDisplayFormat{},format}) {
-            formatPlaceLines(expected,expected_rows,setting);
+            formatPlaceLines(expected,expected_rows,setting,PlaceTextMode::Japanese16,placeLogicalLinePixels());
             bool exhausted=false;
             try {
                 check(direct.readPlaceLinesByCode(1,fixed,setting,scratch,&pool),"bounded query failed");
             }catch(const std::length_error&){exhausted=true;}
             check(exhausted==(pages-31>128),"per-component capacity error mismatch");
-            if(!exhausted) {char display[2][64];for(unsigned row=0;row<2;++row){PlaceLineBuilder b;b.append(fixed[row]);b.finish(display[row]);}check(!std::strcmp(display[0],expected_rows[0]) && !std::strcmp(display[1],expected_rows[1]),"bounded rows differ from oracle formatting");}
+            if(!exhausted) {char display[2][config::PlaceCachedLineBytes];for(unsigned row=0;row<2;++row){PlaceLineBuilder b(PlaceTextMode::Japanese16,placeLogicalLinePixels());b.append(fixed[row]);b.finish(display[row]);}check(!std::strcmp(display[0],expected_rows[0]) && !std::strcmp(display[1],expected_rows[1]),"bounded rows differ from oracle formatting");}
             check(!pool.inUse() && !slot.inUse(),"bounded query retained Reader resources");
+        }
+        if(pages-31<=128) {
+            formatPlaceLines(expected,expected_rows,format,PlaceTextMode::Ascii8x16,placeLogicalLinePixels());
+            check(direct.readPlaceLinesByCode(1,fixed,format,scratch,&pool,PlaceTextMode::Ascii8x16),
+                  "narrow Wordbook query failed");
+            check(!std::strcmp(fixed[0],expected_rows[0]) && !std::strcmp(fixed[1],expected_rows[1]),
+                  "narrow Wordbook output differs from oracle");
         }
         // Page-local capacity is per component. The last component has pages-31 tokens.
         const auto tt_start=fmt::get(info.header.data()+fmt::Wordbook::TtDataOffset);

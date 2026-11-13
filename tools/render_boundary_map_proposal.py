@@ -101,7 +101,7 @@ def main():
     for name in sorted(set(re.findall(r'\bTFT_[A-Z]+\b',SCENE+renderer))):
         value=re.search(rf'\b{name}\s*=\s*(0x[0-9A-Fa-f]+)',enums)[1]
         colors.append(f'inline constexpr uint16_t {name}={value};')
-    with tempfile.TemporaryDirectory(prefix='reversegeoputer-map-proposal-') as directory:
+    with tempfile.TemporaryDirectory(prefix='geoputer-map-proposal-') as directory:
         work=Path(directory);(work/'M5GFX.h').write_text(ADAPTER+'\n'+'\n'.join(colors));(work/'scene.cpp').write_text(SCENE)
         exe=work/'render'
         sources=[ROOT/'application/task/ui'/f'{name}.cpp' for name in ('PixelFont','GpsUiRenderer','GpsUiModel','LicenseText','SettingsText','Shinonome')]
@@ -111,7 +111,7 @@ def main():
         with Image.open(ppm) as source:image=source.convert('RGB')
         assert image.size==(240,135) and len(image.getcolors(16))<=9
         assert image.getpixel((120,68))==(255,255,255)
-        out=ROOT/'doc/画面・操作/place-view';out.mkdir(exist_ok=True)
+        out=ROOT/'doc/dev/画面・操作/place-view';out.mkdir(exist_ok=True)
         image.save(out/'place-view-boundary-proposal.png')
         image.resize((960,540),Image.Resampling.NEAREST).save(out/'place-view-boundary-proposal-preview.png')
         print('Created native 240x135 and 4x nearest-neighbor preview')

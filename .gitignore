@@ -2,3 +2,4 @@
 .venv/
 .venv-win-flash/
 __pycache__/
+/release/

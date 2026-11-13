@@ -4,12 +4,12 @@
 #include <cstdint>
 
 // Enable only for diagnostic firmware / profiling tests.
-#ifndef REVERSEGEOPUTER_DIAGNOSTICS
-#define REVERSEGEOPUTER_DIAGNOSTICS 0
+#ifndef GEOPUTER_DIAGNOSTICS
+#define GEOPUTER_DIAGNOSTICS 0
 #endif
 
 namespace geoputer::config {
-inline constexpr bool DetailedDiagnostics = REVERSEGEOPUTER_DIAGNOSTICS != 0;
+inline constexpr bool DetailedDiagnostics = GEOPUTER_DIAGNOSTICS != 0;
 inline constexpr unsigned LogStatisticsBatchRecords = 8;
 inline constexpr unsigned LogStatisticsStepsPerLoop = 32;
 inline constexpr uint32_t LogStatisticsBudgetUs = 2000;
@@ -59,6 +59,7 @@ inline constexpr size_t WordBookCacheEntries = 16;
 inline constexpr size_t WordBookLookupTokens = 128; // One component; uint16 token IDs, no heap fallback.
 inline constexpr size_t PlaceAsciiLimit = 128, PlaceWideLimit = 64;
 inline constexpr size_t PlaceResultLineBytes = PlaceAsciiLimit + PlaceWideLimit * 4 + 1;
+inline constexpr size_t PlaceCachedLineBytes = 96; // Two 8px rows of UTF-8 names, including terminator.
 // Place lookup follows each changed dataset cell; no periodic throttle.
 // Independent boundary-map buffers; the 128x128 point cache is untouched.
 inline constexpr size_t MapViewCodeMaxBytes = 96 * 1024;

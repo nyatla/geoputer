@@ -8,7 +8,7 @@ const labels={
  ja:{info:'情報',files:'ファイル',datasets:'データセット',ready:'SDカードを操作できます。',soon:'準備中です。',edit:'開く・編集',remove:'削除',saved:'保存しました',replace:'上書きしますか？',page:n=>`${n} ページ`,mode:'Wi-Fi管理',restarting:'再起動しています。端末の画面を確認してください。',connected:'Wi-Fiに接続しました',open:'管理画面を開く',noSd:'SDカードが利用できません。端末を確認してください。'},
  en:{info:'Info',files:'Files',datasets:'Datasets',ready:'SD card is ready.',soon:'Coming soon.',edit:'Open / edit',remove:'Delete',saved:'Saved',replace:'Replace this file?',page:n=>`Page ${n}`,mode:'Wi-Fi management',restarting:'Restarting. Check the device screen.',connected:'Connected to Wi-Fi',open:'Open manager',noSd:'SD card unavailable. Check the device.'}
 };
-const status={session:'token',usable:true,version:'host-test',sd:'MOUNTED',ssid:'ReverseGeoputer-1234',total:1e9,free:5e8,dataset:1,language:0,logInterval:10,flushInterval:10,screenTimeout:60,wordbookLanguage:'ja',brightness:40,volume:1,power:2};
+const status={session:'token',usable:true,version:'host-test',sd:'MOUNTED',ssid:'Geoputer-1234',total:1e9,free:5e8,dataset:1,language:0,logInterval:10,flushInterval:10,screenTimeout:60,wordbookLanguage:'ja',brightness:40,volume:1,power:2};
 const json=(route,code,body)=>route.fulfill({status:code,contentType:'application/json',body:JSON.stringify(body)});
 const noOverflow=async(page,label)=>assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),label);
 const idle=page=>page.waitForFunction(()=>!document.getElementById('refreshInfo').disabled);

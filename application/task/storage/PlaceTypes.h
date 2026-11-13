@@ -4,6 +4,7 @@
 #include <cstddef>
 #include "../../map/MapTypes.h"
 #include "../../Config.h"
+#include "../../PlaceText.h"
 #include "../../alarm/AlarmTypes.h"
 #include "../gps/GpsTypes.h"
 #include "ReadWorkspace.h"
@@ -40,6 +41,7 @@ struct DatasetInfo {
     uint32_t limit;
     uint32_t generation = 1; // Explicit reopen only; errors retain the same generation.
     int unit_inv_x = 0, unit_inv_y = 0; // Validated dataset lattice; zero until opened.
+    PlaceTextMode place_text_mode = PlaceTextMode::Japanese16; // Resolved Wordbook language, not UI language.
 };
 
 struct PlaceRequest {
@@ -57,7 +59,7 @@ struct PlaceResult {
     PlaceRequest request;
     PlaceState state;
     int64_t region_code;
-    char lines[2][config::PlaceResultLineBytes]; // Direct output, still clipped to display width.
+    char lines[2][config::PlaceResultLineBytes]; // Bounded logical rows; UI decides screen clipping.
     char detail[80];   // Diagnostic copy, never a pointer into the SDK.
     DatasetInfo dataset;
     alarm::Observation alarm{};

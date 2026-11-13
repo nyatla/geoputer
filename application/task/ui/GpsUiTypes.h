@@ -5,6 +5,7 @@
 #include <cstring>
 #include <new>
 #include <type_traits>
+#include "../../Config.h"
 #include "../gps/GpsTypes.h"
 #include "../storage/StorageTypes.h"
 #include "../../BootStatus.h"
@@ -49,7 +50,7 @@ struct UiData {
     uint32_t revision;
     map::ViewState map;
     BootStatus boot;
-    char place[2][64];  // Final display rows formatted/cached by Storage.
+    char place[2][config::PlaceCachedLineBytes];  // Logical rows; each screen lays them out.
     PlaceState place_state;
     DatasetInfo dataset;
     GpsFix place_fix;

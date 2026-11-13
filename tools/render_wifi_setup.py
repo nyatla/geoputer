@@ -14,7 +14,7 @@ int main(int argc,char** argv) {
  const unsigned page=std::atoi(argv[1]);const bool ja=std::strcmp(argv[2],"en")!=0;
  WifiUiData data{};data.storage.revision=1;data.settings.language=ja?UiLanguage::Japanese:UiLanguage::English;
  data.storage.card_state=CardState::Mounted;data.storage.wifi.phase=WifiPhase::Ready;data.storage.wifi.portal=true;
- auto& w=data.storage.wifi;std::strcpy(w.ssid,"ReverseGeoputer-ABCD");std::strcpy(w.password,"ABCD2345EFGH6789");std::strcpy(w.url,"http://192.168.4.1/");
+ auto& w=data.storage.wifi;std::strcpy(w.ssid,"Geoputer-ABCD");std::strcpy(w.password,"ABCD2345EFGH6789");std::strcpy(w.url,"http://192.168.4.1/");
  WifiUiModel model;model.update(data,0);model.setBattery(72,false,true);
  for(unsigned i=0;i<(page<3?page:0);++i)model.key(UiKey::Right);
  if(page==3)model.key(UiKey::Recalculate);

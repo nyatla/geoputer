@@ -23,6 +23,9 @@ namespace geoputer {
 namespace {
 constexpr int ViewHeaderTextY = SettingsLayout::HeaderTextY;
 constexpr int ViewHeaderBottom = SettingsLayout::HeaderBottom;
+TextRole placeRole(PlaceTextMode mode) {
+    return mode==PlaceTextMode::Japanese16 ? TextRole::Place : TextRole::Ascii8x16;
+}
 }
 
 bool GpsUiRenderer::begin(uint8_t color_depth, void* buffer, size_t capacity) {
@@ -319,11 +322,27 @@ void GpsUiRenderer::drawLivePlace(const GpsUiModel& model, const UiSnapshot& con
         const auto message = datasetIssueText(issue, japanese);
         for (unsigned i = 0; i < 2; ++i)
             font_.draw(frame_, LivePlaceLayout::AddressX, LivePlaceLayout::AddressY + i * LivePlaceLayout::AddressStep,
-                       i ? message.second : message.first, TextRole::Place, TFT_WHITE);
+                       i ? message.second : message.first,
+                       japanese ? TextRole::Place : TextRole::Ascii8x16, TFT_WHITE);
     } else if (hasPlace(data) || data.place_state == PlaceState::Ready) {
-        for (unsigned i = 0; i < 2; ++i)
-            font_.draw(frame_, LivePlaceLayout::AddressX, LivePlaceLayout::AddressY + i * LivePlaceLayout::AddressStep,
-                       data.place[i], TextRole::Place, TFT_WHITE);
+        const auto mode = data.dataset.place_text_mode;
+        if (liveAsciiWrapNeeded(data.place, mode)) {
+            for (unsigned i = 0; i < 2; ++i) {
+                char rows[2][config::PlaceLinePixels / 8 + 1];
+                wrapAsciiPlaceLine(data.place[i], rows);
+                for (unsigned visual = 0; visual < 2; ++visual)
+                    font_.draw(frame_, LivePlaceLayout::AddressX,
+                               LivePlaceLayout::AddressY + i * LivePlaceLayout::AddressStep + visual * 10,
+                               rows[visual], TextRole::UI, TFT_WHITE);
+            }
+        } else {
+            for (unsigned i = 0; i < 2; ++i) {
+                char visible[config::PlaceCachedLineBytes];
+                fitPlaceDisplayLine(data.place[i], visible, mode);
+                font_.draw(frame_, LivePlaceLayout::AddressX, LivePlaceLayout::AddressY + i * LivePlaceLayout::AddressStep,
+                           visible, placeRole(mode), TFT_WHITE);
+            }
+        }
     } else if (data.place_state == PlaceState::NoFix) largeText(4, 30, "WAIT GPS FIX", TFT_WHITE);
     else text(4, 30, placeStateName(data.place_state), TFT_LIGHTGREY);
     frame_.drawFastHLine(0, LivePlaceLayout::AddressBottom, 240, TFT_WHITE);
@@ -452,12 +471,17 @@ void GpsUiRenderer::drawLogBrowser(const GpsUiModel& model, const UiSnapshot& co
             text(4,75,"HDOP");valueText(36,116,75,line);
             if(datasetInactive(data.place_state)) {
                 const auto issue=datasetIssueText(data.place_state,japanese);
-                font_.draw(frame_,4,84,issue.first,TextRole::Place,TFT_LIGHTGREY);
-                font_.draw(frame_,4,100,issue.second,TextRole::Place,TFT_LIGHTGREY);
+                const auto role=japanese?TextRole::Place:TextRole::Ascii8x16;
+                font_.draw(frame_,4,84,issue.first,role,TFT_LIGHTGREY);
+                font_.draw(frame_,4,100,issue.second,role,TFT_LIGHTGREY);
             } else {
-                font_.draw(frame_,4,84,data.place[0],TextRole::Place,TFT_WHITE);
-                font_.draw(frame_,4,100,data.place[1],TextRole::Place,TFT_WHITE);
-                if(data.place_state==PlaceState::NotFound)font_.draw(frame_,4,84,"NO REGION",TextRole::Place,TFT_LIGHTGREY);
+                const auto role=placeRole(data.dataset.place_text_mode);
+                for (unsigned row=0;row<2;++row) {
+                    char visible[config::PlaceCachedLineBytes];
+                    fitPlaceDisplayLine(data.place[row],visible,data.dataset.place_text_mode);
+                    font_.draw(frame_,4,row?100:84,visible,role,TFT_WHITE);
+                }
+                if(data.place_state==PlaceState::NotFound)font_.draw(frame_,4,84,"NO REGION",role,TFT_LIGHTGREY);
             }
         }
     }
@@ -804,10 +828,13 @@ void GpsUiRenderer::drawMap(const GpsUiModel& model) {
     if(datasetInactive(issue_state)) {
         const auto issue=datasetIssueText(issue_state,data.settings.language==UiLanguage::Japanese);
         overlay(4,88,issue.first,TextRole::UI,TFT_WHITE);
-        overlay(4,100,issue.second,TextRole::Place,TFT_WHITE);
+        overlay(4,100,issue.second,data.settings.language==UiLanguage::Japanese?TextRole::Place:TextRole::Ascii8x16,TFT_WHITE);
     } else if(hasPlace(data) || data.place_state==PlaceState::Ready) {
-        overlay(4,88,data.place[0],TextRole::UI,TFT_WHITE);
-        overlay(4,100,data.place[1],TextRole::Place,TFT_WHITE);
+        char first[config::PlaceCachedLineBytes],second[config::PlaceCachedLineBytes];
+        fitPlaceDisplayLine(data.place[0],first,data.dataset.place_text_mode,true);
+        fitPlaceDisplayLine(data.place[1],second,data.dataset.place_text_mode);
+        overlay(4,88,first,TextRole::UI,TFT_WHITE);
+        overlay(4,100,second,placeRole(data.dataset.place_text_mode),TFT_WHITE);
     } else if(data.place_state==PlaceState::NotFound) {
         overlay(4,88,"NO REGION",TextRole::UI,TFT_WHITE);
     }

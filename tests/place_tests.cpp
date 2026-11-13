@@ -35,9 +35,11 @@ static void testPlaceLoans() {
     check(samePlaceRequest(result->request,request),"index scratch cannot overwrite result identity");
     auto next=request;next.buffer={};++next.token;map::BufferLease denied{};
     check(ui.beginPlaceSearch(next,denied)==OperationStatus::Unavailable,"one outstanding work loan at a time");
-    result->state=PlaceState::Ready;result->dataset=data.dataset;result->region_code=42;std::strcpy(result->lines[0],"AREA ONE");
+    result->state=PlaceState::Ready;result->dataset=data.dataset;result->dataset.place_text_mode=PlaceTextMode::Ascii8x16;
+    result->region_code=42;std::strcpy(result->lines[0],"AREA ONE");
     check(ui.commitPlaceSearch(request)==OperationStatus::Ok && !std::strcmp(ui.data().place[0],"AREA ONE") &&
-          !ui.mapFrame().leased(),"UI commits name and returns workspace");
+          ui.data().dataset.place_text_mode==PlaceTextMode::Ascii8x16 && !ui.mapFrame().leased(),
+          "UI commits name, font mode, and returns workspace");
     next.screen_generation=1;check(ui.beginPlaceSearch(next,next.buffer)==OperationStatus::Ok,"next main lookup");
     const auto stale=next;
     ui.setScreen({ScreenId::Settings,DisplayMode::View,2,data,0,ActionResult::None});
@@ -66,11 +68,62 @@ static void testPlaceLoans() {
 
 void testPlace() {
     testPlaceLoans();
-    char direct[config::PlaceResultLineBytes]{};char expected_direct[2][64];
+    char direct[config::PlaceResultLineBytes]{};char expected_direct[2][config::PlaceCachedLineBytes];
     const std::string long_name="Comunidad de Palacios de la Sierra, Vilviestre del Pinar y San Leonardo de Yagüe";
     formatPlaceLines({long_name},expected_direct);
     PlaceLineOutput direct_row(direct,sizeof(direct));direct_row.append(long_name);
     check(direct_row.full() && !std::strcmp(direct,expected_direct[0]),"direct row uses the existing display clipping");
+    char narrow[config::PlaceResultLineBytes]{};
+    PlaceLineOutput narrow_row(narrow,sizeof(narrow),PlaceTextMode::Ascii8x16);
+    narrow_row.append("12345678901234567890123456789");
+    check(!narrow_row.full() && std::strlen(narrow)==29,"8x16 place row accepts 29 ASCII glyphs");
+    PlaceLineOutput narrow_clipped(narrow,sizeof(narrow),PlaceTextMode::Ascii8x16);
+    narrow_clipped.append("123456789012345678901234567890");
+    check(narrow_clipped.full() && !std::strcmp(narrow,"12345678901234567890123456..."),
+          "8x16 place row reserves 24 pixels for the ellipsis");
+    check(placeCharacterWidth('A',PlaceTextMode::Ascii8x16)==8 &&
+          placeCharacterWidth(0xe5,PlaceTextMode::Ascii8x16)==16 &&
+          placeCharacterWidth('A',PlaceTextMode::Japanese16)==16,
+          "non-ASCII remains wide and Japanese ASCII remains full width");
+    const std::string fifty_eight(58,'x');
+    char logical[config::PlaceResultLineBytes]{};
+    PlaceLineOutput logical_row(logical,sizeof(logical),PlaceTextMode::Ascii8x16,placeLogicalLinePixels());
+    logical_row.append(fifty_eight);
+    check(!logical_row.full() && std::strcmp(logical,fifty_eight.c_str())==0,
+          "two 8x8 rows retain 58 ASCII characters before UI layout");
+    PlaceLineOutput logical_overflow(logical,sizeof(logical),PlaceTextMode::Ascii8x16,placeLogicalLinePixels());
+    logical_overflow.append(fifty_eight+"x");
+    check(logical_overflow.full() && std::string(logical)==std::string(55,'x')+"...",
+          "logical row reserves the second 8x8 row's ellipsis");
+    char visual[2][config::PlaceLinePixels/8+1]{};
+    wrapAsciiPlaceLine(logical,visual);
+    check(std::string(visual[0])==std::string(29,'x') &&
+          std::string(visual[1])==std::string(26,'x')+"...",
+          "long ASCII stays within two independent 29-cell visual rows");
+    wrapAsciiPlaceLine("New York State Administrative Region",visual);
+    check(!std::strcmp(visual[0],"New York State Administrative") &&
+          !std::strcmp(visual[1],"Region"),
+          "word boundary is preferred when the second visual row fits");
+    char display[config::PlaceCachedLineBytes]{};
+    fitPlaceDisplayLine(fifty_eight.c_str(),display,PlaceTextMode::Ascii8x16);
+    check(std::string(display)==std::string(26,'x')+"...",
+          "map and point views still shorten one-row ASCII names");
+    char names[2][config::PlaceCachedLineBytes]{};
+    std::strcpy(names[0],fifty_eight.c_str());std::strcpy(names[1],"Town");
+    check(liveAsciiWrapNeeded(names,PlaceTextMode::Ascii8x16) &&
+          !liveAsciiWrapNeeded(names,PlaceTextMode::Japanese16),
+          "only ASCII names in the non-Japanese Wordbook use Live's four-row layout");
+    const std::string twenty_kanji = [] {std::string value;for(int i=0;i<20;++i)value+="日";return value;}();
+    PlaceLineOutput japanese_logical(logical,sizeof(logical),PlaceTextMode::Japanese16,placeLogicalLinePixels());
+    japanese_logical.append(twenty_kanji);
+    check(!japanese_logical.full() && std::strcmp(logical,twenty_kanji.c_str())==0,
+          "Japanese logical row keeps more than Live's fourteen wide glyphs");
+    fitPlaceDisplayLine(logical,display,PlaceTextMode::Japanese16,true);
+    check(std::strcmp(display,twenty_kanji.c_str())==0,
+          "the map's 8x8 first row can display twenty Japanese glyphs");
+    fitPlaceDisplayLine(logical,display,PlaceTextMode::Japanese16);
+    check(std::string(display)==std::string("日日日日日日日日日日日..."),
+          "the 16x16 Japanese row clips independently of the map's 8x8 row");
     for(size_t i=std::strlen(direct)+1;i<sizeof(direct);++i)check(!direct[i],"clipped reply tail must stay empty");
     char unicode[config::PlaceResultLineBytes]{};PlaceLineOutput unicode_row(unicode,sizeof(unicode));
     unicode_row.append("千葉県");unicode_row.append(" ");unicode_row.append("習志野市");
@@ -80,7 +133,7 @@ void testPlace() {
     check(validUtf8(prefix) && prefix_row.full(),"byte capacity never publishes a split UTF-8 character");
     check(validUtf8("千葉県習志野市鷺沼二丁目") && validUtf8("髙﨑ｱA") && validUtf8("\xF0\x9F\x9A\x80"),
           "UTF-8 Japanese, compatibility characters, half-width kana, ASCII and supplementary characters");
-    char lines[2][64];
+    char lines[2][config::PlaceCachedLineBytes];
     for (const auto& bad : {std::string("\x81"), std::string("\x90\xE7\x97\x74"),
                            std::string("\xC0\xAF"), std::string("\xED\xA0\x80"), std::string("\xE3\x81"),
                            std::string("\xF4\x90\x80\x80"), std::string("\xF0\x80\x80\x80"),

@@ -8,7 +8,7 @@ import tempfile
 from PIL import Image, ImageDraw, ImageFont
 from ui_preview_support import ROOT, M5GFX, ADAPTER, reference_frame
 
-OUTPUT = ROOT / 'doc/画面・操作/usb-storage/export-proposal'
+OUTPUT = ROOT / 'doc/dev/画面・操作/usb-storage/export-proposal'
 SCENES = ('connected', 'disconnected', 'eject', 'files', 'format', 'progress', 'complete-connected', 'complete')
 LABELS = ('1  PC CONNECTED', '2  NO PC CONNECTION', '3  SAFE REMOVAL / CONNECTED ONLY',
           '4  SELECT LOG', '5  SELECT FORMAT', '6  EXPORTING',

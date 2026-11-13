@@ -40,7 +40,7 @@ class BenchmarkPreparationTests(unittest.TestCase):
     def test_diagnostic_config_leaves_normal_config_untouched(self):
         path=self.root/'platformio.ini';before=path.read_text()
         config=diagnostic_config(self.root,self.root/'.pio/test-probe')
-        self.assertIn('-DREVERSEGEOPUTER_DIAGNOSTICS=1',config)
+        self.assertIn('-DGEOPUTER_DIAGNOSTICS=1',config)
         self.assertIn('build_dir = .pio/test-probe/build',config)
         self.assertEqual(path.read_text(),before)
         for name in ('../application','/tmp/application','with space'):

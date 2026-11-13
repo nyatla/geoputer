@@ -7,7 +7,7 @@ root=Path(__file__).resolve().parents[1]
 p=argparse.ArgumentParser(description=__doc__)
 p.add_argument('map',type=Path);p.add_argument('book',type=Path)
 a=p.parse_args()
-with tempfile.TemporaryDirectory(prefix='reversegeoputer-map-files-') as directory:
+with tempfile.TemporaryDirectory(prefix='geoputer-map-files-') as directory:
     binary=Path(directory)/'map-tests'
     sources=['tests/map_file_tests.cpp','application/Settings.cpp',
         'application/task/storage/dataset/DatasetIndex.cpp','application/task/storage/dataset/DatasetMetadata.cpp',

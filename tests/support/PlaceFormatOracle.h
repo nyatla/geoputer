@@ -6,11 +6,14 @@
 #include <vector>
 #include <stdexcept>
 namespace geoputer {
-inline void formatPlaceLines(const std::vector<std::string>& components, char (&lines)[2][64],
-                      const PlaceDisplayFormat& format = {}) {
+inline void formatPlaceLines(const std::vector<std::string>& components,
+                      char (&lines)[2][config::PlaceCachedLineBytes],
+                      const PlaceDisplayFormat& format = {},
+                      PlaceTextMode mode = PlaceTextMode::Japanese16,
+                      unsigned max_pixels = config::PlaceLinePixels) {
     for (const auto& component : components)
         if (!validUtf8(component)) throw std::runtime_error("invalid UTF-8 place name");
-    PlaceLineBuilder rows[2];
+    PlaceLineBuilder rows[2] = {PlaceLineBuilder(mode,max_pixels), PlaceLineBuilder(mode,max_pixels)};
     if (format.specified) {
         for (unsigned row = 0; row < 2; ++row) {
             const auto pattern = format.line(row);

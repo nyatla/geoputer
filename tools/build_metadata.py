@@ -32,7 +32,7 @@ def write_metadata(path, root, now=None):
     values = collect_metadata(root, now)
     text = "// Generated at build time; do not edit.\n#pragma once\n"
     for key, value in values.items():
-        text += "#define REVERSEGEOPUTER_" + key.upper() + " " + json.dumps(value) + "\n"
+        text += "#define GEOPUTER_" + key.upper() + " " + json.dumps(value) + "\n"
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     if not path.exists() or path.read_text() != text:

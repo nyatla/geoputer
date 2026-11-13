@@ -9,7 +9,7 @@ using namespace geoputer;
 namespace {
 void check(bool value, const char* message) { if (!value) throw std::runtime_error(message); }
 
-void names(uint32_t code, char (&lines)[2][64]) {
+void names(uint32_t code, char (&lines)[2][config::PlaceCachedLineBytes]) {
     std::memset(lines, 0, sizeof(lines));
     std::snprintf(lines[0], sizeof(lines[0]), "県%lu", static_cast<unsigned long>(code));
     std::snprintf(lines[1], sizeof(lines[1]), "市%lu", static_cast<unsigned long>(code));
@@ -18,7 +18,7 @@ void names(uint32_t code, char (&lines)[2][64]) {
 
 void testWordBookCache() {
     WordBookCache cache;
-    char input[2][64], output[2][64]{};
+    char input[2][config::PlaceCachedLineBytes], output[2][config::PlaceCachedLineBytes]{};
     check(!cache.find(1, output) && cache.stats().entries == 0, "empty name cache misses");
     names(1, input);
     cache.remember(0, input);

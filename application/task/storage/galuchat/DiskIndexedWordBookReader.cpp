@@ -190,13 +190,14 @@ void planComponent(const DatasetWordBookIndex& info,const ScopedReaderSource& so
 unsigned DiskIndexedWordBookReader::pathDepth()const {return get16(info_.header.data()+Wordbook::Depth);}
 bool DiskIndexedWordBookReader::readPlaceLinesByCode(int64_t code,
     char (&lines)[2][config::PlaceResultLineBytes],const PlaceDisplayFormat& format,
-    WordBookWorkspace& scratch,BorrowedReadBuffer* work) const {
+    WordBookWorkspace& scratch,BorrowedReadBuffer* work,PlaceTextMode mode) const {
     std::memset(lines,0,sizeof(lines));if(code<=0)return false;
     check(uint64_t(code)<=get(info_.header.data()+Wordbook::RecordCount));
     const auto book=book_.borrow(work),index=index_.borrow(work);
     std::array<uint32_t,config::IndexMaxDepth> codes;
     const auto depth=readPath(info_,index,book,codes,static_cast<uint32_t>(code));
-    PlaceLineOutput rows[2]={{lines[0],sizeof(lines[0])},{lines[1],sizeof(lines[1])}};
+    PlaceLineOutput rows[2]={{lines[0],sizeof(lines[0]),mode,placeLogicalLinePixels()},
+                             {lines[1],sizeof(lines[1]),mode,placeLogicalLinePixels()}};
     if(format.specified) {
         for(unsigned line=0;line<2;++line) {
             const auto pattern=format.line(line);check(validPlaceFormat(pattern));

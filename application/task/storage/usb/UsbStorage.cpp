@@ -21,7 +21,7 @@ bool UsbStorage::begin(SPIClass& spi) {
     // The interface is already registered by setup; keep the medium absent
     // until the raw driver and callbacks are fully initialized.
     msc_ = &registerInterface();
-    msc_->vendorID("GeoPuter"); msc_->productID("SD Card"); msc_->productRevision("1.0");
+    msc_->vendorID("Geoputer"); msc_->productID("SD Card"); msc_->productRevision("1.0");
     msc_->onRead(read); msc_->onWrite(write); msc_->onStartStop(startStop);
     drive_ = initStorageCard(12, &spi, config::SdSpiHz);
     if (drive_ == 0xff || disk_initialize(drive_) != 0 || !(sectors_ = sdcard_num_sectors(drive_))) {

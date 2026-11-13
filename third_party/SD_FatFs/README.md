@@ -105,14 +105,14 @@ pio run -d third_party/SD_FatFs/examples/esp32_coexist
 - 専用版の公開シンボルが分離され、ESP32-S3で両方のヘッダ順序がビルドでき、ELFにSDK版と専用版の`f_open` / `f_read`が共存する。
 - ASan / UBSan付きホストテストが両方のインクルード順序で通る。ホスト64bit ABIの構造体サイズはESP32と異なる。
 
-Cardputer ADVの実SDで、SDK版と専用版を交互に使用する[読出し専用サンプル](examples/cardputer_sd_benchmark/src/main.cpp)も用意しています。N03 / estatのGLC・Wordbook・索引を対象とした360試行で、データと転送量の一致を確認しました。接続層の重複した状態取得を除去した最終版では通常読出しはほぼ同等で、同一セクタ内の1バイト反復は約1.9%増でした。[実機性能比較](../../doc/検証/SD専用FatFsの実機性能比較.md)に条件と数値を記録しています。
+Cardputer ADVの実SDで、SDK版と専用版を交互に使用する[読出し専用サンプル](examples/cardputer_sd_benchmark/src/main.cpp)も用意しています。N03 / estatのGLC・Wordbook・索引を対象とした360試行で、データと転送量の一致を確認しました。接続層の重複した状態取得を除去した最終版では通常読出しはほぼ同等で、同一セクタ内の1バイト反復は約1.9%増でした。[実機性能比較](../../doc/dev/検証/SD専用FatFsの実機性能比較.md)に条件と数値を記録しています。
 
 ```sh
 pio run -d third_party/SD_FatFs/examples/cardputer_sd_benchmark
 python3 third_party/SD_FatFs/examples/cardputer_sd_benchmark/summarize.py DEVICE.log
 ```
 
-このサンプルはCardputer ADVの配線と未使用LoRaのリセット保持を含みます。通常ファームを保存してから使用し、計測後に復元します。その後アプリへの接続切替と地図・索引処理の時間／メモリ比較を実施しました。[アプリの実機比較](../../doc/検証/固定FIL2枠とSD専用FatFsの実機比較.md)を参照してください。
+このサンプルはCardputer ADVの配線と未使用LoRaのリセット保持を含みます。通常ファームを保存してから使用し、計測後に復元します。その後アプリへの接続切替と地図・索引処理の時間／メモリ比較を実施しました。[アプリの実機比較](../../doc/dev/検証/固定FIL2枠とSD専用FatFsの実機比較.md)を参照してください。
 
 ## 上流ソースと更新手順
 

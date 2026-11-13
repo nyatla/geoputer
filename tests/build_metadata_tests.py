@@ -20,7 +20,7 @@ def git(repo, *args):
                           env=dict(os.environ, GIT_OPTIONAL_LOCKS="0")).stdout.strip()
 
 
-with tempfile.TemporaryDirectory(prefix="reversegeoputer-build-info-") as folder:
+with tempfile.TemporaryDirectory(prefix="geoputer-build-info-") as folder:
     work = Path(folder)
     archive = work / "archive"
     archive.mkdir()

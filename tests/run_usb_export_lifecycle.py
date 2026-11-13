@@ -3,7 +3,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 root=Path(__file__).resolve().parents[1]
-with tempfile.TemporaryDirectory(prefix="reversegeoputer-usb-export-") as directory:
+with tempfile.TemporaryDirectory(prefix="geoputer-usb-export-") as directory:
     binary=Path(directory)/"usb-export-tests"
     sources=["tests/usb_export_lifecycle_tests.cpp","application/apps/usb/UsbStorageTask.cpp",
              "application/task/storage/export/LogExporter.cpp","application/task/storage/log/LogReader.cpp",

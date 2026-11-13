@@ -2,7 +2,7 @@
 from pathlib import Path
 import subprocess,tempfile
 r=Path(__file__).resolve().parents[1]
-with tempfile.TemporaryDirectory(prefix='reversegeoputer-map-scale-') as d:
+with tempfile.TemporaryDirectory(prefix='geoputer-map-scale-') as d:
     binary=Path(d)/'map-scale'
     sources=['tests/map_scale_app_tests.cpp','application/MapView.cpp','application/task/ui/GpsUiModel.cpp',
              'application/task/ui/SettingsText.cpp','application/task/ui/LicenseText.cpp','application/Settings.cpp',

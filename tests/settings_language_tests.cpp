@@ -80,7 +80,7 @@ void testSettingsLanguage() {
           std::strcmp(settingsSystemLabel(UiLanguage::English,SettingsSystemResetRow),"Reset")==0 &&
           SettingsRootCount==6 && SettingsSystemCount==4,
           "System labels are localized");
-    check(std::strcmp(ProductName,"ReverseGeoputer")==0 && std::strlen(ApplicationVersion)>0,
+    check(std::strcmp(ProductName,"Geoputer")==0 && std::strlen(ApplicationVersion)>0,
           "About identifies the application separately from OSS licenses");
     for (auto language : {UiLanguage::Japanese,UiLanguage::English}) {
         GpsUiModel about;UiData info{};info.settings=defaultSettings();info.settings.language=language;

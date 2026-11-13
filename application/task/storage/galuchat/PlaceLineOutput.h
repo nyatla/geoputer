@@ -10,7 +10,9 @@ namespace geoputer {
 class PlaceEncodingError : public std::runtime_error {public: using std::runtime_error::runtime_error;};
 class PlaceLineOutput {
 public:
-    PlaceLineOutput(char* data,size_t capacity):data_(data),capacity_(capacity) {
+    PlaceLineOutput(char* data,size_t capacity,PlaceTextMode mode=PlaceTextMode::Japanese16,
+                    unsigned max_pixels=config::PlaceLinePixels)
+        :data_(data),capacity_(std::min(capacity,config::PlaceCachedLineBytes)),mode_(mode),max_pixels_(max_pixels) {
         if(!data || capacity<4)throw std::invalid_argument("place output capacity is too small");
         data_[0]='\0';
     }
@@ -35,11 +37,11 @@ public:
             }
             if(!validUtf8({data_+start+used,length}))throw PlaceEncodingError("invalid UTF-8 place name");
             const bool ascii=first<0x80;
-            if(pixels_+placeCharacterWidth(first)>config::PlaceLinePixels ||
+            if(pixels_+placeCharacterWidth(first,mode_)>max_pixels_ ||
                (ascii?ascii_>=config::PlaceAsciiLimit:wide_>=config::PlaceWideLimit)) {clip();return;}
-            pixels_+=placeCharacterWidth(first);bytes_+=length;used+=length;
+            pixels_+=placeCharacterWidth(first,mode_);bytes_+=length;used+=length;
             if(ascii)++ascii_;else ++wide_;
-            if(pixels_+48<=config::PlaceLinePixels && bytes_+3<capacity_)short_bytes_=bytes_;
+            if(pixels_+placeEllipsisWidth(mode_)<=max_pixels_ && bytes_+3<capacity_)short_bytes_=bytes_;
         }
         data_[bytes_]='\0';if(more)clip();
     }
@@ -47,5 +49,7 @@ private:
     void clip() {bytes_=short_bytes_;std::memcpy(data_+bytes_,"...",3);bytes_+=3;std::memset(data_+bytes_,0,capacity_-bytes_);clipped_=true;}
     char* data_;size_t capacity_,bytes_=0,short_bytes_=0;
     unsigned pixels_=0,ascii_=0,wide_=0;bool clipped_=false;
+    PlaceTextMode mode_;
+    unsigned max_pixels_;
 };
 } // namespace geoputer

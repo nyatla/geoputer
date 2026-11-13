@@ -2,7 +2,7 @@
 from pathlib import Path
 import subprocess,tempfile
 r=Path(__file__).resolve().parents[1]
-with tempfile.TemporaryDirectory(prefix='reversegeoputer-logger-app-') as d:
+with tempfile.TemporaryDirectory(prefix='geoputer-logger-app-') as d:
     sources=['tests/logger_app_tests.cpp','application/GpsApplication.cpp','application/DatasetBrowser.cpp','application/LogBrowser.cpp','application/Alarm.cpp','application/MapView.cpp','application/task/gps/GpsTask.cpp',
         'application/task/gps/GpsReceiver.cpp','application/task/gps/NmeaParser.cpp','application/task/ui/GpsUiModel.cpp',
         'application/task/ui/SettingsText.cpp','application/task/ui/LicenseText.cpp','application/Settings.cpp',

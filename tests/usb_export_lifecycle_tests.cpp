@@ -63,7 +63,7 @@ int main() {
     select(task);command(task,UsbActionKind::Start);task.stepExport();
     check(task.converting().exporter && task.converting().exporter->running(),"accepted conversion allocates a workspace lazily");
     // Use a real tiny binary log in a temporary directory for complete conversion.
-    char pattern[]="/tmp/reversegeoputer-export-lifecycle-XXXXXX";
+    char pattern[]="/tmp/geoputer-export-lifecycle-XXXXXX";
     const auto* directory=mkdtemp(pattern);check(directory,"create fixture directory");
     const std::filesystem::path root=directory;
     std::filesystem::create_directory(root/"logs");

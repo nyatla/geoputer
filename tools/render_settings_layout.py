@@ -242,7 +242,7 @@ int main(int argc,char** argv){
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--license-baseline", type=Path, help="Compare license frames captured before this change")
-    parser.add_argument("--output", type=Path, default=ROOT / "doc/画面・操作/settings")
+    parser.add_argument("--output", type=Path, default=ROOT / "doc/dev/画面・操作/settings")
     args = parser.parse_args()
     output = args.output
     output.mkdir(parents=True, exist_ok=True)

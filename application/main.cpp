@@ -23,7 +23,7 @@ void setup() {
     geoputer::Console.begin(115200);
     const bool usb_mode = mode == geoputer::BootMode::UsbStorage;
     usb_boot = usb_mode;wifi_boot=mode==geoputer::BootMode::WifiManagement;
-    USB.productName(usb_mode ? "GeoPuter SD" : "GeoPuter");
+    USB.productName(usb_mode ? "Geoputer SD" : "Geoputer");
     // Start the USB transport before display/SD initialization in both modes.
     // MSC initially reports no medium; Storage publishes it once SD is ready.
     if (usb_mode) {

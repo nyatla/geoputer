@@ -123,7 +123,7 @@ def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('map',type=Path);parser.add_argument('wordbook',type=Path)
     parser.add_argument('--scales',type=int,nargs='+',choices=(1,2,4),default=[1])
-    parser.add_argument('--output',type=Path,default=ROOT/'doc/画面・操作/place-view')
+    parser.add_argument('--output',type=Path,default=ROOT/'doc/dev/画面・操作/place-view')
     args=parser.parse_args()
     enum_source=(M5GFX/'v1/misc/enum.hpp').read_text()
     renderer_source=(ROOT/'application/task/ui/GpsUiRenderer.cpp').read_text()+(ROOT/'application/task/ui/UiCanvas.h').read_text()
@@ -137,7 +137,7 @@ def main():
         'task/storage/galuchat/MapSource.cpp','task/storage/galuchat/DiskIndexedMapReader.cpp',
         'task/storage/galuchat/DiskIndexedWordBookReader.cpp','task/storage/galuchat/TextEncoding.cpp',
         'task/storage/galuchat/PlaceLookup.cpp','task/storage/galuchat/CachedMapReader.cpp']
-    with tempfile.TemporaryDirectory(prefix='reversegeoputer-map-preview-') as folder:
+    with tempfile.TemporaryDirectory(prefix='geoputer-map-preview-') as folder:
         work=Path(folder);data=work/'data'/'01';data.mkdir(parents=True)
         shutil.copyfile(args.map,data/'map.glc');shutil.copyfile(args.wordbook,data/'names.giswordbook')
         (data/'dataset.ini').write_text('[dataset]\nversion=1\nmap=map.glc\ndefault_language=ja\n[ja]\ntitle=Preview\nwordbook=names.giswordbook\ndisplay_line1=%0 %1\ndisplay_line2=%2%3%4%5\n')
