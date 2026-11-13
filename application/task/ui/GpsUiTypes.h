@@ -38,7 +38,8 @@ struct UiAction {
     BrowseAction browse_action;
     DatasetAction dataset_action;
     DatasetPurpose dataset_purpose;
-    uint8_t dataset_number=0;
+    DatasetId dataset_id{};
+    uint16_t dataset_page=0;
     uint32_t browse_index, browse_revision;
     uint8_t map_scale;
     alarm::Settings alarm_settings{};

@@ -11,7 +11,8 @@ struct UiMapResources {
 };
 struct UiDatasetResources {
     DatasetPurpose purpose=DatasetPurpose::Select;
-    uint8_t dialog_number=0,list_start=0;
+    DatasetId dialog_id{},list_start{};
+    uint16_t page=0;
     char edit_original[config::DatasetLanguageBytes]{};
 };
 struct UiSettingsResources {

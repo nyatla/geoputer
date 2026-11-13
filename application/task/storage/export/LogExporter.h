@@ -7,7 +7,7 @@ namespace geoputer {
 // Storage-owned streaming converter. No full-log buffer and no task/queue.
 class LogExporter {
 public:
-    explicit LogExporter(std::string root="/sd", uint64_t byte_limit=UINT32_MAX)
+    explicit LogExporter(std::string root=config::DataRoot, uint64_t byte_limit=UINT32_MAX)
         : root_(std::move(root)), byte_limit_(byte_limit) {}
     void setDrive(uint8_t drive) { drive_=drive; input_.setDrive(drive); output_.setDrive(drive); }
     bool begin(const char* name, ExportFormat format);

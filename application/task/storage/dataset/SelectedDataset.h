@@ -14,7 +14,7 @@ struct SelectedDataset {
     SelectedDataset()=default;
     SelectedDataset(const SelectedDataset&)=delete;
     SelectedDataset& operator=(const SelectedDataset&)=delete;
-    uint8_t number=0;
+    DatasetId id{};
     char language[config::DatasetLanguageBytes]{};
     char map_name[config::DatasetFilenameBytes]{},wordbook_name[config::DatasetFilenameBytes]{};
     PlaceDisplayFormat display;
@@ -35,7 +35,7 @@ struct SelectedDataset {
     }
     FileReadPath file(DatasetFile kind,std::string_view root=config::DatasetRoot)const {
         const char* name=kind==DatasetFile::Map?map_name:kind==DatasetFile::Wordbook?wordbook_name:"_mapindex.dat";
-        return FileReadPath::dataset(number,name,root);
+        return FileReadPath::dataset(id.view(),name,root);
     }
     void clearPrepared() {
         map_name[0]=wordbook_name[0]='\0';display={};map_index={};book_index={};

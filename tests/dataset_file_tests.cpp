@@ -15,7 +15,7 @@ std::vector<uint8_t> oversizedMapFixture(unsigned count);
 namespace {void check(bool ok,const char* text){if(!ok)throw std::runtime_error(text);}}
 void testDatasetFiles(const std::string& temporary,const std::string& map,const std::string& book) {
     const auto root=fs::path(temporary)/"catalog";const auto dataset_root=root.string();fs::create_directories(root);
-    auto manifest=[&](unsigned number,const std::string& text){char name[12];std::snprintf(name,sizeof(name),"%02u",number);const auto dir=root/name;fs::create_directories(dir);std::ofstream(dir/"dataset.ini")<<text;return dir;};
+    auto manifest=[&](unsigned number,const std::string& text){char name[12];std::snprintf(name,sizeof(name),"a%02u",number);const auto dir=root/name;fs::create_directories(dir);std::ofstream(dir/"dataset.ini")<<text;return dir;};
     const std::string ini="[dataset]\nversion=1\nmap=map.glc\ndefault_language=ja\n[ja]\ntitle=日本\ndescription=市区町村\nwordbook=ja.giswordbook\n[en]\ntitle=Japan\nwordbook=en.giswordbook\n";
     auto dir=manifest(1,ini);
     fs::copy_file(map,dir/"map.glc");fs::copy_file(book,dir/"ja.giswordbook");
@@ -24,26 +24,26 @@ void testDatasetFiles(const std::string& temporary,const std::string& map,const 
     fs::copy_file(book,dir/"en.giswordbook");
     {std::ofstream(dir/"unselected.glc")<<"invalid";std::ofstream(dir/"unselected.giswordbook")<<"invalid";}
     for(unsigned n:{2u,10u,21u,55u,99u})manifest(n,ini);
-    fs::create_directories(root/"00");fs::create_directories(root/"100");fs::create_directories(root/"abc");
+    fs::create_directories(root/"00");fs::create_directories(root/"A100");fs::create_directories(root/"a--bad");
     test_storage::Resources catalog_resources;
     DatasetCatalog catalog(dataset_root,nullptr,0,&catalog_resources.files,&catalog_resources.work);DatasetRequest request{};request.action=DatasetAction::Open;
     auto list=catalog.read(request,UiLanguage::English);
-    check(list.count==4 && list.rows[0].number==0 && list.rows[3].number==10 && list.has_newer && !list.has_older,"numeric ID list is ordered, bounded and paginated without opening GLCs");
+    check(list.count==4 && !list.rows[0].id && list.rows[3].id.view()=="a10" && list.has_newer && !list.has_older,"named ID list is ordered, bounded and paginated without opening GLCs");
     check(!std::strcmp(list.rows[1].title,"Japan"),"catalog chooses the UI title independently");
-    request.action=DatasetAction::Newer;request.number=10;list=catalog.read(request,UiLanguage::English);
-    check(list.count==3 && list.rows[0].number==21 && list.rows[2].number==99 && list.has_older && !list.has_newer,"second page skips sparse IDs and excludes 00/100/abc");
-    request.action=DatasetAction::Older;request.number=55;list=catalog.read(request,UiLanguage::Japanese);
-    check(list.count==4 && list.rows[0].number==1 && list.selected==3,"previous page restores the preceding selection");
+    request.action=DatasetAction::Newer;request.id.assign("a10");list=catalog.read(request,UiLanguage::English);
+    check(list.count==3 && list.rows[0].id.view()=="a21" && list.rows[2].id.view()=="a99" && list.has_older && !list.has_newer,"second page skips sparse IDs and invalid names");
+    request.action=DatasetAction::Older;request.id.assign("a21");request.page=1;list=catalog.read(request,UiLanguage::Japanese);
+    check(list.count==4 && !list.rows[0].id && list.selected==3,"previous page restores the preceding selection");
     for(const auto purpose:{DatasetPurpose::Rebuild,DatasetPurpose::Verify}) {
         request={};request.action=DatasetAction::Open;request.purpose=purpose;
         list=catalog.read(request,UiLanguage::English);
-        check(list.purpose==purpose && list.count==4 && list.rows[0].number==1 && list.rows[3].number==21,"maintenance lists omit None and read metadata only, even where data files are absent");
+        check(list.purpose==purpose && list.count==4 && list.rows[0].id.view()=="a01" && list.rows[3].id.view()=="a21","maintenance lists omit None and read metadata only, even where data files are absent");
     }
-    manifest(99,"broken metadata");request={};request.action=DatasetAction::Open;request.number=99;
+    manifest(99,"broken metadata");request={};request.action=DatasetAction::Open;request.id.assign("a99");
     list=catalog.read(request,UiLanguage::English);
     check(list.count==1 && list.rows[0].error!=DatasetError::None,"known bad metadata is exposed on the row for pre-emptive disabling");
     manifest(99,ini);
-    request={};request.action=DatasetAction::Detail;request.number=1;
+    request={};request.action=DatasetAction::Detail;request.id.assign("a01");
     auto detail=catalog.read(request,UiLanguage::English);
     check(detail.error==DatasetError::None && detail.detail && detail.info.chunks>0 && detail.info.chunks<=1500 && detail.info.unit_inv_x && detail.info.east>detail.info.west,"real GLC supplies resolution/coverage/chunk count");
     check(!std::strcmp(detail.info.language,"ja") && !std::strcmp(detail.info.title,"Japan"),"first choice defaults to dataset language, not UI language");
@@ -58,7 +58,7 @@ void testDatasetFiles(const std::string& temporary,const std::string& map,const 
         {
             StorageIndexLease lease(images.map,screens);check(bool(lease),"candidate can borrow the existing 96KiB");
             DatasetCatalog borrowed(dataset_root,nullptr,0,&files,lease.work());
-            DatasetView received{};DatasetRequest query{};query.action=DatasetAction::Detail;query.number=1;
+            DatasetView received{};DatasetRequest query{};query.action=DatasetAction::Detail;query.id.assign("a01");
             candidate_heap::calls=candidate_heap::bytes=0;candidate_heap::track=true;
             borrowed.readInto(query,UiLanguage::English,received);candidate_heap::track=false;
             check(received.error==DatasetError::None && !candidate_heap::calls && !lease.work()->inUse() && !files.inUse(),
@@ -71,7 +71,7 @@ void testDatasetFiles(const std::string& temporary,const std::string& map,const 
             check(received.error==DatasetError::None && !candidate_heap::calls && !std::strcmp(received.info.language,"en") &&
                   !lease.work()->inUse() && !files.inUse(),"language candidate checks use the same zero-allocation SD path");
             // A bad candidate cannot retain either FIL or borrowed buffer.
-            query.number=2;query.action=DatasetAction::Detail;
+            query.id.assign("a02");query.action=DatasetAction::Detail;
             borrowed.readInto(query,UiLanguage::Japanese,received);
             check(received.error==DatasetError::Missing && !lease.work()->inUse() && !files.inUse(),"missing candidate returns all borrowed resources");
         }
@@ -81,14 +81,14 @@ void testDatasetFiles(const std::string& temporary,const std::string& map,const 
     }
     fs::remove(dir/"en.giswordbook");request.action=DatasetAction::Detail;std::strcpy(request.language,"en");
     check(catalog.read(request,UiLanguage::Japanese).error==DatasetError::Missing,"missing selected Wordbook does not fall back to another file");
-    CodeCacheBuffer lookup_pixels{};SelectedDataset lookup_dataset;test_storage::Lookup lookup(lookup_pixels,lookup_dataset,0,dataset_root);lookup.configure(1,"ja");
+    CodeCacheBuffer lookup_pixels{};SelectedDataset lookup_dataset;test_storage::Lookup lookup(lookup_pixels,lookup_dataset,"",dataset_root);lookup.configure("a01","ja");
     check(lookup.prepare().state==PlaceState::DataError,"missing saved index is a dataset error without automatic generation");
     test_index::generate(dir.string(),"map.glc","ja.giswordbook");lookup.close();
     check(lookup.prepare().state==PlaceState::Ready && lookup.selectedLanguage()=="ja","strict manifest tolerates unselected extra files");
     PlaceRequest point{1,1,{35.681641,140.027194,1000,true}};
     check(lookup.search(point).state==PlaceState::Ready && lookup.wordBookCacheStats().entries==1,"configured production lookup resolves coordinates and fills its caches");
     const auto before=lookup.cacheStats();
-    DatasetRequest missing{};missing.action=DatasetAction::Detail;missing.number=2;
+    DatasetRequest missing{};missing.action=DatasetAction::Detail;missing.id.assign("a02");
     check(catalog.read(missing,UiLanguage::Japanese).error==DatasetError::Missing &&
           lookup.search(point).state==PlaceState::Ready && lookup.cacheStats().fills==before.fills,
           "candidate failure leaves the active lookup and its cached image usable");
@@ -102,19 +102,19 @@ void testDatasetFiles(const std::string& temporary,const std::string& map,const 
         std::ofstream output(dir/"en.giswordbook",std::ios::binary|std::ios::trunc);
         output.write(bytes.data(),bytes.size());
     }
-    request.action=DatasetAction::Apply;request.number=1;std::strcpy(request.language,"en");
+    request.action=DatasetAction::Apply;request.id.assign("a01");std::strcpy(request.language,"en");
     check(catalog.read(request,UiLanguage::Japanese).error==DatasetError::None &&
           lookup.search(point).state==PlaceState::Ready && lookup.cacheStats().fills==before.fills,
           "opaque metadata does not reject a candidate or disturb the active UTF-8 caches");
     lookup.close();
     manifest(1,ini+"display_line1=%1%2%3%4\ndisplay_line2=%0 %%\n");
-    lookup.configure(1,"ja");
+    lookup.configure("a01","ja");
     const auto defaults=lookup.search(point);
     check(defaults.state==PlaceState::Ready && !std::strcmp(defaults.lines[0],"千葉県 習志野市"),
           "unselected English format does not affect the selected Japanese Wordbook");
     const auto ja_end=ini.find("[en]");
     manifest(1,ini.substr(0,ja_end)+"display_line1=%1%2%3%4\ndisplay_line2=%0 %%\n"+ini.substr(ja_end));
-    lookup.configure(1,"ja");
+    lookup.configure("a01","ja");
     const auto formatted=lookup.search(point);
     check(formatted.state==PlaceState::Ready && !std::strcmp(formatted.lines[0],"習志野市") &&
           !std::strcmp(formatted.lines[1],"千葉県 %"), "real dictionary fields expand into the configured final two rows");

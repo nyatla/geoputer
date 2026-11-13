@@ -23,8 +23,8 @@ public:
 };
 class Lookup:private Resources,public geoputer::PlaceLookup {
 public:
-    Lookup(geoputer::CodeCacheBuffer& pixels,geoputer::SelectedDataset& selected,uint8_t number=0,std::string_view root=geoputer::config::DatasetRoot)
-        :geoputer::PlaceLookup(pixels,selected,number,root) {setFiles(&files);}
+    Lookup(geoputer::CodeCacheBuffer& pixels,geoputer::SelectedDataset& selected,std::string_view id={},std::string_view root=geoputer::config::DatasetRoot)
+        :geoputer::PlaceLookup(pixels,selected,id,root) {setFiles(&files);}
     geoputer::PlaceResult prepare() {geoputer::PlaceResult result;prepareInto(result,work.available());return result;}
     geoputer::PlaceResult search(const geoputer::PlaceRequest& request) {
         geoputer::PlaceResult result;searchInto(request,result,work.available(),&words);return result;

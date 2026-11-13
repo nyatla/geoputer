@@ -19,10 +19,10 @@ class ReadFileSlots;
 class PlaceLookup {
 public:
     // root is a borrowed filesystem fixture prefix; production uses DatasetRoot.
-    PlaceLookup(CodeCacheBuffer& pixels,SelectedDataset& selected,uint8_t number=0,std::string_view root=config::DatasetRoot)
+    PlaceLookup(CodeCacheBuffer& pixels,SelectedDataset& selected,std::string_view id={},std::string_view root=config::DatasetRoot)
         :pixels_(pixels),selected_(selected),root_(root) {
-        selected_.number=number;
-        selected_.info.state=!number?PlaceState::Unselected:number<=99?PlaceState::Waiting:PlaceState::MetadataError;
+        const bool valid=selected_.id.assign(id);
+        selected_.info.state=id.empty()?PlaceState::Unselected:valid?PlaceState::Waiting:PlaceState::MetadataError;
     }
     PlaceLookup(const PlaceLookup&) = delete;
     PlaceLookup& operator=(const PlaceLookup&) = delete;
@@ -30,7 +30,7 @@ public:
     void setObserver(StorageObserver* observer) { observer_ = observer; }
     void searchInto(const PlaceRequest& request,PlaceResult& result,BorrowedReadBuffer* work,WordBookWorkspace* scratch);
     void observeAlarmInto(const PlaceRequest&,PlaceResult&,const alarm::Settings&,BorrowedReadBuffer*);
-    void configure(uint8_t number,std::string_view language = ""); // Zero disables lookup without file I/O.
+    void configure(std::string_view id,std::string_view language = ""); // Empty ID disables lookup.
     void setDrive(uint8_t drive) { drive_=drive; }
     std::string_view selectedLanguage() const { return selected_.language; }
     void prepareInto(PlaceResult& result,BorrowedReadBuffer* work);

@@ -39,8 +39,8 @@ ExportSnapshot run(LogExporter& exporter,const char* name,ExportFormat format) {
 }
 }
 void testExport() {
-    check(fatFsPath(0,"/sd/logs/a.gps.dat").view()=="0:/logs/a.gps.dat" &&
-          fatFsPath(12,"/sd/dataset/01/日本.glc").view()=="12:/dataset/01/日本.glc",
+    check(fatFsPath(0,"/sd/geoputer/logs/a.gps.dat").view()=="0:/geoputer/logs/a.gps.dat" &&
+          fatFsPath(12,"/sd/geoputer/dataset/01/日本.glc").view()=="12:/geoputer/dataset/01/日本.glc",
           "shared native path conversion retains drive, directories and UTF-8 bytes");
     check(fatFsPath(255,"/sd/"+std::string(250,'x')).view()=="255:/"+std::string(250,'x') &&
           fatFsPath(0,"/sd/").view()=="0:/", "native path assembly preserves 255-byte boundary, full drive range and root");

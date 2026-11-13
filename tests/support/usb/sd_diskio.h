@@ -13,14 +13,3 @@ inline bool sdcard_mount(uint8_t,const char*,uint8_t,bool format) {
     usb_test::registered=usb_test::mounted=true;++usb_test::mounts;return true;
 }
 inline uint8_t sdcard_unmount(uint8_t) {usb_test::mounted=false;return 0;} // VFS registration deliberately remains.
-inline bool sd_read_raw(uint8_t,uint8_t* out,uint32_t sector) {
-    if(usb_test::on_read)usb_test::on_read();
-    ++usb_test::reads;
-    if(!usb_test::driver || usb_test::mounted || sector>=3)return false;
-    std::memcpy(out,usb_test::disk.data()+sector*512,512);return true;
-}
-inline bool sd_write_raw(uint8_t,uint8_t* in,uint32_t sector) {
-    ++usb_test::writes;
-    if(!usb_test::driver || usb_test::mounted || sector>=3)return false;
-    std::memcpy(usb_test::disk.data()+sector*512,in,512);return true;
-}

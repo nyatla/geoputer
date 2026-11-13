@@ -1,6 +1,6 @@
 # 実機用マップセット
 
-`mapsets/<識別名>/`はCardputerのSDカードへコピーするためのデータセットである。識別名は配布時の管理用であり、端末の番号ではない。各セットには次の実行用ファイルだけを置く。
+`mapsets/<識別名>/`はCardputerのSDカードへコピーするためのデータセットである。識別名を端末でもそのまま使う。各セットには次の実行用ファイルだけを置く。
 
 ```text
 dataset.ini
@@ -13,8 +13,8 @@ GLCは対応するSDKリリースのうち、ヘッダーの `unit_inv_x`・`uni
 
 e-Stat 2020はrev2の地図と4階層 `subdiv` の日本語・英字Wordbookを使う。3階層辞書は収録しない。
 
-端末は `/sd/dataset/01/`〜`/sd/dataset/99/` を認識する。利用する際は空いている番号を決め、選んだセットの**中身**をその番号のディレクトリへコピーする。番号の事前割当は行わない。設定画面でデータセットを適用すると、端末が `_mapindex.dat` を生成する。元リリースと利用条件は[構築元一覧](../../tools/mapsets_sources.tsv)からSDKの対応ZIPにたどれる。
+端末は `/sd/geoputer/dataset/<識別名>/` を認識する。識別名は小文字ASCIIで始まり、小文字・数字・ハイフンのみを使う1〜15文字とし、ハイフンの連続・末尾使用は認めない。`mapsets/<識別名>/` をSDカードの`/geoputer/dataset/<識別名>/`へコピーする。設定画面でデータセットを適用すると、端末が `_mapindex.dat` を生成する。元リリースと利用条件は[構築元一覧](../../tools/mapsets_sources.tsv)からSDKの対応ZIPにたどれる。
 
 再生成はリポジトリのルートから `python3 tools/build_mapsets_from_sdk.py --output <空の出力先> --selection-manifest <選定一覧の出力先>` で行う。`mapsets/` の現物はこのスクリプトで生成する。
 
-配布時は[ローカルリリースの作成](release.md)に従い、マップセットごとに1つのZIPを作る。各ZIPには、そのマップに対応するすべてのWordbookを同梱する。
+配布時は[ローカルリリースの作成](release.md)に従い、マップセットごとに1つのZIPを作る。各ZIPには、そのマップに対応するすべてのWordbookとREADME・NOTICEをディレクトリを設けず直下に同梱する。展開後のディレクトリ名を識別名として、SDカードの`/geoputer/dataset/`へコピーできる。

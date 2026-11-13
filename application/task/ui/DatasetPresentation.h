@@ -28,7 +28,7 @@ inline DatasetError datasetMenuBlock(const UiData& data,unsigned row) {
 inline DatasetError datasetRowBlock(const UiData& data,unsigned row) {
     if(row>=data.datasets().count) return DatasetError::Missing;
     const auto& entry=data.datasets().rows[row];
-    if(!entry.number) {
+    if(!entry.id) {
         const auto reason=datasetSelectionBlock(data,false);
         return reason!=DatasetError::None?reason:!data.settings.dataset?DatasetError::AlreadyUnselected:DatasetError::None;
     }

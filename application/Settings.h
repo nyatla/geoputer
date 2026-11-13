@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include "Config.h"
+#include "DatasetId.h"
 #include "power/PowerManager.h"
 
 namespace geoputer {
@@ -20,7 +21,7 @@ struct Settings {
     uint8_t flush_interval;
     uint8_t screen_timeout;
     uint8_t brightness;
-    uint8_t dataset; // 0: unselected; 1..99: dataset directory number.
+    uint8_t dataset; // Selection state only. Storage owns the directory ID.
     uint8_t gps_mode;
     UiLanguage language;
     char wordbook_language[config::DatasetLanguageBytes]{}; // Empty means the dataset default at first boot.
@@ -35,7 +36,8 @@ constexpr unsigned FlushIntervals[] = {1, 5, 10, 30, 60};
 constexpr unsigned ScreenTimeouts[] = {5, 15, 30, 60, 0};
 constexpr unsigned Brightnesses[] = {20, 40, 60, 80, 100};
 constexpr size_t LegacySettingsRecordSize = 16;
-constexpr size_t SettingsRecordSize = 48;
+constexpr size_t PreviousSettingsRecordSize = 48;
+constexpr size_t SettingsRecordSize = 64;
 static_assert(config::DatasetLanguageBytes == 32, "NVS version 3 reserves 32 bytes for the language ID");
 bool validDatasetLanguage(std::string_view value, bool allow_empty = false);
 bool validDatasetLanguage(const char* value, bool allow_empty = false);
@@ -45,7 +47,10 @@ uint8_t settingValue(const Settings& value, unsigned index);
 bool setSettingValue(Settings& value, unsigned index, uint8_t choice);
 unsigned settingChoices(unsigned index);
 bool sameSettings(const Settings& a, const Settings& b);
-void encodeSettings(const Settings& value, uint8_t (&record)[SettingsRecordSize]);
-bool decodeSettings(const uint8_t* record, size_t size, Settings& value);
+void encodeSettings(const Settings& value, const DatasetId& id, uint8_t (&record)[SettingsRecordSize]);
+bool decodeSettings(const uint8_t* record, size_t size, Settings& value, DatasetId& id);
+inline bool decodeSettings(const uint8_t* record, size_t size, Settings& value) {
+    DatasetId unused{};return decodeSettings(record,size,value,unused);
+}
 
 }  // namespace geoputer

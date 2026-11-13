@@ -33,29 +33,29 @@ struct Activity : StorageObserver {
     void cacheState(RgCacheState state, bool) override { cache=state; ++transitions; }
 };
 void testMissingCacheRelease(const fs::path& root,const fs::path& map,const fs::path& book) {
-    const auto dataset_root=(root/"missing-index").string();const auto directory=fs::path(dataset_root)/"01";fs::create_directories(directory);
+    const auto dataset_root=(root/"missing-index").string();const auto directory=fs::path(dataset_root)/"a01";fs::create_directories(directory);
     fs::copy_file(map,directory/"map.glc");fs::copy_file(book,directory/"names.giswordbook");
     std::ofstream(directory/"dataset.ini")<<"[dataset]\nversion=1\nmap=map.glc\ndefault_language=ja\n[ja]\ntitle=Test\nwordbook=names.giswordbook\n";
     SettingsStore store;check(store.begin(),"real-file test NVS opens");
     StorageSnapshot state{};state.settings=defaultSettings();state.settings.dataset=1;std::strcpy(state.settings.wordbook_language,"ja");
-    check(store.save(state.settings),"selection persisted before cache removal");
-    Activity activity;CodeCacheBuffer lookup_pixels{};SelectedDataset lookup_dataset;test_storage::Lookup lookup(lookup_pixels,lookup_dataset,0,dataset_root);lookup.setObserver(&activity);lookup.configure(1,"ja");
+    DatasetId id{};id.assign("a01");check(store.save(state.settings,id),"selection persisted before cache removal");
+    Activity activity;CodeCacheBuffer lookup_pixels{};SelectedDataset lookup_dataset;test_storage::Lookup lookup(lookup_pixels,lookup_dataset,"",dataset_root);lookup.setObserver(&activity);lookup.configure("a01","ja");
     const auto failed=lookup.prepare();check(failed.state==PlaceState::DataError,"missing saved index fails startup preparation");
     check(releaseUnusableDataset(store,state,failed.state),"failed startup clears selected dataset");
-    lookup.configure(0);const auto accesses=activity.accesses;
+    lookup.configure("");const auto accesses=activity.accesses;
     for(unsigned n=0;n<3;++n)check(lookup.prepare().state==PlaceState::Unselected && lookup.search({}).state==PlaceState::Unselected,
         "released dataset no longer tries to reopen missing index");
     check(activity.accesses==accesses && lookup.cacheStats().bytes==0,"automatic release performs no later dataset I/O and retains no raster");
     Settings restored{};SettingsStore reboot;check(reboot.begin() && reboot.load(restored)==SettingsState::Loaded && !restored.dataset,
         "a reboot after missing cache restores None");
-    CodeCacheBuffer next_boot_pixels{};SelectedDataset next_boot_dataset;test_storage::Lookup next_boot(next_boot_pixels,next_boot_dataset,0,dataset_root);next_boot.setObserver(&activity);next_boot.configure(restored.dataset?1:0);
+    CodeCacheBuffer next_boot_pixels{};SelectedDataset next_boot_dataset;test_storage::Lookup next_boot(next_boot_pixels,next_boot_dataset,"",dataset_root);next_boot.setObserver(&activity);next_boot.configure(restored.dataset?"a01":"");
     check(next_boot.prepare().state==PlaceState::Unselected && activity.accesses==accesses,"next boot skips broken dataset completely");
     test_index::generate(directory.string(),"map.glc","names.giswordbook");
     check(reboot.load(restored)==SettingsState::Loaded && !restored.dataset,"cache regeneration does not select the repaired dataset");
-    lookup.configure(1,"ja");check(lookup.prepare().state==PlaceState::Ready,"explicit selection can use the repaired index");
+    lookup.configure("a01","ja");check(lookup.prepare().state==PlaceState::Ready,"explicit selection can use the repaired index");
 }
 void testLiveDatasetSwitch(const fs::path& root,const fs::path& map,const fs::path& book) {
-    const auto dataset_root=(root/"live").string();const auto first=fs::path(dataset_root)/"01",second=fs::path(dataset_root)/"02";
+    const auto dataset_root=(root/"live").string();const auto first=fs::path(dataset_root)/"a01",second=fs::path(dataset_root)/"a02";
     for(const auto& directory:{first,second}) {
         fs::create_directories(directory);
         const std::string map_name=directory==first?"first.glc":"second.glc",book_name=directory==first?"first.giswordbook":"second.giswordbook";
@@ -64,24 +64,24 @@ void testLiveDatasetSwitch(const fs::path& root,const fs::path& map,const fs::pa
             <<(directory==first?"FIRST %0":"SECOND %1%2%3%4")<<"\ndisplay_line2=\n";
         test_index::generate(directory.string(),map_name,book_name);
     }
-    Activity activity;CodeCacheBuffer lookup_pixels{};SelectedDataset lookup_dataset;test_storage::Lookup lookup(lookup_pixels,lookup_dataset,0,dataset_root);lookup.setObserver(&activity);
+    Activity activity;CodeCacheBuffer lookup_pixels{};SelectedDataset lookup_dataset;test_storage::Lookup lookup(lookup_pixels,lookup_dataset,"",dataset_root);lookup.setObserver(&activity);
     PlaceRequest request{7,31,{35.681641,140.027194,1000,true}};
-    lookup.configure(1,"ja");
+    lookup.configure("a01","ja");
     check(lookup.prepare().state==PlaceState::Ready && !std::strcmp(lookup.search(request).lines[0],"FIRST 千葉県"),
           "first selected dataset fills the raster and formatted name caches");
     const auto first_generation=lookup.datasetInfo().generation;
-    lookup.configure(2,"ja");
+    lookup.configure("a02","ja");
     check(lookup.datasetInfo().state==PlaceState::Waiting && lookup.datasetInfo().generation>first_generation &&
           !lookup.cacheStats().bytes && !lookup.wordBookCacheStats().entries && activity.cache==RgCacheState::Unprepared,
           "live selection releases both caches and advances the dataset generation before search");
     check(lookup.prepare().state==PlaceState::Ready && !std::strcmp(lookup.search(request).lines[0],"SECOND 習志野市"),
           "same running lookup resolves the new dataset without stale formatted text");
     const auto second_generation=lookup.datasetInfo().generation;
-    lookup.configure(2,"ja");
+    lookup.configure("a02","ja");
     check(lookup.datasetInfo().generation>second_generation && !lookup.cacheStats().bytes && !lookup.wordBookCacheStats().entries &&
           lookup.prepare().state==PlaceState::Ready && !std::strcmp(lookup.search(request).lines[0],"SECOND 習志野市"),
           "same-selection reapplication also reopens readers and repopulates caches");
-    lookup.configure(0);check(lookup.prepare().state==PlaceState::Unselected && !lookup.cacheStats().bytes,
+    lookup.configure("");check(lookup.prepare().state==PlaceState::Unselected && !lookup.cacheStats().bytes,
           "live clear closes readers without restarting the lookup object");
 }
 void testMapCache();
@@ -99,11 +99,11 @@ int main(int argc, char** argv) {
         testMapCache();
         testMapCacheFile(argv[2],argv[3],argv[1]);
         const fs::path root(argv[1]);
-        const auto data = root / "dataset/01";const auto dataset_root=(root/"dataset").string();
+        const auto data = root / "dataset/a01";const auto dataset_root=(root/"dataset").string();
         PlaceRequest request{7, 31, {35.681641, 140.027194, 1000, true}};
         Activity activity;
         {
-            CodeCacheBuffer disabled_pixels{};SelectedDataset disabled_dataset;test_storage::Lookup disabled(disabled_pixels,disabled_dataset,0,dataset_root);disabled.setObserver(&activity);disabled.configure(0);
+            CodeCacheBuffer disabled_pixels{};SelectedDataset disabled_dataset;test_storage::Lookup disabled(disabled_pixels,disabled_dataset,"",dataset_root);disabled.setObserver(&activity);disabled.configure("");
             const auto accesses=activity.accesses;
             const auto generation=disabled.datasetInfo().generation;
             for(unsigned i=0;i<3;++i) {
@@ -113,12 +113,12 @@ int main(int argc, char** argv) {
             }
             check(activity.accesses==accesses && disabled.cacheStats().bytes==0 && disabled.selectedLanguage().empty() &&
                   disabled.datasetInfo().generation>generation,"unselected performs no file I/O or raster allocation, including remount/recheck");
-            disabled.configure(1);
+            disabled.configure("a01");
             check(disabled.prepare().state==PlaceState::DatasetMissing && activity.accesses>accesses,"explicit selection re-enables dataset validation");
-            disabled.configure(0);
+            disabled.configure("");
             check(disabled.prepare().state==PlaceState::Unselected,"unselection clears even a latched dataset fault");
         }
-        CodeCacheBuffer lookup_pixels{};SelectedDataset lookup_dataset;test_storage::Lookup lookup(lookup_pixels,lookup_dataset,1,dataset_root);
+        CodeCacheBuffer lookup_pixels{};SelectedDataset lookup_dataset;test_storage::Lookup lookup(lookup_pixels,lookup_dataset,"a01",dataset_root);
         lookup.setObserver(&activity);
         check(lookup.prepare().state == PlaceState::DatasetMissing, "startup detects missing dataset without GPS");
         check(lookup.search(request).state == PlaceState::DatasetMissing, "missing dataset");

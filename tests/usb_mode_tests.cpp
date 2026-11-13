@@ -156,8 +156,8 @@ void exportUi() {
 void blocks() {
     std::array<uint8_t,1536> disk{}, expected{}; uint8_t scratch[512]; unsigned reads=0,writes=0;
     for (unsigned n=0;n<disk.size();++n) disk[n]=static_cast<uint8_t>(n*31u);
-    auto read=[&](uint8_t* p,uint32_t sector){++reads;if(sector>=3)return false;std::memcpy(p,disk.data()+sector*512,512);return true;};
-    auto write=[&](const uint8_t* p,uint32_t sector){++writes;if(sector>=3)return false;std::memcpy(disk.data()+sector*512,p,512);return true;};
+    auto read=[&](uint8_t* p,uint32_t sector,uint32_t count){++reads;if(!count || sector>=3 || count>3-sector)return false;std::memcpy(p,disk.data()+sector*512,count*512);return true;};
+    auto write=[&](const uint8_t* p,uint32_t sector,uint32_t count){++writes;if(!count || sector>=3 || count>3-sector)return false;std::memcpy(disk.data()+sector*512,p,count*512);return true;};
     std::array<uint8_t,1200> data{};
     check(transferUsbBlocks(3,0,500,data.data(),800,false,read,write,scratch)==800 &&
           !std::memcmp(data.data(),disk.data()+500,800), "cross-sector unaligned reads preserve byte order");
@@ -172,7 +172,7 @@ void blocks() {
     check(transferUsbBlocks(3,3,0,nullptr,0,false,read,write,scratch)==0, "empty I/O at the end is bounded");
     check(transferUsbBlocks(3,0,0,data.data(),512,true,read,write,scratch)==512 && !reads && writes==1,
           "full-sector writes require no read-modify-write");
-    auto failRead=[](uint8_t*,uint32_t){return false;}; auto failWrite=[](const uint8_t*,uint32_t){return false;};
+    auto failRead=[](uint8_t*,uint32_t,uint32_t){return false;}; auto failWrite=[](const uint8_t*,uint32_t,uint32_t){return false;};
     check(transferUsbBlocks(3,0,0,data.data(),512,false,failRead,write,scratch)==-1, "read failures propagate");
     check(transferUsbBlocks(3,0,0,data.data(),512,true,read,failWrite,scratch)==-1, "write failures propagate");
     uint32_t random=91;
@@ -185,6 +185,22 @@ void blocks() {
         check(transferUsbBlocks(3,start/512,start%512,data.data(),count,writing,read,write,scratch)==static_cast<int32_t>(count), "random block transfer completes");
         check(writing?disk==expected:!std::memcmp(data.data(),expected.data()+start,count), "block transfers match the reference byte array");
     }
+    std::array<uint8_t,4096> bulkDisk{},bulkData{};
+    unsigned bulkReads=0,bulkWrites=0;
+    auto bulkRead=[&](uint8_t* p,uint32_t sector,uint32_t count){
+        ++bulkReads;check(sector==0 && count==8,"aligned read uses one eight-sector operation");
+        std::memcpy(p,bulkDisk.data(),bulkDisk.size());return true;
+    };
+    auto bulkWrite=[&](const uint8_t* p,uint32_t sector,uint32_t count){
+        ++bulkWrites;check(sector==0 && count==8,"aligned write uses one eight-sector operation");
+        std::memcpy(bulkDisk.data(),p,bulkDisk.size());return true;
+    };
+    for(unsigned n=0;n<bulkData.size();++n)bulkData[n]=static_cast<uint8_t>(n*17u);
+    check(transferUsbBlocks(8,0,0,bulkData.data(),bulkData.size(),true,bulkRead,bulkWrite,scratch)==4096 &&
+          bulkDisk==bulkData && bulkReads==0 && bulkWrites==1,"4 KiB write uses the MSC buffer directly");
+    bulkData.fill(0);
+    check(transferUsbBlocks(8,0,0,bulkData.data(),bulkData.size(),false,bulkRead,bulkWrite,scratch)==4096 &&
+          bulkDisk==bulkData && bulkReads==1 && bulkWrites==1,"4 KiB read uses the MSC buffer directly");
 }
 }
 void testUsbMode() { persistence(); ui(); exportUi(); blocks(); }

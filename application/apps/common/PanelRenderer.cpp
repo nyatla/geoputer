@@ -89,7 +89,7 @@ void PanelRenderer::drawUsb(const UsbUiModel& model) {
     } else if(page==UsbPage::Complete) {
         shell("EXPORT");text(sd_icon::HeaderRight-24,8,exportFormatName(job.format),TFT_CYAN);
         large(12,31,ja?"書き出し完了":"Export complete",TFT_GREEN);
-        text(12,55,"/export/",TFT_LIGHTGREY);
+        text(12,55,"/geoputer/export/",TFT_LIGHTGREY);
         char name[ExportNameBytes];std::snprintf(name,sizeof(name),"%s%s",job.name,exportExtension(job.format));
         std::snprintf(line,sizeof(line),"%.29s",name);text(4,69,line);
         if(std::strlen(name)>29)text(4,79,name+29);

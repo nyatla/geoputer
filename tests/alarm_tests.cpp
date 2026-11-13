@@ -54,52 +54,51 @@ void soundTests() {
 uint32_t fileCrc(const uint8_t* p,size_t count) {uint32_t c=~0u;while(count--){c^=*p++;for(int i=0;i<8;++i)c=(c>>1)^(0xedb88320u&uint32_t(-int32_t(c&1)));}return ~c;}
 void checksum(uint8_t (&b)[AlarmFile::Bytes]) {const auto c=fileCrc(b,60);for(unsigned i=0;i<4;++i)b[60+i]=c>>(8*i);}
 void fileTests(const char* root) {
-    namespace fs=std::filesystem;fs::create_directories(fs::path(root)/"01");ReadFileSlot slot;
-    AlarmFile file(0,slot,nullptr,root);auto p=file.load(1,4,123);
-    check(p.state==alarm::State::Created && !p.settings.enabled && fs::file_size(fs::path(root)/"01/_alert.dat")==64,"missing profile creates fixed OFF file");
-    p.settings.enabled=true;p.settings.duration=4;check(file.save(p),"profile transactional save");
-    auto loaded=file.load(1,4,123);check(loaded.state==alarm::State::Ready && alarm::same(loaded.settings,p.settings),"profile round trip");
+    namespace fs=std::filesystem;fs::create_directories(fs::path(root)/"jp-test");ReadFileSlot slot;
+    AlarmFile file(0,slot,nullptr,root);auto p=file.load("jp-test",4,123);
+    check(p.state==alarm::State::Created && !p.settings.enabled && fs::file_size(fs::path(root)/"jp-test/_alert.dat")==64,"missing profile creates fixed OFF file");
+    p.settings.enabled=true;p.settings.duration=4;check(file.save(p,"jp-test"),"profile transactional save");
+    auto loaded=file.load("jp-test",4,123);check(loaded.state==alarm::State::Ready && alarm::same(loaded.settings,p.settings),"profile round trip");
     uint8_t encoded[AlarmFile::Bytes];AlarmFile::encode(p,encoded);
     for(unsigned i=0;i<sizeof(encoded);++i) {encoded[i]^=1;auto bad=p;check(!AlarmFile::decode(encoded,bad),"any damaged byte fails checksum or header");encoded[i]^=1;}
     for(unsigned version:{1u,2u})for(unsigned judgement=0;judgement<3;++judgement) {
         AlarmFile::encode(p,encoded);encoded[4]=version;encoded[13]=3;encoded[14]=judgement;encoded[15]=version==1?5:0;checksum(encoded);
-        {std::ofstream out(fs::path(root)/"01/_alert.dat",std::ios::binary|std::ios::trunc);out.write(reinterpret_cast<char*>(encoded),sizeof(encoded));}
-        auto legacy=file.load(1,4,123);
+        {std::ofstream out(fs::path(root)/"jp-test/_alert.dat",std::ios::binary|std::ios::trunc);out.write(reinterpret_cast<char*>(encoded),sizeof(encoded));}
+        auto legacy=file.load("jp-test",4,123);
         check(legacy.state==alarm::State::Ready && legacy.settings.judgement==static_cast<alarm::Judgement>(judgement) &&
               legacy.settings.enabled==p.settings.enabled && legacy.settings.tone==p.settings.tone,"v1 preserves notification/tone and maps the three judgement choices");
-        std::ifstream in(fs::path(root)/"01/_alert.dat",std::ios::binary);in.read(reinterpret_cast<char*>(encoded),sizeof(encoded));
-        check(encoded[4]==3 && encoded[13]==0 && encoded[15]==0 && AlarmFile::decode(encoded,legacy),"legacy migration publishes valid version 3 with removed hierarchy and width fields zero");
+        std::ifstream in(fs::path(root)/"jp-test/_alert.dat",std::ios::binary);in.read(reinterpret_cast<char*>(encoded),sizeof(encoded));
+        check(encoded[4]==4 && encoded[13]==0 && encoded[15]==0 && AlarmFile::decode(encoded,legacy),"legacy migration publishes valid version 4 with removed hierarchy and width fields zero");
     }
     encoded[15]=1;checksum(encoded);auto badReserved=p;check(!AlarmFile::decode(encoded,badReserved),"v3 rejects a nonzero removed-width field even with valid CRC");
-    auto changed=file.load(1,3,456);check(changed.state==alarm::State::Repaired && !changed.settings.enabled,"replaced dataset or mismatched Wordbook metadata use the corrupt/OFF policy");
-    {std::ofstream bad(fs::path(root)/"01/_alert.dat",std::ios::binary|std::ios::trunc);bad<<"broken";}
-    auto repaired=file.load(1,3,456);check(repaired.state==alarm::State::Repaired && !repaired.settings.enabled,"truncated file reports repair and generates OFF");
-    check(file.load(1,3,456).state==alarm::State::Ready,"repair leaves a valid new file");
-    fs::create_directory(fs::path(root)/"01/_alert.tmp");
-    repaired.settings.enabled=true;check(!file.save(repaired),"failed staging save is reported");
-    fs::remove(fs::path(root)/"01/_alert.tmp");check(!file.load(1,3,456).settings.enabled,"failed save preserves previous OFF file");
-    fs::remove(fs::path(root)/"01/_alert.dat");fs::create_directory(fs::path(root)/"01/_alert.dat");
-    auto inaccessible=file.load(1,3,456);check(inaccessible.state==alarm::State::IoError && fs::is_directory(fs::path(root)/"01/_alert.dat"),"unreadable/non-file path is not deleted");
-    check(file.load(2,3,456).state==alarm::State::IoError,"missing dataset directory is unavailable, not fabricated");
+    auto changed=file.load("jp-test",3,456);check(changed.state==alarm::State::Repaired && !changed.settings.enabled,"replaced dataset or mismatched Wordbook metadata use the corrupt/OFF policy");
+    {std::ofstream bad(fs::path(root)/"jp-test/_alert.dat",std::ios::binary|std::ios::trunc);bad<<"broken";}
+    auto repaired=file.load("jp-test",3,456);check(repaired.state==alarm::State::Repaired && !repaired.settings.enabled,"truncated file reports repair and generates OFF");
+    check(file.load("jp-test",3,456).state==alarm::State::Ready,"repair leaves a valid new file");
+    fs::create_directory(fs::path(root)/"jp-test/_alert.tmp");
+    repaired.settings.enabled=true;check(!file.save(repaired,"jp-test"),"failed staging save is reported");
+    fs::remove(fs::path(root)/"jp-test/_alert.tmp");check(!file.load("jp-test",3,456).settings.enabled,"failed save preserves previous OFF file");
+    fs::remove(fs::path(root)/"jp-test/_alert.dat");fs::create_directory(fs::path(root)/"jp-test/_alert.dat");
+    auto inaccessible=file.load("jp-test",3,456);check(inaccessible.state==alarm::State::IoError && fs::is_directory(fs::path(root)/"jp-test/_alert.dat"),"unreadable/non-file path is not deleted");
+    check(file.load("jp-missing",3,456).state==alarm::State::IoError,"missing dataset directory is unavailable, not fabricated");
 }
 uint32_t hash(const uint8_t* p,size_t n){uint32_t v=2166136261u;for(size_t i=0;i<n;++i)v=(v^p[i])*16777619u;return v;}
 void settingsTests() {
     auto s=defaultSettings();s.dataset=1;std::strcpy(s.wordbook_language,"ja");s.volume=4;
-    uint8_t b[SettingsRecordSize];encodeSettings(s,b);Settings result{};
-    check(decodeSettings(b,sizeof(b),result) && result.volume==4,"volume persists in NVS v5");
+    DatasetId id{};id.assign("jp-test");uint8_t b[SettingsRecordSize];encodeSettings(s,id,b);Settings result{};DatasetId restored{};
+    check(decodeSettings(b,sizeof(b),result,restored) && result.volume==4 && restored==id,"volume and ID persist in NVS v6");
     for(auto level:{power::Level::None,power::Level::Normal,power::Level::Maximum}){
-        s.power_level=level;encodeSettings(s,b);
-        check(decodeSettings(b,sizeof(b),result) && result.power_level==level && result.volume==4,"power and volume share byte without changing record length");
+        s.power_level=level;encodeSettings(s,id,b);
+        check(decodeSettings(b,sizeof(b),result,restored) && result.power_level==level && result.volume==4 && restored==id,"power and volume share byte");
     }
-    s.power_level=power::Level::None;encodeSettings(s,b);
-    b[2]=4;b[3]=8;auto v4sum=hash(b,sizeof(b)-4);for(unsigned i=0;i<4;++i)b[sizeof(b)-4+i]=v4sum>>(8*i);
-    check(decodeSettings(b,sizeof(b),result) && result.power_level==power::Level::None && result.volume==4,"v4 migration preserves volume and defaults power to None");
-    b[2]=5;b[3]=SettingCount;b[11]=0x18;auto invalid=hash(b,sizeof(b)-4);for(unsigned i=0;i<4;++i)b[sizeof(b)-4+i]=invalid>>(8*i);
+    s.power_level=power::Level::None;encodeSettings(s,id,b);
+    b[11]=0x18;auto invalid=hash(b,sizeof(b)-4);for(unsigned i=0;i<4;++i)b[sizeof(b)-4+i]=invalid>>(8*i);
     check(!decodeSettings(b,sizeof(b),result),"reject reserved power level");
     b[11]=0x20;invalid=hash(b,sizeof(b)-4);for(unsigned i=0;i<4;++i)b[sizeof(b)-4+i]=invalid>>(8*i);
     check(!decodeSettings(b,sizeof(b),result),"reject reserved upper bits");
-    b[2]=3;b[3]=7;b[11]=0;auto crc=hash(b,sizeof(b)-4);for(unsigned i=0;i<4;++i)b[sizeof(b)-4+i]=crc>>(8*i);
-    check(decodeSettings(b,sizeof(b),result) && result.volume==defaultSettings().volume && result.dataset==1,"v3 migration retains dataset/language and defaults volume");
+    encodeSettings(s,id,b);uint8_t legacy[PreviousSettingsRecordSize];std::memcpy(legacy,b,sizeof(legacy));
+    legacy[2]=5;legacy[8]=1;auto crc=hash(legacy,sizeof(legacy)-4);for(unsigned i=0;i<4;++i)legacy[sizeof(legacy)-4+i]=crc>>(8*i);
+    check(decodeSettings(legacy,sizeof(legacy),result,restored) && result.volume==4 && !result.dataset && restored.empty(),"v5 migration clears numeric selection and retains volume");
 }
 void uiTests() {
     UiData data{};data.settings=defaultSettings();data.settings.dataset=1;data.dataset.state=PlaceState::Ready;

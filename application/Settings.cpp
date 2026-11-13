@@ -19,7 +19,7 @@ bool validDatasetLanguage(std::string_view value, bool allow_empty) {
     return true;
 }
 unsigned settingChoices(unsigned index) {
-    constexpr unsigned counts[] = {2, 3, 5, 5, 5, 100, 5, 3, 2};
+    constexpr unsigned counts[] = {2, 3, 5, 5, 5, 2, 5, 3, 2};
     return index < SettingCount ? counts[index] : 0;
 }
 uint8_t settingValue(const Settings& v, unsigned index) {
@@ -51,37 +51,46 @@ static uint32_t checksum(const uint8_t* bytes,size_t size) {
     for(size_t i=0;i<size;++i) hash=(hash^bytes[i])*16777619u;
     return hash;
 }
-void encodeSettings(const Settings& v,uint8_t (&record)[SettingsRecordSize]) {
+void encodeSettings(const Settings& v,const DatasetId& id,uint8_t (&record)[SettingsRecordSize]) {
     for(auto& byte:record) byte=0;
-    record[0]='G';record[1]='P';record[2]=5;record[3]=SettingCount;
+    record[0]='G';record[1]='P';record[2]=6;record[3]=SettingCount;
     for(unsigned i=0;i<5;++i) record[4+i]=settingValue(v,i+1);
     record[9]=v.gps_mode;record[11]=v.volume|((unsigned(v.power_level)-1)<<3);
     record[10]=static_cast<uint8_t>(v.language);
     std::memcpy(record+12,v.wordbook_language,config::DatasetLanguageBytes);
+    if(v.dataset)std::memcpy(record+44,id.name,sizeof(id.name));
     const auto hash=checksum(record,SettingsRecordSize-4);
     for(unsigned i=0;i<4;++i) record[SettingsRecordSize-4+i]=static_cast<uint8_t>(hash>>(8*i));
 }
-bool decodeSettings(const uint8_t* record,size_t size,Settings& value) {
-    if(!record || (size!=SettingsRecordSize && size!=LegacySettingsRecordSize) || record[0]!='G' || record[1]!='P' || (record[2]<4 && record[11])) return false;
+bool decodeSettings(const uint8_t* record,size_t size,Settings& value,DatasetId& id) {
+    if(!record || (size!=SettingsRecordSize && size!=PreviousSettingsRecordSize && size!=LegacySettingsRecordSize) || record[0]!='G' || record[1]!='P' || (record[2]<4 && record[11])) return false;
     const bool old=size==LegacySettingsRecordSize;
-    if(old ? !((record[2]==1 && record[3]==6 && record[10]==0) || (record[2]==2 && record[3]==7)) : !((record[2]==3 && record[3]==7) || (record[2]==4 && record[3]==8) || (record[2]==5 && record[3]==SettingCount))) return false;
+    if(old ? !((record[2]==1 && record[3]==6 && record[10]==0) || (record[2]==2 && record[3]==7)) :
+       size==PreviousSettingsRecordSize ? !((record[2]==3 && record[3]==7) || (record[2]==4 && record[3]==8) || (record[2]==5 && record[3]==SettingCount)) :
+       !(record[2]==6 && record[3]==SettingCount)) return false;
     uint32_t hash=0;
     for(unsigned i=0;i<4;++i) hash|=static_cast<uint32_t>(record[size-4+i])<<(8*i);
     if(hash!=checksum(record,size-4)) return false;
     Settings candidate=defaultSettings();
+    DatasetId selected{};
     for(unsigned i=0;i<6;++i) {
-        if(old && i==4) { if(record[8]>=3) return false; candidate.dataset=1; continue; } // Old values were unused mode indices, never folder IDs.
+        if(old && i==4) { if(record[8]>=3) return false; continue; }
+        if(i==4 && size!=SettingsRecordSize)continue; // Numeric folders cannot identify a named mapset.
         if(!setSettingValue(candidate,i==5?static_cast<unsigned>(SettingId::GpsMode):i+1,record[4+i])) return false;
     }
     if(record[2]!=1 && !setSettingValue(candidate,0,record[10])) return false;
-    if(!old) std::memcpy(candidate.wordbook_language,record+12,config::DatasetLanguageBytes);
+    if(size==SettingsRecordSize) {
+        std::memcpy(candidate.wordbook_language,record+12,config::DatasetLanguageBytes);
+        std::memcpy(selected.name,record+44,sizeof(selected.name));
+        if(!selected.valid(true) || bool(candidate.dataset)!=bool(selected))return false;
+    }
     if(record[2]>=4) {
-        if(record[2]==5 && (record[11]&0xe0))return false;
-        if(!setSettingValue(candidate,static_cast<unsigned>(SettingId::Volume),record[2]==5?record[11]&7:record[11]))return false;
-        if(record[2]==5 && !setSettingValue(candidate,static_cast<unsigned>(SettingId::PowerSaving),record[11]>>3))return false;
+        if(record[2]>=5 && (record[11]&0xe0))return false;
+        if(!setSettingValue(candidate,static_cast<unsigned>(SettingId::Volume),record[2]>=5?record[11]&7:record[11]))return false;
+        if(record[2]>=5 && !setSettingValue(candidate,static_cast<unsigned>(SettingId::PowerSaving),record[11]>>3))return false;
     }
     if(!validSettings(candidate)) return false;
-    value=candidate;
+    value=candidate;id=selected;
     return true;
 }
 } // namespace geoputer

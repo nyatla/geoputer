@@ -100,19 +100,20 @@ void GpsStorageTask::configureDataset() {
 
     state_.alarm={};
     gpsState().screen_resources_.clearMaps();
-    gpsState().place_lookup_.configure(state_.settings.dataset,
+    gpsState().place_lookup_.configure(gpsState().selected_dataset_.id.view(),
                             state_.settings.wordbook_language);
 }
 
 void GpsStorageTask::releaseDataset(PlaceState reason) {
     if (!releaseUnusableDataset(settings_store_, state_, reason)) return;
+    gpsState().selected_dataset_.id = {};
     configureDataset();
-    Console.printf("[DATASET RELEASE] number=%02u reason=%s saved=%u\n",state_.dataset_failure.number,
+    Console.printf("[DATASET RELEASE] reason=%s saved=%u\n",
                    placeStateName(reason),!state_.dataset_failure.save_failed);
 }
 
 bool GpsStorageTask::loadSettings() {
-    state_.settings_state = settings_store_.load(state_.settings);
+    state_.settings_state = settings_store_.load(state_.settings,gpsState().selected_dataset_.id);
     configureDataset();
     if (state_.settings_state != SettingsState::Loaded && state_.settings_state != SettingsState::Defaults) {
         state_.nvs_error = state_.error = -20;
@@ -122,18 +123,23 @@ bool GpsStorageTask::loadSettings() {
     return true;
 }
 
-bool GpsStorageTask::saveSettings(const Settings& value) {
+bool GpsStorageTask::saveSettings(const Settings& value,const DatasetId* id) {
     // One versioned, checked record; never clear the namespace or the NVS partition.
-    if (!settings_store_.save(value)) {
+    const DatasetId& selected=id?*id:gpsState().selected_dataset_.id;
+    if (!settings_store_.save(value,selected)) {
         state_.settings_state = SettingsState::Failed;
         state_.nvs_error = state_.error = -21;
         return false;
     }
     const bool selection_changed = state_.settings.dataset != value.dataset ||
+        gpsState().selected_dataset_.id!=selected ||
         std::strcmp(state_.settings.wordbook_language, value.wordbook_language);
     state_.settings = value;
     state_.dataset_failure.save_failed = false;
-    if (selection_changed) configureDataset();
+    if (selection_changed) {
+        gpsState().place_lookup_.configure(selected.view(),value.wordbook_language);
+        state_.alarm={};gpsState().screen_resources_.clearMaps();
+    }
     state_.settings_state = SettingsState::Saved;
     state_.nvs_error = 0;
     return true;
@@ -267,7 +273,7 @@ void GpsStorageTask::sendReturn() {
 
 void GpsStorageTask::completeDatasetJob() {
     auto& view=*datasetResultMemory(gpsState().dataset_request_);
-    view={};view.purpose=gpsState().dataset_request_.purpose;view.number=gpsState().dataset_request_.number;
+    view={};view.purpose=gpsState().dataset_request_.purpose;view.id=gpsState().dataset_request_.id;
     const bool listing=gpsState().dataset_request_.action==DatasetAction::Open || gpsState().dataset_request_.action==DatasetAction::Older || gpsState().dataset_request_.action==DatasetAction::Newer;
     const bool maintenance=gpsState().dataset_request_.action==DatasetAction::RebuildIndex || gpsState().dataset_request_.action==DatasetAction::VerifyIndex;
     const bool clearing = gpsState().dataset_request_.action == DatasetAction::Clear;
@@ -277,7 +283,7 @@ void GpsStorageTask::completeDatasetJob() {
     if (applying && gpsState().log_writer_.hasRetainedSession()) view.error = DatasetError::NotStopped;
     else if (clearing) {
         clearDatasetSelection(view);
-    } else if (maintenance && (!gpsState().dataset_request_.number || gpsState().dataset_request_.number>99)) view.error = DatasetError::Unselected;
+    } else if (maintenance && !gpsState().dataset_request_.id) view.error = DatasetError::Unselected;
     else if(listing && gpsState().dataset_request_.purpose==DatasetPurpose::Select && (!mounted_ || state_.card_state!=CardState::Mounted)) view.count=1;
     else if (!mounted_ || state_.card_state != CardState::Mounted) view.error = DatasetError::Missing;
     else if(maintenance) {
@@ -287,7 +293,12 @@ void GpsStorageTask::completeDatasetJob() {
         else {
             StorageIndexLease workspace(gpsState().code_images_.map,gpsState().screen_resources_);
             if(!workspace){view.detail=true;view.error=DatasetError::Busy;}
-            else DatasetCatalog(config::DatasetRoot,this,drive_,&work().files(),workspace.work()).readInto(gpsState().dataset_request_,state_.settings.language,view);
+            else {
+                DatasetRequest lookup=gpsState().dataset_request_;
+                if(lookup.id==gpsState().selected_dataset_.id)
+                    std::memcpy(lookup.language,state_.settings.wordbook_language,sizeof(lookup.language));
+                DatasetCatalog(config::DatasetRoot,this,drive_,&work().files(),workspace.work()).readInto(lookup,state_.settings.language,view);
+            }
         }
     }
     if(state_.card_state!=CardState::Mounted) releaseDataset(PlaceState::NoCard);
@@ -316,15 +327,16 @@ void GpsStorageTask::clearDatasetSelection(DatasetView& view) {
     Settings candidate = gpsState().dataset_request_.reset_settings ? defaultSettings() : state_.settings;
     candidate.dataset = 0;
     std::memset(candidate.wordbook_language, 0, sizeof(candidate.wordbook_language));
-    if (!saveSettings(candidate)) view.error = DatasetError::SaveFailed;
+    const DatasetId none{};
+    if (!saveSettings(candidate,&none)) view.error = DatasetError::SaveFailed;
 }
 
 void GpsStorageTask::maintainDatasetIndex(DatasetView& view) {
     StorageIndexLease workspace(gpsState().code_images_.map,gpsState().screen_resources_);
     if(!workspace){view.error=DatasetError::Busy;return;}
-    const bool active=gpsState().dataset_request_.number==state_.settings.dataset;
+    const bool active=gpsState().dataset_request_.id==gpsState().selected_dataset_.id;
     if(active)gpsState().place_lookup_.close();
-    const auto directory=DatasetCatalog{}.directory(gpsState().dataset_request_.number);
+    const auto directory=DatasetCatalog{}.directory(gpsState().dataset_request_.id.view());
     DatasetMetadata metadata;
     readDatasetMetadataInto(directory.view(),state_.settings.language,"",metadata,this);
     view.error=metadata.error;
@@ -335,34 +347,32 @@ void GpsStorageTask::maintainDatasetIndex(DatasetView& view) {
             index.verifyAgainstDataset(directory.view(),metadata);
     }
     if(active && view.error!=DatasetError::None)releaseDataset(datasetErrorState(view.error));
-    Console.printf("[DATASET CACHE] action=%s target=%02u result=%u elapsed_ms=%lu\n",
-        gpsState().dataset_request_.action==DatasetAction::RebuildIndex?"REBUILD":"VERIFY",gpsState().dataset_request_.number,
+    Console.printf("[DATASET CACHE] action=%s target=%s result=%u elapsed_ms=%lu\n",
+        gpsState().dataset_request_.action==DatasetAction::RebuildIndex?"REBUILD":"VERIFY",gpsState().dataset_request_.id.c_str(),
         static_cast<unsigned>(view.error),static_cast<unsigned long>(taskTimeMs()-gpsState().index_started_at_));
 }
 
 void GpsStorageTask::applyDatasetSelection(DatasetView& view) {
     Settings candidate = gpsState().dataset_request_.reset_settings ? defaultSettings() : state_.settings;
-    candidate.dataset = gpsState().dataset_request_.number;
+    candidate.dataset = 1;
     std::snprintf(candidate.wordbook_language, sizeof(candidate.wordbook_language), "%s", view.info.language);
-    const auto directory = DatasetCatalog{}.directory(candidate.dataset);
+    const auto directory = DatasetCatalog{}.directory(gpsState().dataset_request_.id.view());
     DatasetMetadata metadata;
     readDatasetMetadataInto(directory.view(),candidate.language,candidate.wordbook_language,metadata,this);
     if (metadata.error != DatasetError::None) view.error = metadata.error;
     else {
         StorageIndexLease workspace(gpsState().code_images_.map,gpsState().screen_resources_);
         if(!workspace){view.error=DatasetError::Busy;return;}
-        struct ApplyContext { GpsStorageTask* task; const Settings* settings; } context{this, &candidate};
+        struct ApplyContext { GpsStorageTask* task; const Settings* settings; const DatasetId* id; } context{this, &candidate,&gpsState().dataset_request_.id};
         const auto index_started = taskTimeMs();
-        Console.printf("[DATASET INDEX] generating %02u lang=%s\n", candidate.dataset, candidate.wordbook_language);
+        Console.printf("[DATASET INDEX] generating %s lang=%s\n", gpsState().dataset_request_.id.c_str(), candidate.wordbook_language);
         view.error = DatasetIndex(drive_, this,indexProgress,this,&work().files(),workspace.work()).apply(directory.view(), metadata, [](void* pointer) {
             const auto& apply = *static_cast<ApplyContext*>(pointer);
-            return apply.task->saveSettings(*apply.settings);
+            return apply.task->saveSettings(*apply.settings,apply.id);
         }, &context);
         Console.printf("[DATASET INDEX] result=%u elapsed_ms=%lu\n", static_cast<unsigned>(view.error),
                        static_cast<unsigned long>(taskTimeMs() - index_started));
     }
-    if (view.error == DatasetError::None)
-        gpsState().place_lookup_.configure(candidate.dataset, candidate.wordbook_language);
 }
 
 void GpsStorageTask::completeJob() {
@@ -693,14 +703,14 @@ void GpsStorageTask::loadAlarmProfile() {
     for(auto b:gpsState().selected_dataset_.map_index.header)identity=(identity^b)*16777619u;
     for(auto b:gpsState().selected_dataset_.book_index.header)identity=(identity^b)*16777619u;
     const auto depth=get16(gpsState().selected_dataset_.book_index.header.data()+Wordbook::Depth);
-    state_.alarm=AlarmFile(drive_,work().files().primary(),this).load(gpsState().selected_dataset_.number,depth,identity);
+    state_.alarm=AlarmFile(drive_,work().files().primary(),this).load(gpsState().selected_dataset_.id.view(),depth,identity);
     state_.alarm.revision=revision;
-    Console.printf("[ALARM] dataset=%02u depth=%u state=%s enabled=%u\n",state_.alarm.dataset,state_.alarm.depth,alarm::stateName(state_.alarm.state),state_.alarm.settings.enabled);
+    Console.printf("[ALARM] dataset=%s depth=%u state=%s enabled=%u\n",gpsState().selected_dataset_.id.c_str(),state_.alarm.depth,alarm::stateName(state_.alarm.state),state_.alarm.settings.enabled);
 }
 bool GpsStorageTask::saveAlarmProfile() {
     if(state_.card_state!=CardState::Mounted || !state_.alarm.usable() || job_.alarm_identity!=state_.alarm.identity || job_.settings.dataset!=state_.settings.dataset || !alarm::valid(job_.alarm_settings,state_.alarm.depth))return false;
     auto next=state_.alarm;next.settings=job_.alarm_settings;
-    if(!AlarmFile(drive_,work().files().primary(),this).save(next)) {
+    if(!AlarmFile(drive_,work().files().primary(),this).save(next,gpsState().selected_dataset_.id.view())) {
         state_.alarm.settings.enabled=false;state_.alarm.state=alarm::State::IoError;++state_.alarm.revision;return false;
     }
     next.state=alarm::State::Ready;++next.revision;state_.alarm=next;return true;

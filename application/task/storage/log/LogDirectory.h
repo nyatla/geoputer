@@ -16,7 +16,10 @@ public:
     bool fits(std::string_view name)const {return TemporaryPath::fits({root_,"/",name});}
     TemporaryPath path(std::string_view name)const {return TemporaryPath({root_,"/",name});}
     [[gnu::noinline]] DIR* open()const {return opendir(TemporaryPath(root_).c_str());}
-    [[gnu::noinline]] bool ensure()const {return !mkdir(TemporaryPath(root_).c_str(),0775) || errno==EEXIST;}
+    [[gnu::noinline]] bool ensure()const {
+        if(root_==config::LogDirectory && mkdir(config::DataRoot,0775) && errno!=EEXIST)return false;
+        return !mkdir(TemporaryPath(root_).c_str(),0775) || errno==EEXIST;
+    }
     [[gnu::noinline]] FILE* openStream(std::string_view name)const {return std::fopen(path(name).c_str(),"rb");}
     [[gnu::noinline]] int stat(std::string_view name,struct stat& result)const {return ::stat(path(name).c_str(),&result);}
     [[gnu::noinline]] int remove(std::string_view name)const {return std::remove(path(name).c_str());}

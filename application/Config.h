@@ -32,7 +32,8 @@ inline constexpr uint8_t UiColorDepth = 4;       // 16-color palette; 16 selects
 inline constexpr uint32_t SdSpiHz = 25'000'000; // Requested SD SPI limit; current 80MHz APB divider selects 20MHz. Shared by all SD paths.
 inline constexpr uint8_t SdMaxOpenFiles = 3;     // VFS descriptors for metadata/browsing; native FIL loans are separate.
 
-inline constexpr char LogDirectory[] = "/sd/logs"; // Fixed firmware log directory.
+inline constexpr char DataRoot[] = "/sd/geoputer"; // All GeoPuter-owned SD files live below this directory.
+inline constexpr char LogDirectory[] = "/sd/geoputer/logs";
 inline constexpr size_t TemporaryPathBytes = 256; // Full temporary UTF-8 path, including the terminating NUL.
 
 // Galuchat resource limits and access tuning. These are firmware settings;
@@ -68,7 +69,7 @@ inline constexpr uint8_t MapViewScale = 1; // Boot scale; Map +/- selects 1, 2, 
 inline constexpr unsigned MapCursorRadius = 32; // Display pixels in each direction from the committed map center.
 inline constexpr uint32_t MapViewRetryMs = 1000;
 inline constexpr bool MapHeapDiagnostics = DetailedDiagnostics; // Phase snapshots; no extra map buffers or sampling task.
-inline constexpr char DatasetRoot[] = "/sd/dataset/"; // Firmware root; not stored in the selected session.
+inline constexpr char DatasetRoot[] = "/sd/geoputer/dataset/"; // Firmware root; not stored in the selected session.
 inline constexpr size_t DatasetFilenameBytes = 128; // UTF-8 filename including extension and terminating NUL.
 inline constexpr size_t DatasetLineBytes = 256;  // 255 UTF-8 bytes plus NUL.
 inline constexpr size_t DatasetLanguageBytes = 32;

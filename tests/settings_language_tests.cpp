@@ -23,8 +23,8 @@ void testSettingsLanguage() {
     Settings restored{};
     check(decodeSettings(legacy, sizeof(legacy), restored) && restored.language == UiLanguage::Japanese &&
           restored.log_interval == 2 && restored.flush_interval == 4 && restored.screen_timeout == 3 &&
-          restored.brightness == 4 && restored.dataset == 1 && restored.gps_mode == 0,
-          "v1 NVS fixture restores all six original fields and adds Japanese without resetting settings");
+          restored.brightness == 4 && restored.dataset == 0 && restored.gps_mode == 0,
+          "v1 NVS fixture keeps scalar settings and clears obsolete numeric selection");
     Preferences::records.clear();
     Preferences::records["geoputer/config"] = {legacy, legacy + sizeof(legacy)};
     SettingsStore store;
@@ -34,16 +34,18 @@ void testSettingsLanguage() {
     SettingsStore rebooted; Settings after_reboot{};
     check(rebooted.begin() && rebooted.load(after_reboot) == SettingsState::Loaded && sameSettings(restored, after_reboot),
           "reboot retains the selected language and original settings");
-    check(Preferences::records["geoputer/config"][2] == 5 && Preferences::records["geoputer/config"][3] == SettingCount,
+    check(Preferences::records["geoputer/config"][2] == 6 && Preferences::records["geoputer/config"][3] == SettingCount,
           "saved record carries the new version and field count");
-    uint8_t record[SettingsRecordSize]; encodeSettings(restored, record);
+    uint8_t record[SettingsRecordSize]; encodeSettings(restored,DatasetId{}, record);
     record[10] = 2; updateChecksum(record);
     check(!decodeSettings(record, sizeof(record), after_reboot) && sameSettings(after_reboot, restored),
           "invalid language is rejected even with a valid checksum, without changing active settings");
-    encodeSettings(restored, record); record[2] = 6; updateChecksum(record);
+    encodeSettings(restored,DatasetId{}, record); record[2] = 7; updateChecksum(record);
     check(!decodeSettings(record, sizeof(record), after_reboot), "unsupported future format is rejected");
-    encodeSettings(restored, record); record[11] = 5; updateChecksum(record);
+    encodeSettings(restored,DatasetId{}, record); record[11] = 5; updateChecksum(record);
     check(!decodeSettings(record, sizeof(record), after_reboot), "invalid volume remains rejected");
+    encodeSettings(restored,DatasetId{},record);record[45]='x';updateChecksum(record);
+    check(!decodeSettings(record,sizeof(record),after_reboot),"bytes after the dataset ID terminator are rejected");
 
     GpsUiModel ui; UiData data{}; data.settings = defaultSettings();
     ui.setScreen({ScreenId::Settings, DisplayMode::View, 1, data, 0, ActionResult::None});

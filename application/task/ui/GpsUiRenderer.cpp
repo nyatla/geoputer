@@ -138,7 +138,7 @@ void GpsUiRenderer::drawDialog(const GpsUiModel& model, UiLanguage language) {
             accept=japanese?"解除":"Clear";break;
         case DialogKind::RebuildIndex:case DialogKind::VerifyIndex:
             title=dialog.kind()==DialogKind::RebuildIndex?(japanese?"キャッシュ再生成？":"Rebuild cache?"):(japanese?"キャッシュを検証？":"Verify cache?");
-            std::snprintf(target_detail,sizeof(target_detail),"DATASET %02u / ALL LANGUAGES",model.datasetDialogNumber());
+            std::snprintf(target_detail,sizeof(target_detail),"DATASET %s / ALL LANGUAGES",model.datasetDialogId().c_str());
             if(dialog.actionEnabled()) {detail=target_detail;detail_role=TextRole::UI;}
             else detail=datasetErrorText(datasetRowBlock(model.data(),model.snapshot().selected_setting),japanese);
             accept=japanese?"実行":"Run";break;
@@ -298,8 +298,8 @@ void GpsUiRenderer::drawBoot(const GpsUiModel& model, const Settings& settings) 
         text(36, y, bootItemName(i), color);
         text(156, y, check.detail[0] ? check.detail : "WAIT", color);
     }
-    if(data.storage.dataset_failure.number) formatDatasetRelease(data.storage.dataset_failure,line,sizeof(line));
-    else if(settings.dataset)std::snprintf(line,sizeof(line),"GPS:MESH  DATASET:%02u",settings.dataset);
+    if(data.storage.dataset_failure.revision && !settings.dataset) formatDatasetRelease(data.storage.dataset_failure,line,sizeof(line));
+    else if(settings.dataset)std::snprintf(line,sizeof(line),"GPS:MESH  DATASET:ON");
     else std::snprintf(line,sizeof(line),"GPS:MESH  DATASET:NONE");
     text(4,110,line,TFT_LIGHTGREY);
 
@@ -566,7 +566,7 @@ void GpsUiRenderer::drawSettings(const GpsUiModel& model, const UiSnapshot& cont
         }
         const char* state=data.storage.nvs_error?"NVS ERROR / ALERT OFF":
             data.storage.busy?"STORAGE BUSY":alarm::stateName(profile.state);
-        char status[48];std::snprintf(status,sizeof(status),"DS%02u %s",settings.dataset,state);
+        char status[48];std::snprintf(status,sizeof(status),"DS %s",state);
         notice(status,profile.usable() && !data.storage.nvs_error?TFT_LIGHTGREY:TFT_RED);
         return;
     }
@@ -602,11 +602,11 @@ void GpsUiRenderer::drawSettings(const GpsUiModel& model, const UiSnapshot& cont
                 const auto blocked=datasetRowBlock(data,row);
                 const auto color=blocked!=DatasetError::None?TFT_DARKGREY:row==content.selected_setting?TFT_CYAN:TFT_WHITE;
                 item(4,y,row==content.selected_setting?">":" ",color);
-                if(!view.rows[row].number) item(20,y,japanese?"未選択":"None",color);
+                if(!view.rows[row].id) item(20,y,japanese?"未選択":"None",color);
                 else {
-                    std::snprintf(line,sizeof(line),"%02u",view.rows[row].number);
+                    std::snprintf(line,sizeof(line),"%s",view.rows[row].id.c_str());
                     font_.draw(frame_,20,y,line,TextRole::Ascii8x16,color);
-                    datasetSingleLine(view.rows[row].title,japanese,line,sizeof(line),24);item(44,y,line,color);
+                    datasetSingleLine(view.rows[row].title,japanese,line,sizeof(line),10);item(148,y,line,color);
                 }
             }
             const auto reason=view.count?datasetRowBlock(data,content.selected_setting):DatasetError::None;
@@ -687,7 +687,7 @@ void GpsUiRenderer::drawSettings(const GpsUiModel& model, const UiSnapshot& cont
         text(4, LivePlaceLayout::LogY, line, TFT_WHITE);
     } else if(content.page==SettingsPage::DatasetMenu) {
         frame_.fillRect(0,0,240,ViewHeaderBottom,TFT_BLACK);text(4,ViewHeaderTextY,"DATASET");
-        if(settings.dataset) std::snprintf(line,sizeof(line),"CURRENT %02u / ALL LANGUAGES",settings.dataset);
+        if(settings.dataset) std::snprintf(line,sizeof(line),"CURRENT SELECTED / ALL LANGUAGES");
         else std::snprintf(line,sizeof(line),"CURRENT NONE");
         text(4,26,line,TFT_LIGHTGREY);
         for(unsigned row=0;row<3;++row) {
@@ -696,7 +696,7 @@ void GpsUiRenderer::drawSettings(const GpsUiModel& model, const UiSnapshot& cont
             const int y=43+row*20;item(4,y,row==content.selected_setting?">":" ",color);
             item(20,y,datasetMenuLabel(row,japanese),color);
         }
-        if(data.storage.dataset_failure.number) {
+        if(data.storage.dataset_failure.revision && !settings.dataset) {
             formatDatasetRelease(data.storage.dataset_failure,line,sizeof(line));text(4,106,line,TFT_YELLOW);
         }
         const auto reason=datasetMenuBlock(data,content.selected_setting);
@@ -705,7 +705,7 @@ void GpsUiRenderer::drawSettings(const GpsUiModel& model, const UiSnapshot& cont
     } else if(content.page==SettingsPage::DatasetIndex) {
         const auto& view=data.datasets();const auto& progress=view.progress;
         frame_.fillRect(0,0,240,ViewHeaderBottom,TFT_BLACK);text(4,ViewHeaderTextY,view.purpose==DatasetPurpose::Verify?"VERIFY CACHE":"REBUILD CACHE");
-        std::snprintf(line,sizeof(line),"TARGET %02u / ALL LANGUAGES",view.number);text(4,26,line,TFT_LIGHTGREY);
+        std::snprintf(line,sizeof(line),"TARGET %s / ALL LANGUAGES",view.id.c_str());text(4,26,line,TFT_LIGHTGREY);
         item(4,43,view.applying?(view.purpose==DatasetPurpose::Verify?(japanese?"検証中です":"Verifying..."):(japanese?"再生成中です":"Rebuilding...")):
             view.error==DatasetError::None?(japanese?"完了しました":"Completed"):(japanese?"失敗しました":"Failed"),
             view.applying?TFT_YELLOW:view.error==DatasetError::None?TFT_GREEN:TFT_RED);

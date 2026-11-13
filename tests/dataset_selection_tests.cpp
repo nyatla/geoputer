@@ -8,7 +8,7 @@ using namespace geoputer;
 namespace {
 void check(bool value,const char* text) {if(!value)throw std::runtime_error(text);}
 Settings selectedSettings() {
-    auto value=defaultSettings();value.dataset=99;value.log_interval=2;value.brightness=4;
+    auto value=defaultSettings();value.dataset=1;value.log_interval=2;value.brightness=4;
     std::strcpy(value.wordbook_language,"en-us");return value;
 }
 void transitions() {
@@ -20,14 +20,14 @@ void transitions() {
                           PlaceState::VersionError,PlaceState::DataError,PlaceState::EncodingError,PlaceState::TooManyChunks,PlaceState::OutOfMemory}) {
         StorageSnapshot state{};state.settings=selected;state.settings_state=SettingsState::Loaded;
         state.log.open=true;state.log.buffered=64;state.log.session_id=123;
-        check(store.save(selected),"selected configuration saved before the failure");
+        DatasetId id{};id.assign("jp-n03-y2026-1");check(store.save(selected,id),"selected configuration saved before the failure");
         const auto writes=Preferences::write_calls;
         check(releaseUnusableDataset(store,state,reason),"active failure is released");
         auto expected=selected;setSettingValue(expected,static_cast<unsigned>(SettingId::Dataset),0);
         check(sameSettings(state.settings,expected) && state.settings_state==SettingsState::Saved && !state.nvs_error,
-              "release clears number and language while preserving other settings");
-        check(state.dataset_failure.number==99 && state.dataset_failure.reason==reason && !state.dataset_failure.save_failed,
-              "diagnostic preserves failed number and reason independently of selection");
+              "release clears selection and language while preserving other settings");
+        check(state.dataset_failure.reason==reason && !state.dataset_failure.save_failed,
+              "diagnostic preserves reason independently of selection");
         check(state.log.open && state.log.buffered==64 && state.log.session_id==123,"automatic GIS release does not stop or discard GPS logging");
         SettingsStore reboot;Settings restored{};
         check(reboot.begin() && reboot.load(restored)==SettingsState::Loaded && sameSettings(restored,expected),"next boot restores None rather than the failed dataset");
@@ -35,7 +35,7 @@ void transitions() {
         check(!releaseUnusableDataset(store,state,reason) && state.dataset_failure.revision==revision && Preferences::write_calls==writes+1,
               "subsequent events do not rewrite NVS or repeatedly notify the same failed selection");
         char message[40];formatDatasetRelease(state.dataset_failure,message,sizeof(message));
-        check(std::strlen(message)<=29 && std::strstr(message,"DS99") && std::strstr(message,"NONE"),"failure notification fits native display and identifies the target");
+        check(std::strlen(message)<=29 && std::strstr(message,"DATASET") && std::strstr(message,"NONE"),"failure notification fits native display");
     }
     for(const auto state_value:{PlaceState::Ready,PlaceState::NoFix,PlaceState::NotFound,PlaceState::Searching,PlaceState::Waiting,PlaceState::Unselected}) {
         StorageSnapshot state{};state.settings=selected;const auto writes=Preferences::write_calls;
@@ -46,12 +46,12 @@ void transitions() {
 }
 void failedPersistence() {
     SettingsStore store;check(store.begin(),"NVS opens for failure test");
-    StorageSnapshot state{};state.settings=selectedSettings();check(store.save(state.settings),"old selection persists");
+    StorageSnapshot state{};state.settings=selectedSettings();DatasetId id{};id.assign("jp-n03-y2026-1");check(store.save(state.settings,id),"old selection persists");
     Preferences::fail_write=true;
     check(releaseUnusableDataset(store,state,PlaceState::DataError) && !state.settings.dataset && !state.settings.wordbook_language[0] &&
           state.dataset_failure.save_failed && state.settings_state==SettingsState::Failed && state.nvs_error!=0,
           "NVS error still releases RAM selection and exposes persistence failure");
-    Settings restored{};check(store.load(restored)==SettingsState::Loaded && restored.dataset==99,"failed save is never reported as persisted None");
+    Settings restored{};check(store.load(restored)==SettingsState::Loaded && restored.dataset==1,"failed save is never reported as persisted None");
     const auto writes=Preferences::write_calls;
     check(!releaseUnusableDataset(store,state,PlaceState::DataError) && Preferences::write_calls==writes,"failed persistence does not create a write retry loop");
     Preferences::fail_write=false;
@@ -60,7 +60,7 @@ void presentation() {
     UiData data{};data.settings=defaultSettings();data.settings.screen_timeout=4;
     data.storage.card_state=CardState::Mounted;data.gps.reception=GpsReception::Fix;data.gps.fix.valid=true;
     data.dataset.state=PlaceState::Unselected;
-    data.storage.dataset_failure={1,12,PlaceState::DatasetMissing,false};
+    data.storage.dataset_failure={12,PlaceState::DatasetMissing,false};
     GpsUiModel model;model.tick(1000);
     check(model.setScreen({ScreenId::LivePlace,DisplayMode::View,1,data,0,ActionResult::None})==OperationStatus::Ok,"notice screen initialized");
     check(model.datasetFailureVisible() && placeIssue(model.data())==PlaceState::Unselected && mainError(data)==nullptr,

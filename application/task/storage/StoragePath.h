@@ -1,5 +1,6 @@
 #pragma once
 #include "../../Config.h"
+#include "../../DatasetId.h"
 #include <array>
 #include <cstdint>
 #include <cstddef>
@@ -41,10 +42,9 @@ private:
 };
 static_assert(sizeof(TemporaryPath)==config::TemporaryPathBytes,"Temporary paths contain only their fixed byte buffer");
 
-inline TemporaryPath datasetDirectory(uint8_t number,std::string_view root=config::DatasetRoot) {
-    if(!number || number>99 || root.empty())throw std::invalid_argument("Invalid dataset number/root");
-    const char digits[2]={char('0'+number/10),char('0'+number%10)};
-    return TemporaryPath({root,root.back()=='/'?"":"/",std::string_view(digits,2)});
+inline TemporaryPath datasetDirectory(std::string_view id,std::string_view root=config::DatasetRoot) {
+    if(!DatasetId::valid(id) || root.empty())throw std::invalid_argument("Invalid dataset ID/root");
+    return TemporaryPath({root,root.back()=='/'?"":"/",id});
 }
 
 // Non-owning recipe. Full paths support the SDK/file adapters; dataset paths
@@ -54,35 +54,32 @@ public:
     FileReadPath(std::string_view full):root_(full) {}
     FileReadPath(const std::string& full):root_(full) {}
     FileReadPath(const char* full):root_(full) {}
-    static FileReadPath dataset(uint8_t number,std::string_view name,std::string_view root=config::DatasetRoot) {
-        if(!number || number>99 || root.empty())throw std::invalid_argument("Invalid dataset number/root");
-        FileReadPath path(root);path.number_=number;path.name_=name;return path;
+    static FileReadPath dataset(std::string_view id,std::string_view name,std::string_view root=config::DatasetRoot) {
+        if(!DatasetId::valid(id) || root.empty())throw std::invalid_argument("Invalid dataset ID/root");
+        FileReadPath path(root);path.id_=id;path.name_=name;return path;
     }
     TemporaryPath resolve()const {
-        if(!number_)return TemporaryPath(root_);
-        const char digits[2]={char('0'+number_/10),char('0'+number_%10)};
-        return TemporaryPath({root_,root_.back()=='/'?"":"/",std::string_view(digits,2),"/",name_});
+        if(id_.empty())return TemporaryPath(root_);
+        return TemporaryPath({root_,root_.back()=='/'?"":"/",id_,"/",name_});
     }
     TemporaryPath native(uint8_t drive)const {
-        if((!number_ && root_.substr(0,4)!="/sd/") ||
-           (number_ && root_!="/sd" && root_.substr(0,4)!="/sd/"))
+        if((id_.empty() && root_.substr(0,4)!="/sd/") ||
+           (!id_.empty() && root_!="/sd" && root_.substr(0,4)!="/sd/"))
             throw std::runtime_error("SD path is outside /sd");
         char drive_digits[3];const size_t count=drive>=100?3:drive>=10?2:1;
         unsigned value=drive;
         for(size_t n=count;n;value/=10)drive_digits[--n]=static_cast<char>('0'+value%10);
         const auto prefix=std::string_view(drive_digits,count);
-        if(!number_) {
+        if(id_.empty()) {
             if(root_.size()>=config::TemporaryPathBytes)throw std::length_error("SD path exceeds 255 bytes");
             return TemporaryPath({prefix,":",root_.substr(3)});
         }
-        const char digits[2]={char('0'+number_/10),char('0'+number_%10)};
-        const auto folder=std::string_view(digits,2),separator=std::string_view(root_.back()=='/'?"":"/");
+        const auto folder=id_,separator=std::string_view(root_.back()=='/'?"":"/");
         if(!TemporaryPath::fits({root_,separator,folder,"/",name_}))throw std::length_error("SD path exceeds 255 bytes");
         return TemporaryPath({prefix,":",root_.substr(3),separator,folder,"/",name_});
     }
 private:
-    std::string_view root_,name_;
-    uint8_t number_=0;
+    std::string_view root_,name_,id_;
 };
 inline TemporaryPath fatFsPath(uint8_t drive,FileReadPath path) {return path.native(drive);}
 inline TemporaryPath storageNativePath(uint8_t drive,FileReadPath path) {

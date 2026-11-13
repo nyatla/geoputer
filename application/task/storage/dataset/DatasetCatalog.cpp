@@ -1,12 +1,15 @@
 #include "DatasetCatalog.h"
 #include "DatasetIndex.h"
 #include <algorithm>
+#include <cerrno>
 #include <cstdio>
+#include <cstring>
+#include <dirent.h>
 #include <sys/stat.h>
 
 namespace geoputer {
-TemporaryPath DatasetCatalog::directory(unsigned number) const {
-    return datasetDirectory(static_cast<uint8_t>(number),root_);
+TemporaryPath DatasetCatalog::directory(std::string_view id) const {
+    return datasetDirectory(id,root_);
 }
 DatasetView DatasetCatalog::read(const DatasetRequest& request,UiLanguage ui) const {
     DatasetView result{};readInto(request,ui,result);return result;
@@ -17,41 +20,79 @@ void DatasetCatalog::readInto(const DatasetRequest& request,UiLanguage ui,Datase
         const bool listing=request.action==DatasetAction::Open || request.action==DatasetAction::Older || request.action==DatasetAction::Newer;
         if(listing) {
             const bool reverse=request.action==DatasetAction::Older;
-            const int minimum=request.purpose==DatasetPurpose::Select?0:1;
-            int start=std::max<int>(minimum,request.number);
-            if(request.action==DatasetAction::Older) --start;
-            if(request.action==DatasetAction::Newer) ++start;
-            auto exists=[&](int n) {if(!n) return minimum==0;SdAccessScope access(observer_);struct stat st{};return !stat(directory(n).c_str(),&st) && S_ISDIR(st.st_mode);};
-            for(int n=start;n>=minimum && n<=99 && view.count<config::DatasetPageRows;n+=reverse?-1:1) {
-                if(!exists(n)) continue;
-                auto& row=view.rows[view.count++];row.number=n;
-                if(!n) continue;
+            if(!request.id.valid(request.action==DatasetAction::Open ||
+                                 (request.action==DatasetAction::Newer && request.purpose==DatasetPurpose::Select))) {
+                view.error=DatasetError::Missing;return;
+            }
+            if(reverse && !request.page) {view.error=DatasetError::Missing;return;}
+            view.page=request.action==DatasetAction::Open?request.page:reverse?request.page-1:request.page+1;
+            DatasetId minimum{},maximum{};bool have_any=false;
+            auto consider=[&](const DatasetId& id) {
+                if(!have_any) {minimum=maximum=id;have_any=true;}
+                else {if(std::strcmp(id.c_str(),minimum.c_str())<0)minimum=id;if(std::strcmp(id.c_str(),maximum.c_str())>0)maximum=id;}
+                const int against=std::strcmp(id.c_str(),request.id.c_str());
+                if(request.action==DatasetAction::Open && against<0)return;
+                if(request.action==DatasetAction::Newer && against<=0)return;
+                if(reverse && against>=0)return;
+                unsigned position=0;
+                while(position<view.count && std::strcmp(view.rows[position].id.c_str(),id.c_str())<0)++position;
+                const bool full=view.count==config::DatasetPageRows;
+                if(full && ((!reverse && position==view.count) || (reverse && !position)))return;
+                if(!full)++view.count;
+                else if(reverse) {
+                    for(unsigned i=1;i<view.count;++i)view.rows[i-1]=view.rows[i];
+                    --position;
+                }
+                for(unsigned i=view.count-1;i>position;--i)view.rows[i]=view.rows[i-1];
+                view.rows[position]={};view.rows[position].id=id;
+            };
+            if(request.purpose==DatasetPurpose::Select)consider(DatasetId{});
+            {
+                SdAccessScope access(observer_);
+                errno=0;DIR* directory_handle=opendir(TemporaryPath(root_).c_str());
+                if(!directory_handle) {if(errno!=ENOENT)view.error=DatasetError::Data;return;}
+                int error=0;
+                for(;;) {
+                    errno=0;auto* entry=readdir(directory_handle);
+                    if(!entry){error=errno;break;}
+                    const size_t size=strnlen(entry->d_name,DatasetId::Capacity);
+                    if(size>=DatasetId::Capacity || !DatasetId::valid({entry->d_name,size}))continue;
+                    DatasetId id{};id.assign({entry->d_name,size});
+                    struct stat status{};
+                    if(stat(directory(id.view()).c_str(),&status) || !S_ISDIR(status.st_mode))continue;
+                    consider(id);
+                }
+                closedir(directory_handle);
+                if(error){view.error=DatasetError::Data;return;}
+            }
+            if(view.count) {
+                view.has_older=std::strcmp(minimum.c_str(),view.rows[0].id.c_str())<0;
+                view.has_newer=std::strcmp(maximum.c_str(),view.rows[view.count-1].id.c_str())>0;
+                view.selected=reverse?view.count-1:0;
+            }
+            for(unsigned i=0;i<view.count;++i) {
+                auto& row=view.rows[i];if(!row.id)continue;
                 DatasetMetadata metadata;
-                readDatasetMetadataInto(directory(n).view(),ui,"",metadata,observer_,{row.title,sizeof(row.title)});
+                readDatasetMetadataInto(directory(row.id.view()).view(),ui,"",metadata,observer_,{row.title,sizeof(row.title)});
                 row.error=metadata.error;
                 if(row.error!=DatasetError::None)datasetCopyText(row.title,sizeof(row.title),ui==UiLanguage::Japanese?"[メタデータ不正]":"[Invalid metadata]");
             }
-            if(reverse) {std::reverse(view.rows,view.rows+view.count);view.selected=view.count?view.count-1:0;}
-            if(view.count) {
-                for(int n=minimum;n<view.rows[0].number;++n) if(exists(n)) {view.has_older=true;break;}
-                for(int n=view.rows[view.count-1].number+1;n<=99;++n) if(exists(n)) {view.has_newer=true;break;}
-            }
             return;
         }
-        view.detail=true;view.info={};view.number=request.number;
-        if(!request.number || request.number>99) {view.error=DatasetError::Missing;return;}
+        view.detail=true;view.info={};view.id=request.id;
+        if(!request.id.valid()) {view.error=DatasetError::Missing;return;}
         DatasetMetadata metadata;
-        readDatasetMetadataInto(directory(request.number).view(),ui,request.language,metadata,observer_,
+        readDatasetMetadataInto(directory(request.id.view()).view(),ui,request.language,metadata,observer_,
             {view.info.title,sizeof(view.info.title),view.info.description,sizeof(view.info.description)},
             request.action==DatasetAction::Language?(request.direction<0?-1:1):0);
         if(metadata.error!=DatasetError::None) {view.error=metadata.error;return;}
         datasetCopyText(view.info.language,sizeof(view.info.language),metadata.language);
         view.info.language_count=metadata.language_count;view.info.language_index=metadata.language_index;
-        const auto map_path=TemporaryPath({directory(request.number).view(),"/",metadata.map});
+        const auto map_path=TemporaryPath({directory(request.id.view()).view(),"/",metadata.map});
         {
             SdAccessScope access(observer_); struct stat st{};
             if (stat(map_path.c_str(),&st) || !S_ISREG(st.st_mode) ||
-                stat(TemporaryPath({directory(request.number).view(),"/",metadata.wordbook}).c_str(),&st) || !S_ISREG(st.st_mode)) {
+                stat(TemporaryPath({directory(request.id.view()).view(),"/",metadata.wordbook}).c_str(),&st) || !S_ISREG(st.st_mode)) {
                 view.error=DatasetError::Missing; return;
             }
         }
@@ -62,7 +103,7 @@ void DatasetCatalog::readInto(const DatasetRequest& request,UiLanguage ui,Datase
         view.info.west=double(info.west)/view.info.unit_inv_x; view.info.south=double(info.south)/view.info.unit_inv_y;
         view.info.east=(double(info.west)+info.width)/view.info.unit_inv_x;
         view.info.north=(double(info.south)+info.height)/view.info.unit_inv_y;
-        reader.inspectWordBook(TemporaryPath({directory(request.number).view(),"/",metadata.wordbook}).view());
+        reader.inspectWordBook(TemporaryPath({directory(request.id.view()).view(),"/",metadata.wordbook}).view());
     } catch(const MapChunkLimitExceeded& error) {view.error=DatasetError::TooManyChunks;view.info.chunks=error.count;}
     catch(const std::bad_alloc&) {view.error=DatasetError::NoMemory;}
     catch(const std::exception&) {view.error=DatasetError::Data;}

@@ -11,11 +11,10 @@ inline bool releaseUnusableDataset(SettingsStore& store, StorageSnapshot& state,
     if (!state.settings.dataset || !datasetUnavailable(reason)) return false;
     auto& failure = state.dataset_failure;
     if (++failure.revision == 0) ++failure.revision;
-    failure.number = state.settings.dataset;
     failure.reason = reason;
     Settings cleared = state.settings;
     setSettingValue(cleared, static_cast<unsigned>(SettingId::Dataset), 0);
-    failure.save_failed = !store.save(cleared);
+    failure.save_failed = !store.save(cleared,DatasetId{});
     state.settings = cleared;
     state.settings_state = failure.save_failed ? SettingsState::Failed : SettingsState::Saved;
     state.nvs_error = failure.save_failed ? -21 : 0;

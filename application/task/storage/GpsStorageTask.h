@@ -53,7 +53,7 @@ private:
     bool saveAlarmProfile();
     void releaseDataset(PlaceState reason);
     bool loadSettings();
-    bool saveSettings(const Settings& value);
+    bool saveSettings(const Settings& value,const DatasetId* id=nullptr);
 
     Queue<AppNotification, 8>& notifications_;
     Queue<ReturnMessage, 1>& results_;

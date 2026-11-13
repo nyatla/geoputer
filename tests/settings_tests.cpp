@@ -17,18 +17,18 @@ void codec() {
     uint8_t record[SettingsRecordSize];
     for (unsigned log = 0; log < 3; ++log) for (unsigned flush = 0; flush < 5; ++flush)
     for (unsigned timeout = 0; timeout < settingChoices(static_cast<unsigned>(SettingId::ScreenTimeout)); ++timeout) for (unsigned light = 0; light < 5; ++light)
-    for (unsigned dataset = 0; dataset <= 3; ++dataset) for (unsigned gps = 0; gps < 2; ++gps)
+    for (unsigned dataset = 0; dataset <= 1; ++dataset) for (unsigned gps = 0; gps < 2; ++gps)
     for (unsigned language = 0; language < 2; ++language) {
         value = {static_cast<uint8_t>(log), static_cast<uint8_t>(flush), static_cast<uint8_t>(timeout),
                  static_cast<uint8_t>(light), static_cast<uint8_t>(dataset), static_cast<uint8_t>(gps), static_cast<UiLanguage>(language)};
         check(validSettings(value), "valid settings recognized");
-        encodeSettings(value, record);
-        Settings decoded{};
-        check(decodeSettings(record, sizeof(record), decoded) && sameSettings(decoded, value),
+        DatasetId id{};if(dataset)id.assign("jp-n03-y2026-1");encodeSettings(value,id,record);
+        Settings decoded{};DatasetId decoded_id{};
+        check(decodeSettings(record, sizeof(record), decoded,decoded_id) && sameSettings(decoded, value) && decoded_id==id,
               "all settings combinations survive the portable NVS record encoding");
     }
     value = defaultSettings();
-    encodeSettings(value, record);
+    encodeSettings(value,DatasetId{}, record);
     for (unsigned i = 0; i < sizeof(record); ++i) {
         record[i] ^= 0x80;
         Settings unchanged = value;

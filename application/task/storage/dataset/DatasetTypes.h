@@ -1,5 +1,6 @@
 #pragma once
 #include "../../../Config.h"
+#include "../../../DatasetId.h"
 #include "../log/LogTypes.h"
 #include "../PlaceTypes.h"
 #include "../../../map/MapTypes.h"
@@ -21,14 +22,15 @@ struct DatasetRequest {
     DatasetAction action;
     DatasetPurpose purpose;
     uint32_t token;
-    uint8_t number;
+    DatasetId id;
+    uint16_t page;
     int8_t direction;
     bool reset_settings;
     char language[config::DatasetLanguageBytes];
     uint32_t screen_generation=0;
     map::BufferLease buffer{};
 };
-struct DatasetRow { uint8_t number; char title[64]; DatasetError error; };
+struct DatasetRow { DatasetId id; char title[64]; DatasetError error; };
 struct DatasetDetail {
     char title[64], description[256], language[config::DatasetLanguageBytes];
     double west, south, east, north;
@@ -38,7 +40,9 @@ struct DatasetDetail {
 };
 struct DatasetView {
     uint32_t revision;
-    uint8_t number, count, selected;
+    DatasetId id;
+    uint16_t page;
+    uint8_t count, selected;
     bool detail, loading, applying, has_older, has_newer;
     DatasetError error;
     DatasetPurpose purpose;
@@ -55,7 +59,7 @@ inline bool datasetMutation(DatasetAction action) {
 }
 inline bool sameDatasetRequest(const DatasetRequest& a,const DatasetRequest& b) {
     return a.token && a.token==b.token && a.screen_generation==b.screen_generation &&
-        a.action==b.action && a.purpose==b.purpose && a.number==b.number && map::sameBuffer(a.buffer,b.buffer);
+        a.action==b.action && a.purpose==b.purpose && a.id==b.id && a.page==b.page && map::sameBuffer(a.buffer,b.buffer);
 }
 inline bool datasetLogStopped(const RecordingSnapshot& recording,const LogSnapshot& log) {
     return loggerStopped(recording, log);

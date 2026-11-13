@@ -22,12 +22,12 @@ void operator delete[](void*p,const std::nothrow_t&) noexcept {std::free(p);}
 
 int main(int argc,char**argv){try{
     if(argc!=4)return 2;
-    namespace fs=std::filesystem;const std::string dataset_root=argv[1];const fs::path dir=fs::path(dataset_root)/"01";fs::create_directories(dir);
+    namespace fs=std::filesystem;const std::string dataset_root=argv[1];const fs::path dir=fs::path(dataset_root)/"a01";fs::create_directories(dir);
     fs::create_symlink(fs::absolute(argv[2]),dir/"map.glc");fs::create_symlink(fs::absolute(argv[3]),dir/"names.giswordbook");
     std::ofstream(dir/"dataset.ini")<<"[dataset]\nversion=1\nmap=map.glc\ndefault_language=ja\n[ja]\ntitle=Trial\nwordbook=names.giswordbook\n";
     test_index::generate(dir.string(),"map.glc","names.giswordbook");
-    CodeCacheBuffer lookup_pixels{};SelectedDataset selected;test_storage::Lookup lookup(lookup_pixels,selected,0,dataset_root);
-    lookup.configure(1,"ja");check(lookup.prepare().state==PlaceState::Ready,"prepare shared dataset");
+    CodeCacheBuffer lookup_pixels{};SelectedDataset selected;test_storage::Lookup lookup(lookup_pixels,selected,"",dataset_root);
+    lookup.configure("a01","ja");check(lookup.prepare().state==PlaceState::Ready,"prepare shared dataset");
     fs::rename(dir/"dataset.ini",dir/"dataset.hidden"); // Map reads cannot depend on INI after initialization.
     for(unsigned scale:{1u,2u,4u}){
         map::Request req{};req.token=scale;req.screen_generation=1;req.dataset_generation=selected.info.generation;req.latitude=35.681641;req.longitude=140.027194;req.scale=scale;

@@ -13,7 +13,7 @@ public:
     DatasetCatalog(T&&,Args&&...)=delete;
     DatasetView read(const DatasetRequest& request,UiLanguage ui) const;
     void readInto(const DatasetRequest& request,UiLanguage ui,DatasetView& view) const;
-    TemporaryPath directory(unsigned number) const;
+    TemporaryPath directory(std::string_view id) const;
 private:
     std::string_view root_; // ROM/caller-owned; must outlive the catalog.
     StorageObserver* observer_;

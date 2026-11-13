@@ -7,22 +7,23 @@ bool SettingsStore::begin() {
     return ready_;
 }
 
-SettingsState SettingsStore::load(Settings& value) {
+SettingsState SettingsStore::load(Settings& value, DatasetId& id) {
     value = defaultSettings();
+    id = {};
     if (!ready_) return SettingsState::Unavailable;
     if (!preferences_.isKey("config")) return SettingsState::Defaults;
     uint8_t record[SettingsRecordSize]{};
     const auto size = preferences_.getBytesLength("config");
-    if ((size != sizeof(record) && size != LegacySettingsRecordSize) ||
+    if ((size != sizeof(record) && size != PreviousSettingsRecordSize && size != LegacySettingsRecordSize) ||
         preferences_.getBytes("config", record, size) != size ||
-        !decodeSettings(record, size, value)) return SettingsState::Invalid;
+        !decodeSettings(record, size, value, id)) return SettingsState::Invalid;
     return SettingsState::Loaded;
 }
 
-bool SettingsStore::save(const Settings& value) {
-    if (!ready_ || !validSettings(value)) return false;
+bool SettingsStore::save(const Settings& value, const DatasetId& id) {
+    if (!ready_ || !validSettings(value) || !id.valid(true) || bool(value.dataset)!=bool(id)) return false;
     uint8_t record[SettingsRecordSize]{};
-    encodeSettings(value, record);
+    encodeSettings(value, id, record);
     return preferences_.putBytes("config", record, sizeof(record)) == sizeof(record);
 }
 

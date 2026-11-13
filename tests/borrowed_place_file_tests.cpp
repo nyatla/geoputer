@@ -24,23 +24,23 @@ void* operator new[](size_t n,const std::nothrow_t&)noexcept{try{return ::operat
 void operator delete(void*p,const std::nothrow_t&)noexcept{std::free(p);}void operator delete[](void*p,const std::nothrow_t&)noexcept{std::free(p);}
 int main(int argc,char**argv){try{
     if(argc!=4)return 2;
-    namespace fs=std::filesystem;const std::string dataset_root=argv[1];const fs::path dir=fs::path(dataset_root)/"01";fs::create_directories(dir);
+    namespace fs=std::filesystem;const std::string dataset_root=argv[1];const fs::path dir=fs::path(dataset_root)/"a01";fs::create_directories(dir);
     fs::create_symlink(fs::absolute(argv[2]),dir/"map.glc");fs::create_symlink(fs::absolute(argv[3]),dir/"names.giswordbook");
     std::ofstream(dir/"dataset.ini")<<"[dataset]\nversion=1\nmap=map.glc\ndefault_language=ja\n[ja]\ntitle=Trial\nwordbook=names.giswordbook\n";
     test_index::generate(dir.string(),"map.glc","names.giswordbook");
     ReadFileSlots files;
-    CodeCacheBuffer own_pixels{},borrowed_pixels{};SelectedDataset own_dataset,borrowed_dataset;test_storage::Lookup own(own_pixels,own_dataset,0,dataset_root),borrowed(borrowed_pixels,borrowed_dataset,0,dataset_root);own.configure(1,"ja");borrowed.configure(1,"ja");borrowed.setFiles(&files);
+    CodeCacheBuffer own_pixels{},borrowed_pixels{};SelectedDataset own_dataset,borrowed_dataset;test_storage::Lookup own(own_pixels,own_dataset,"",dataset_root),borrowed(borrowed_pixels,borrowed_dataset,"",dataset_root);own.configure("a01","ja");borrowed.configure("a01","ja");borrowed.setFiles(&files);
     const std::string long_language(31,'a');
     PlaceDisplayFormat retained{{"%0 %1%2%3","%4%5"},true};
     allocated=allocations=four_k=0;track=true;
-    borrowed.configure(1,long_language);borrowed_dataset.display=retained;
-    borrowed.configure(1,"ja");
+    borrowed.configure("a01",long_language);borrowed_dataset.display=retained;
+    borrowed.configure("a01","ja");
     track=false;
     check(!allocations && borrowed.selectedLanguage()=="ja" && !borrowed_dataset.display.specified,
           "selection language and format retention/reset perform no C++ allocations");
-    borrowed.configure(1,std::string(32,'a'));
+    borrowed.configure("a01",std::string(32,'a'));
     check(borrowed.datasetInfo().state==PlaceState::MetadataError,"oversized requested language is rejected before file access");
-    borrowed.configure(1,"ja");
+    borrowed.configure("a01","ja");
     static DatasetIndexWorkspace init_memory;DatasetIndexWork init_work(init_memory);
     PlaceResult prepared;allocated=allocations=four_k=0;track=true;
     borrowed.prepareInto(prepared,init_work.available());track=false;

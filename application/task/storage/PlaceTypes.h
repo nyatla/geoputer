@@ -30,7 +30,6 @@ inline bool datasetInactive(PlaceState state) {
 
 struct DatasetFailure {
     uint32_t revision;
-    uint8_t number;
     PlaceState reason;
     bool save_failed;
 };

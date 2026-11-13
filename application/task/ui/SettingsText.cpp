@@ -89,7 +89,7 @@ void settingsValueText(UiLanguage language, unsigned row, uint8_t choice, char* 
         }
         case SettingId::Brightness: std::snprintf(out, size, "%u%%", Brightnesses[choice]); break;
         case SettingId::Dataset:
-            if(choice) std::snprintf(out, size, "%02u", choice);
+            if(choice) std::snprintf(out, size, "%s", language == UiLanguage::English ? "Selected" : "選択中");
             else std::snprintf(out, size, "%s", language == UiLanguage::English ? "None" : "未選択");
             break;
         case SettingId::Volume: std::snprintf(out,size,"%u",choice+1u);break;

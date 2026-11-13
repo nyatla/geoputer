@@ -2,7 +2,7 @@
 """Build copy-ready Geoputer mapsets from Galuchat GIS SDK releases.
 
 Each output directory contains one selected map, the supported Wordbooks, and
-one dataset.ini. The directory can later be copied to /sd/dataset/NN/.
+one dataset.ini. The directory can later be copied to /sd/geoputer/dataset/<ID>/.
 """
 
 from __future__ import annotations

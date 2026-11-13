@@ -390,7 +390,7 @@ void GpsApplication::applyStorage(const StorageSnapshot& state) {
     applyActivity(data_.storage.rg, rg);
     applyActivity(data_.storage.sd, sd);
     if (old_card != state.card_state && state.card_state == CardState::Mounted) { refreshPlace(); }
-    if (state.settings_state == SettingsState::Defaults || state.settings_state == SettingsState::Loaded || state.settings_state == SettingsState::Saved || (state.dataset_failure.number && !state.settings.dataset)) data_.settings = state.settings;
+    if (state.settings_state == SettingsState::Defaults || state.settings_state == SettingsState::Loaded || state.settings_state == SettingsState::Saved || (state.dataset_failure.revision && !state.settings.dataset)) data_.settings = state.settings;
     if(state.dataset_failure.revision!=old_failure && screen_==ScreenId::Boot) data_.boot.settings(state.settings_state);
     if (!data_.settings.dataset) {
         data_.dataset.state = PlaceState::Unselected;

@@ -5,8 +5,15 @@
 #include <cctype>
 namespace geoputer::wifi {
 namespace {
-constexpr char Private[]="/.rgp-wifi";
+constexpr char DataRoot[]="/geoputer";
+constexpr char Private[]="/geoputer/.rgp-wifi";
 constexpr uint32_t MaxUpload=config::WifiUploadMaxBytes; // Arduino WebServer Content-Length is signed 32 bit.
+bool dataRoot(std::string_view path) {
+    return path.size()==sizeof(DataRoot)-1 &&
+        std::equal(path.begin(),path.end(),DataRoot,[](char a,char b){
+            return std::tolower(static_cast<unsigned char>(a))==std::tolower(static_cast<unsigned char>(b));
+        });
+}
 bool reserved(std::string_view name) {
     constexpr char prefix[]=".rgp-";
     if(name.size()<sizeof(prefix)-1)return false;
@@ -87,12 +94,20 @@ bool Files::native(const char* logical,char* out,size_t bytes)const {
         char private_dir[64];std::snprintf(private_dir,sizeof(private_dir),"%u:%s",drive_,Private);
         FILINFO info{};
         if(f_stat(private_dir,&info)==FR_OK && info.altname[0]) {
-            const auto* slash=std::strchr(logical+1,'/');
-            const size_t count=slash?static_cast<size_t>(slash-logical-1):std::strlen(logical+1);
+            const auto* part=logical+1;
+            constexpr size_t root_length=sizeof(DataRoot)-1;
+            if(std::strlen(logical)>=root_length &&
+               std::equal(DataRoot,DataRoot+root_length,logical,[](char a,char b){
+                   return std::tolower(static_cast<unsigned char>(a))==std::tolower(static_cast<unsigned char>(b));
+               }) && logical[root_length]=='/')part=logical+root_length+1;
+            else part=nullptr;
+            if(!part)return true;
+            const auto* slash=std::strchr(part,'/');
+            const size_t count=slash?static_cast<size_t>(slash-part):std::strlen(part);
             const auto* alias=info.altname;
             if(std::strlen(alias)==count) {
                 size_t i=0;
-                while(i<count && std::tolower(static_cast<unsigned char>(logical[i+1]))==std::tolower(static_cast<unsigned char>(alias[i])))++i;
+                while(i<count && std::tolower(static_cast<unsigned char>(part[i]))==std::tolower(static_cast<unsigned char>(alias[i])))++i;
                 if(i==count)return false;
             }
         }
@@ -141,6 +156,8 @@ bool Files::inspectText(const char* path,char version[17]) {
 }
 bool Files::recover() {
     if(open_)return fail("File operation busy");
+    char root[64];std::snprintf(root,sizeof(root),"%u:%s",drive_,DataRoot);
+    const auto root_made=f_mkdir(root);if(root_made!=FR_OK && root_made!=FR_EXIST)return fail("Cannot prepare GeoPuter directory");
     char dir[64];std::snprintf(dir,sizeof(dir),"%u:%s",drive_,Private);
     const auto made=f_mkdir(dir);if(made!=FR_OK && made!=FR_EXIST)return fail("Cannot prepare recovery directory");
     char record[64];privatePath("transaction",record,sizeof(record));FILINFO info{};
@@ -211,7 +228,7 @@ bool Files::finish() {
 }
 void Files::abort(){close();writing_=false;erasePrivate("upload");}
 bool Files::remove(const char* logical,bool(*cancelled)(void*),void* context) {
-    if(!validPath(logical,false))return fail("Cannot delete root or invalid path");
+    if(!validPath(logical,false) || dataRoot(logical))return fail("Cannot delete GeoPuter root or invalid path");
     // Iterative depth-first removal: one directory object, no recursive stack or
     // full subtree list. A failure reports a possibly partially removed subtree.
     char path[256];std::strcpy(path,logical);const size_t base=std::strlen(path);unsigned depth=0;

@@ -15,7 +15,7 @@ bool GpsApplication::datasetUiCommand(MessageKind kind,const DatasetCompletion& 
     return true;
 }
 bool GpsApplication::requestDataset(DatasetRequest request) {
-    if(screen_!=ScreenId::Settings || request.purpose>DatasetPurpose::Verify || request.action>DatasetAction::Clear || request.number>99)return false;
+    if(screen_!=ScreenId::Settings || request.purpose>DatasetPurpose::Verify || request.action>DatasetAction::Clear || !request.id.valid(true))return false;
     if(gpsState().dataset_applying_ || storage_operation_id_) {message("STORAGE BUSY");return false;}
     request.screen_generation=generation_;request.token=0;request.buffer={};
     if(datasetMutation(request.action) && !datasetChangeReady()) {
@@ -30,23 +30,23 @@ bool GpsApplication::requestDataset(DatasetRequest request) {
 }
 bool GpsApplication::operateDataset(const UiAction& action) {
     DatasetRequest request{};request.action=action.dataset_action;request.purpose=action.dataset_purpose;
-    request.number=action.dataset_number;
-    if(request.purpose>DatasetPurpose::Verify || request.number>99)return false;
+    request.id=action.dataset_id;request.page=action.dataset_page;
+    if(request.purpose>DatasetPurpose::Verify || !request.id.valid(true))return false;
     switch(request.action) {
         case DatasetAction::Open:case DatasetAction::Older:case DatasetAction::Newer:break;
-        case DatasetAction::Detail:if(!request.number)return false;break;
+        case DatasetAction::Detail:if(!request.id)return false;break;
         case DatasetAction::CancelLanguage:
             request.action=DatasetAction::Detail;
-            if(!request.number || !validDatasetLanguage(action.settings.wordbook_language))return false;
+            if(!request.id || !validDatasetLanguage(action.settings.wordbook_language))return false;
             break;
         case DatasetAction::Clear:
             if(!action.confirmed || !data_.settings.dataset || request.purpose!=DatasetPurpose::Select)return false;
             break;
         case DatasetAction::RebuildIndex:case DatasetAction::VerifyIndex:
-            if(!action.confirmed || !request.number || request.purpose!=(request.action==DatasetAction::RebuildIndex?DatasetPurpose::Rebuild:DatasetPurpose::Verify))return false;
+            if(!action.confirmed || !request.id || request.purpose!=(request.action==DatasetAction::RebuildIndex?DatasetPurpose::Rebuild:DatasetPurpose::Verify))return false;
             break;
         case DatasetAction::Language:case DatasetAction::Apply:
-            if(!request.number || !validDatasetLanguage(action.settings.wordbook_language))return false;
+            if(!request.id || !validDatasetLanguage(action.settings.wordbook_language))return false;
             request.direction=action.browse_index?1:-1;break;
         default:return false;
     }
@@ -75,7 +75,7 @@ void GpsApplication::processDataset() {
             if(gpsState().dataset_error_==DatasetError::None) {
                 if(gpsState().dataset_borrow_.action==DatasetAction::Apply || gpsState().dataset_borrow_.action==DatasetAction::Clear) {
                     gpsState().dataset_check_needed_=true;refreshPlace();message("SETTINGS SAVED");
-                } else if(gpsState().dataset_borrow_.number==data_.settings.dataset)gpsState().dataset_check_needed_=true;
+                } else if(data_.settings.dataset)gpsState().dataset_check_needed_=true;
             } else message(gpsState().dataset_error_==DatasetError::NotStopped?"STOP LOGGER FIRST":"DATASET CHANGE FAILED");
         }
         gpsState().dataset_borrow_={};gpsState().dataset_waiting_=0;gpsState().dataset_ready_=gpsState().dataset_queued_=gpsState().dataset_discard_=false;

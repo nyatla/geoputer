@@ -21,6 +21,17 @@ int main() {
         check(!backend.takeActivity().accesses,"activity count is consumed once");
         check(msc.write(0,0,sample,512)==512,"PC write for activity");
         check(backend.takeActivity().accesses==1,"PC write has the same activity path");
+        uint8_t bulk[1536]{};
+        const auto before_bulk_reads=usb_test::reads;
+        check(msc.read(0,0,bulk,sizeof(bulk))==sizeof(bulk) &&
+              usb_test::reads==before_bulk_reads+1 && backend.takeActivity().accesses==1,
+              "aligned USB read reaches the SD driver as one multi-sector operation");
+        std::memset(bulk,0x5c,sizeof(bulk));
+        const auto before_bulk_writes=usb_test::writes;
+        check(msc.write(0,0,bulk,sizeof(bulk))==sizeof(bulk) &&
+              usb_test::writes==before_bulk_writes+1 && backend.takeActivity().accesses==1 &&
+              !std::memcmp(usb_test::disk.data(),bulk,sizeof(bulk)),
+              "aligned USB write reaches the SD driver as one multi-sector operation");
         check(msc.read(3,0,sample,0)==0 && !backend.takeActivity().accesses,"empty request never lights the SD icon");
         check(!backend.takeLocal() && !usb_test::mounts,"mounted PC cannot be bypassed by a local request");
         check(saveBootMode(BootMode::UsbStorage),"persist USB mode before ownership tests");

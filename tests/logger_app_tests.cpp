@@ -239,7 +239,7 @@ int main(){
     check(app->requestDataset(catalog) && !app->data_.hasDatasets() && app->ui_.model_.data().datasets().loading,"UI owns pending catalog, App holds control only");
     auto request=app->gpsState().dataset_borrow_;check(validDatasetMemory(request) && app->ui_.model_.mapFrame().leased(),"catalog borrows the fixed back image");
     auto makeCatalog=[&](const DatasetRequest& req,const char* title) {
-        auto& view=*datasetResultMemory(req);view={};view.revision=req.token;view.count=1;view.rows[0].number=2;
+        auto& view=*datasetResultMemory(req);view={};view.revision=req.token;view.count=1;view.rows[0].id.assign("a02");
         std::snprintf(view.rows[0].title,sizeof(view.rows[0].title),"%s",title);
         AppNotification event{};event.source=TaskId::Storage;event.kind=MessageKind::ReadCompleted;
         auto& done=event.payload.storage_completion;done.read_kind=StorageReadKind::DatasetBrowser;
@@ -263,7 +263,7 @@ int main(){
     check(!std::strcmp(app->ui_.model_.data().datasets().rows[0].title,"CURRENT DATASET"),"general App updates cannot overwrite the UI-owned page");
     // Superseding read, failed return and resubmission preserve the old lease.
     app->data_.storage.busy=false;check(app->requestDataset(catalog),"first superseded read");request=app->gpsState().dataset_borrow_;
-    catalog.number=2;check(app->requestDataset(catalog) && app->gpsState().dataset_borrow_.token==request.token,"new intent cannot revoke Storage loan");
+    catalog.id.assign("a02");check(app->requestDataset(catalog) && app->gpsState().dataset_borrow_.token==request.token,"new intent cannot revoke Storage loan");
     auto superseded=makeCatalog(request,"SUPERSEDED");app->handleNotification(superseded);reject_dataset_return=true;app->processDataset();
     check(app->gpsState().dataset_borrow_.token==request.token,"failed return retains owner");app->processDataset();
     check(app->gpsState().dataset_borrow_.token && app->gpsState().dataset_borrow_.token!=request.token,"next read begins after old loan returns");
@@ -272,7 +272,7 @@ int main(){
     reject_dataset_once=true;check(app->requestDataset(catalog) && app->gpsState().dataset_ready_,"rejected Storage submission schedules loan return");
     app->processDataset();check(app->gpsState().dataset_borrow_.token && app->gpsState().dataset_queued_,"rejected request retries after returning UI back");
     current=makeCatalog(app->gpsState().dataset_borrow_,"RETRIED");app->handleNotification(current);app->processDataset();
-    DatasetRequest verify{};verify.action=DatasetAction::VerifyIndex;verify.purpose=DatasetPurpose::Verify;verify.number=app->data_.settings.dataset;
+    DatasetRequest verify{};verify.action=DatasetAction::VerifyIndex;verify.purpose=DatasetPurpose::Verify;verify.id.assign("a02");
     check(app->requestDataset(verify) && app->gpsState().dataset_applying_,"maintenance enters busy state without an App result payload");
     AppNotification progress_event{};progress_event.source=TaskId::Storage;progress_event.kind=MessageKind::DatasetProgress;
     progress_event.payload.index_progress.token=app->gpsState().dataset_waiting_;progress_event.payload.index_progress.percent=55;

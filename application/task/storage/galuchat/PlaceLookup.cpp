@@ -11,12 +11,11 @@
 
 namespace geoputer {
 
-void PlaceLookup::configure(uint8_t number,std::string_view language) {
+void PlaceLookup::configure(std::string_view id,std::string_view language) {
     close();
-    selected_.number=number;
-    const bool valid=selected_.setLanguage(number?language:std::string_view{});
+    const bool valid=selected_.id.assign(id) && selected_.setLanguage(id.empty()?std::string_view{}:language);
     if(!valid)selected_.language[0]='\0';
-    selected_.info.state=!number?PlaceState::Unselected:number<=99 && valid?PlaceState::Waiting:PlaceState::MetadataError;
+    selected_.info.state=id.empty()?PlaceState::Unselected:valid?PlaceState::Waiting:PlaceState::MetadataError;
 }
 void PlaceLookup::releaseReaders() {
     alarm_cell_valid_=false;
@@ -31,7 +30,7 @@ void PlaceLookup::close() {
     releaseReaders();
     auto generation = selected_.info.generation + 1;
     if (!generation) ++generation;
-    selected_.info = {!selected_.number ? PlaceState::Unselected : selected_.number<=99 ? PlaceState::Waiting : PlaceState::MetadataError, 0, config::MaxDatasetChunks, generation};
+    selected_.info = {selected_.id.empty()?PlaceState::Unselected:PlaceState::Waiting, 0, config::MaxDatasetChunks, generation};
 }
 
 PlaceState PlaceLookup::reject(PlaceState state) {
@@ -42,7 +41,7 @@ PlaceState PlaceLookup::reject(PlaceState state) {
 
 PlaceState PlaceLookup::readSelection() {
     DatasetMetadata metadata;
-    readDatasetMetadataInto(datasetDirectory(selected_.number,root_).view(),UiLanguage::Japanese,selected_.language,metadata,observer_);
+    readDatasetMetadataInto(datasetDirectory(selected_.id.view(),root_).view(),UiLanguage::Japanese,selected_.language,metadata,observer_);
     if (metadata.error != DatasetError::None) {
         switch (metadata.error) {
             case DatasetError::Missing: return PlaceState::DatasetMissing;

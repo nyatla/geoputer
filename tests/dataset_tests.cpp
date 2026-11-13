@@ -53,14 +53,14 @@ void metadata() {
           "filename limit counts UTF-8 bytes without splitting characters");
     check(read(common+ja+"[en]\ntitle=Test\nwordbook=x"+book127+"\n").error==DatasetError::Metadata,
           "unselected language filenames obey the same capacity");
-    SelectedDataset session;session.number=1;
+    SelectedDataset session;session.id.assign("jp-n03-y2026-1");
     check(session.setNames(map127,book127) && !std::strcmp(session.map_name,map127.c_str()) && !std::strcmp(session.wordbook_name,book127.c_str()),
           "Storage session owns two terminated fixed filenames");
     check(!session.setNames("x"+map127,book127) && !std::strcmp(session.map_name,map127.c_str()),"rejected names leave the session unchanged");
-    check(session.file(DatasetFile::Map).resolve().view()=="/sd/dataset/01/"+map127 &&
-          session.file(DatasetFile::Index).resolve().view()=="/sd/dataset/01/_mapindex.dat","paths derive from integer ID and immutable root");
-    session.number=99;check(session.file(DatasetFile::Wordbook).resolve().view()=="/sd/dataset/99/"+book127,"last supported ID retains two digits");
-    session.clearPrepared();check(!session.map_name[0] && !session.wordbook_name[0] && session.number==99,"reset clears files while preserving selection ID");
+    check(session.file(DatasetFile::Map).resolve().view()=="/sd/geoputer/dataset/jp-n03-y2026-1/"+map127 &&
+          session.file(DatasetFile::Index).resolve().view()=="/sd/geoputer/dataset/jp-n03-y2026-1/_mapindex.dat","paths derive from named ID and immutable root");
+    session.id.assign("jp-est-y2020-1");check(session.file(DatasetFile::Wordbook).resolve().view()=="/sd/geoputer/dataset/jp-est-y2020-1/"+book127,"another ID resolves directly");
+    session.clearPrepared();check(!session.map_name[0] && !session.wordbook_name[0] && session.id.view()=="jp-est-y2020-1","reset clears files while preserving selection ID");
     write(ja+common+en);
     auto result=readMetadata(directory,UiLanguage::English,"ja");
     check(result.error==DatasetError::None && result.title=="Japan" && result.language=="ja" && result.wordbook=="ja.giswordbook", "UI translation and Wordbook language are independent, regardless of section order");
@@ -151,21 +151,21 @@ void metadata() {
 void savedSelection() {
     Preferences::records.clear();Preferences::fail_write=false;
     SettingsStore store;check(store.begin(),"NVS initialized");
-    Settings selected=defaultSettings();selected.dataset=99;std::strcpy(selected.wordbook_language,"en-us");
-    check(store.save(selected),"number and language commit together");
-    SettingsStore reboot;Settings restored{};
-    check(reboot.begin() && reboot.load(restored)==SettingsState::Loaded && sameSettings(selected,restored),"reboot restores exact number/language pair");
-    Preferences::fail_write=true;selected.dataset=2;std::strcpy(selected.wordbook_language,"ja");
-    check(!store.save(selected),"save error returned");Preferences::fail_write=false;
-    check(reboot.load(restored)==SettingsState::Loaded && restored.dataset==99 && !std::strcmp(restored.wordbook_language,"en-us"),"failed save preserves old persisted pair");
+    Settings selected=defaultSettings();selected.dataset=1;std::strcpy(selected.wordbook_language,"en-us");DatasetId id{};id.assign("jp-n03-y2026-1");
+    check(store.save(selected,id),"ID and language commit together");
+    SettingsStore reboot;Settings restored{};DatasetId restored_id{};
+    check(reboot.begin() && reboot.load(restored,restored_id)==SettingsState::Loaded && sameSettings(selected,restored) && restored_id==id,"reboot restores exact ID/language pair");
+    Preferences::fail_write=true;id.assign("jp-est-y2020-1");std::strcpy(selected.wordbook_language,"ja");
+    check(!store.save(selected,id),"save error returned");Preferences::fail_write=false;
+    check(reboot.load(restored,restored_id)==SettingsState::Loaded && restored_id.view()=="jp-n03-y2026-1" && !std::strcmp(restored.wordbook_language,"en-us"),"failed save preserves old persisted pair");
     const uint8_t legacy[]={0x47,0x50,0x02,0x07,0,2,1,1,2,0,1,0,0,0,0,0};
     uint8_t bytes[16];std::memcpy(bytes,legacy,16);uint32_t hash=2166136261u;for(unsigned i=0;i<12;++i)hash=(hash^bytes[i])*16777619u;for(unsigned i=0;i<4;++i)bytes[12+i]=hash>>(8*i);
-    check(decodeSettings(bytes,16,restored) && restored.dataset==1 && !restored.wordbook_language[0] && restored.language==UiLanguage::English,"old unused mode index migrates to 01/default, preserving UI language");
+    check(decodeSettings(bytes,16,restored) && !restored.dataset && !restored.wordbook_language[0] && restored.language==UiLanguage::English,"numeric legacy selection is cleared while UI language is preserved");
     check(store.save(defaultSettings()),"clearing selection persists without an SD card");
     check(reboot.load(restored)==SettingsState::Loaded && !restored.dataset && !restored.wordbook_language[0],"unselected survives reboot with an empty language");
     selected=defaultSettings();std::strcpy(selected.wordbook_language,"ja");
     check(!validSettings(selected) && !store.save(selected),"unselected cannot retain a hidden language");
-    uint8_t inconsistent[SettingsRecordSize];encodeSettings(selected,inconsistent);
+    uint8_t inconsistent[SettingsRecordSize];encodeSettings(selected,DatasetId{},inconsistent);
     check(!decodeSettings(inconsistent,sizeof(inconsistent),restored),"even a checksummed unselected record with a language is rejected");
     selected.dataset=1;check(setSettingValue(selected,static_cast<unsigned>(SettingId::Dataset),0) && !selected.wordbook_language[0],"clearing the dataset also clears its language");
     check(!validDatasetLanguage("en--us") && !validDatasetLanguage("dataset") && !validDatasetLanguage("EN") && !validDatasetLanguage(std::string(32,'a').c_str()),"bounded identifiers validated");
@@ -185,9 +185,9 @@ void navigationAndGate() {
     model.keyPressed(UiKey::Enter,8);
     check(model.snapshot().action.kind==ActionKind::Dataset && model.snapshot().action.dataset_action==DatasetAction::Open,"Select dataset opens the existing list");
     auto publish=[&](){const auto action=model.snapshot().action;data.revision++;data.editDatasets().revision=model.data().datasets().revision+1;model.updateContent({DisplayMode::View,1,data,action.action_id,ActionResult::Applied});};
-    data.editDatasets().count=1;data.editDatasets().rows[0].number=2;std::strcpy(data.editDatasets().rows[0].title,"Tokyo");publish();
+    data.editDatasets().count=1;data.editDatasets().rows[0].id.assign("jp-tokyo");std::strcpy(data.editDatasets().rows[0].title,"Tokyo");publish();
     model.keyPressed(UiKey::Enter,9);check(model.snapshot().action.dataset_action==DatasetAction::Detail,"Enter opens details");
-    data.editDatasets()={};data.editDatasets().detail=true;data.editDatasets().number=2;data.editDatasets().info.language_count=2;std::strcpy(data.editDatasets().info.language,"ja");std::strcpy(data.editDatasets().info.description,"説明文");publish();
+    data.editDatasets()={};data.editDatasets().detail=true;data.editDatasets().id.assign("jp-tokyo");data.editDatasets().info.language_count=2;std::strcpy(data.editDatasets().info.language,"ja");std::strcpy(data.editDatasets().info.description,"説明文");publish();
     const auto count=datasetDetailRows(data.editDatasets(),true);
     for(unsigned i=0;i<count-2;++i)model.keyPressed(UiKey::Down,10+i);
     model.keyPressed(UiKey::Enter,40);model.keyPressed(UiKey::Right,41);
@@ -277,12 +277,12 @@ void cacheFlow(DatasetPurpose purpose) {
     check(model.snapshot().page==SettingsPage::DatasetList && model.snapshot().action.dataset_action==DatasetAction::Open &&
         model.snapshot().action.dataset_purpose==purpose,"maintenance opens a target list without opening a detail reader");
     data.editDatasets()={};data.editDatasets().purpose=purpose;data.editDatasets().count=2;
-    data.editDatasets().rows[0].number=1;data.editDatasets().rows[0].error=DatasetError::Metadata;
-    data.editDatasets().rows[1].number=2;std::strcpy(data.editDatasets().rows[1].title,"Candidate");publish();
+    data.editDatasets().rows[0].id.assign("jp-bad");data.editDatasets().rows[0].error=DatasetError::Metadata;
+    data.editDatasets().rows[1].id.assign("jp-good");std::strcpy(data.editDatasets().rows[1].title,"Candidate");publish();
     key(UiKey::Enter);check(!model.confirming() && model.snapshot().action.kind==ActionKind::None && datasetRowBlock(model.data(),0)==DatasetError::Metadata,
         "metadata failure known from listing is disabled with its reason");
     key(UiKey::Down);key(UiKey::Enter);
-    check(model.confirming() && !model.confirmChoice() && model.datasetDialogNumber()==2 && model.snapshot().action.kind==ActionKind::None,
+    check(model.confirming() && !model.confirmChoice() && model.datasetDialogId().view()=="jp-good" && model.snapshot().action.kind==ActionKind::None,
         "target selection opens Cancel-default confirmation without a Detail request");
     key(UiKey::Escape);check(model.snapshot().page==SettingsPage::DatasetList && model.snapshot().selected_setting==1,"cancel preserves the chosen target row");
     key(UiKey::Enter);key(UiKey::Right);key(UiKey::Enter);
@@ -290,7 +290,7 @@ void cacheFlow(DatasetPurpose purpose) {
     check(action.kind==ActionKind::Dataset && action.confirmed && action.dataset_action==(purpose==DatasetPurpose::Rebuild?DatasetAction::RebuildIndex:DatasetAction::VerifyIndex) &&
         action.dataset_purpose==purpose && action.browse_index==1 && action.browse_revision==data.editDatasets().revision,
         "confirmed maintenance identifies the exact list revision and target, for map and all languages");
-    data.editDatasets().applying=data.editDatasets().loading=true;data.editDatasets().number=2;data.editDatasets().progress.phase=IndexPhase::TT;publish();
+    data.editDatasets().applying=data.editDatasets().loading=true;data.editDatasets().id.assign("jp-good");data.editDatasets().progress.phase=IndexPhase::TT;publish();
     key(UiKey::Escape);model.tick(1000000);
     check(model.snapshot().page==SettingsPage::DatasetIndex && model.snapshot().action.kind==ActionKind::None,"maintenance progress owns input and prevents sleep");
     data.editDatasets().applying=data.editDatasets().loading=false;data.editDatasets().error=DatasetError::IndexMismatch;data.editDatasets().progress.phase=IndexPhase::Failed;publish();

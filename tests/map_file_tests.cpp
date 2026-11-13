@@ -22,11 +22,11 @@ struct Observer:StorageObserver {
 int main(int argc,char** argv) {
     try {
         if(argc!=4)return 2;
-        namespace fs=std::filesystem;const std::string dataset_root=argv[1];const fs::path dir=fs::path(dataset_root)/"01";fs::create_directories(dir);
+        namespace fs=std::filesystem;const std::string dataset_root=argv[1];const fs::path dir=fs::path(dataset_root)/"a01";fs::create_directories(dir);
         fs::copy_file(argv[2],dir/"map.glc");fs::copy_file(argv[3],dir/"names.giswordbook");
         std::ofstream(dir/"dataset.ini")<<"[dataset]\nversion=1\nmap=map.glc\ndefault_language=ja\n[ja]\ntitle=Test\nwordbook=names.giswordbook\n";
         test_index::generate(dir.string(),"map.glc","names.giswordbook");
-        map::CodeImageBuffer source_pixels{},sample_pixels{};Observer observer;CodeCacheBuffer lookup_pixels{};SelectedDataset lookup_dataset;test_storage::Lookup lookup(lookup_pixels,lookup_dataset,0,dataset_root);lookup.setObserver(&observer);lookup.configure(1,"ja");
+        map::CodeImageBuffer source_pixels{},sample_pixels{};Observer observer;CodeCacheBuffer lookup_pixels{};SelectedDataset lookup_dataset;test_storage::Lookup lookup(lookup_pixels,lookup_dataset,"",dataset_root);lookup.setObserver(&observer);lookup.configure("a01","ja");
         check(lookup.prepare().state==PlaceState::Ready,"existing lookup opens normally");
         PlaceRequest point{1,1,{35.681641,140.027194,1000,true}};
         const auto place=lookup.search(point);check(place.state==PlaceState::Ready,"existing 128 cache populated");
@@ -101,7 +101,7 @@ int main(int argc,char** argv) {
             std::cout<<"PASS: decimate first scale="<<scale<<", raw_input="<<b.width<<'x'<<b.height<<", work_bytes="<<expected.size()*4<<", name="<<place.lines[0]<<" / "<<place.lines[1]<<'\n';
         }
         std::ofstream(dir/"dataset.ini",std::ios::app)<<"display_line1=AREA %0 %%\ndisplay_line2=%1%2%3%4%5\n";
-        lookup.configure(1,"ja");check(lookup.prepare().state==PlaceState::Ready,"formatted point lookup prepares");
+        lookup.configure("a01","ja");check(lookup.prepare().state==PlaceState::Ready,"formatted point lookup prepares");
         const auto formatted=lookup.search(point);request.dataset_generation=lookup_dataset.info.generation;auto formatted_map=test_storage::boundary(lookup_dataset,request,0,&observer,map::MapSession(source_pixels),nullptr,nullptr,dataset_root);
         check(formatted_map.info.error==map::Error::None && std::string(formatted.lines[0]).find("AREA ")==0,"shared lookup honours formatting independently of map generation");
         std::ofstream(dir/"dataset.ini")<<"[dataset]\nversion=1\nmap=map.glc\ndefault_language=ja\n[ja]\ntitle=Test\nwordbook=names.giswordbook\ndisplay_line1=\ndisplay_line2=\n";

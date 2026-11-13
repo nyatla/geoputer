@@ -60,7 +60,7 @@ public:
     UiKeyGuide keyGuide() const;
     UiShortcutGuide shortcutGuide() const;
     uint32_t licenseOffset() const { return screen_resources_.settings.license_offset; }
-    uint8_t datasetDialogNumber() const { return screen_resources_.settings.dataset.dialog_number; }
+    const DatasetId& datasetDialogId() const { return screen_resources_.settings.dataset.dialog_id; }
     static constexpr uint32_t DatasetNoticeMs = 5000;
     bool datasetFailureVisible() const {
         return !data_.settings.dataset && data_.storage.dataset_failure.revision &&

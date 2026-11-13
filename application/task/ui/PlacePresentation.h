@@ -30,7 +30,7 @@ inline const char* datasetFailureLabel(PlaceState state) {
     }
 }
 inline void formatDatasetRelease(const DatasetFailure& failure,char* out,size_t size) {
-    std::snprintf(out,size,"DS%02u %s -> NONE",failure.number,datasetFailureLabel(failure.reason));
+    std::snprintf(out,size,"DATASET %s -> NONE",datasetFailureLabel(failure.reason));
 }
 struct DatasetIssueText { const char* first; const char* second; };
 inline DatasetIssueText datasetIssueText(PlaceState state, bool ja) {

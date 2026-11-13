@@ -99,11 +99,12 @@ def package_readme(mapset_id: str, languages: list[str], source_zip: str) -> byt
              f'Languages: {", ".join(languages)}',
              f'Map source: {source_zip}', '',
              'This archive contains one map and all supported Wordbooks for that map.',
-             'Copy the CONTENTS of mapsets/<ID>/ to /dataset/NN/ on a FAT32 SD card,',
-             'where NN is an unused two-digit number from 01 to 99.',
+             f'Extract the ZIP into a directory named {mapset_id}.',
+             'Copy that directory into geoputer/dataset/ on a FAT32 SD card.',
+             f'The resulting path must be geoputer/dataset/{mapset_id}/dataset.ini.',
              'Select the dataset on the device. All included languages can then be selected.',
              'The device creates _mapindex.dat when the dataset is applied.',
-             'Dataset sources and attribution are under notices/.']
+             'Dataset sources and attribution are in the NOTICE-*.md files here.']
     return ('\n'.join(lines) + '\n').encode('utf-8')
 
 
@@ -133,21 +134,22 @@ def mapset_files(folder: Path) -> tuple[configparser.ConfigParser, list[str], li
 def build_archive(folder: Path, catalog: dict[str, dict[str, str]],
                   release_root: Path, destination: Path) -> list[str]:
     mapset_id = folder.name
+    if len(mapset_id) > 15 or not re.fullmatch(r'[a-z](?:[a-z0-9]|-(?=[a-z0-9]))*', mapset_id):
+        raise ValueError(f'mapset ID cannot be used by firmware: {mapset_id}')
     if mapset_id not in catalog:
         raise ValueError(f'unknown mapset: {mapset_id}')
     _, languages, filenames = mapset_files(folder)
-    prefix = f'mapsets/{mapset_id}/'
     source_zip = catalog[mapset_id]['release_zip']
     with zipfile.ZipFile(destination, 'w', allowZip64=True) as archive:
-        add_file(archive, prefix + 'dataset.ini', folder / 'dataset.ini')
+        add_file(archive, 'dataset.ini', folder / 'dataset.ini')
         for filename in filenames:
-            add_file(archive, prefix + filename, folder / filename)
-        add_bytes(archive, f'notices/{mapset_id}-map.md', source_notice(release_root, source_zip))
+            add_file(archive, filename, folder / filename)
+        add_bytes(archive, 'NOTICE-map.md', source_notice(release_root, source_zip))
         if 'en' in languages:
             wordbook_zip = ESTAT_SUBDIV if mapset_id == ESTAT_ID else source_zip
-            add_bytes(archive, f'notices/{mapset_id}-en.md', english_notice(release_root, wordbook_zip))
+            add_bytes(archive, 'NOTICE-en.md', english_notice(release_root, wordbook_zip))
         if 'ja' in languages and mapset_id == ESTAT_ID:
-            add_bytes(archive, f'notices/{mapset_id}-ja.md', source_notice(release_root, ESTAT_SUBDIV))
+            add_bytes(archive, 'NOTICE-ja.md', source_notice(release_root, ESTAT_SUBDIV))
         add_bytes(archive, 'README.md', package_readme(mapset_id, languages, source_zip))
     verify_archive(destination, mapset_id, languages, filenames)
     return languages
@@ -158,19 +160,18 @@ def verify_archive(path: Path, mapset_id: str, languages: list[str], filenames: 
         names = archive.namelist()
         if len(names) != len(set(names)) or archive.testzip() is not None:
             raise ValueError(f'ZIP has duplicate or damaged entries: {path}')
-        prefix = f'mapsets/{mapset_id}/'
-        actual_ids = {name.split('/')[1] for name in names if name.startswith('mapsets/')}
-        if actual_ids != {mapset_id}:
-            raise ValueError(f'ZIP mapset ID differs: {path}')
-        config = read_ini(archive.read(prefix + 'dataset.ini'))
+        required = {'dataset.ini', *filenames, 'README.md', 'NOTICE-map.md'}
+        if 'en' in languages:
+            required.add('NOTICE-en.md')
+        if 'ja' in languages and mapset_id == ESTAT_ID:
+            required.add('NOTICE-ja.md')
+        if path.stem != mapset_id or set(names) != required:
+            raise ValueError(f'ZIP must contain only flat files for {mapset_id}: {path}')
+        config = read_ini(archive.read('dataset.ini'))
         if config.sections() != ['dataset', *languages]:
             raise ValueError(f'language list differs in {mapset_id}')
         if config.get('dataset', 'default_language') not in languages:
             raise ValueError(f'no valid default language in {mapset_id}')
-        files = {name for name in names if name.startswith(prefix)}
-        required = {prefix + 'dataset.ini', *(prefix + filename for filename in filenames)}
-        if files != required:
-            raise ValueError(f'missing or unexpected mapset files: {mapset_id}')
 
 
 def find_pio(explicit: Path | None) -> str:
@@ -218,7 +219,7 @@ def build(args: argparse.Namespace) -> Path:
         ready.mkdir()
         shutil.copyfile(FIRMWARE, ready / f'geoputer-v{version}-firmware.bin')
         for folder in sorted(path for path in mapsets.iterdir() if path.is_dir()):
-            destination = ready / f'geoputer-v{version}-mapset-{folder.name}.zip'
+            destination = ready / f'{folder.name}.zip'
             languages = build_archive(folder, catalog, args.sdk_release.resolve(), destination)
             print(f'verified {destination.name}: {", ".join(languages)}, {destination.stat().st_size} bytes', flush=True)
         ready.rename(target)
