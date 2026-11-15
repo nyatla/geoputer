@@ -30,9 +30,10 @@ struct DatasetRequest {
     uint32_t screen_generation=0;
     map::BufferLease buffer{};
 };
-struct DatasetRow { DatasetId id; char title[64]; DatasetError error; };
+struct DatasetRow { DatasetId id; char title[config::DatasetLineBytes]; DatasetError error; };
 struct DatasetDetail {
-    char title[64], description[256], language[config::DatasetLanguageBytes];
+    char title[config::DatasetLineBytes], description[config::DatasetLineBytes], language[config::DatasetLanguageBytes];
+    char wordbook_types[config::MaxDatasetLanguages][config::DatasetLanguageBytes];
     double west, south, east, north;
     uint64_t chunks;
     uint32_t unit_inv_x, unit_inv_y;

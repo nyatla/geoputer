@@ -15,6 +15,7 @@ private:
  ApplicationMemory memory_;
 };
 #if defined(ARDUINO_ARCH_ESP32)
-static_assert(sizeof(ApplicationRuntime)<=219528,"Whole application reservation must remain within the baseline");
+// The dataset browser's six full titles and Wordbook type list use 221744 bytes on Cardputer ADV.
+static_assert(sizeof(ApplicationRuntime)<=222000,"Whole application reservation exceeded the dataset browser budget");
 #endif
 }

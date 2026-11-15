@@ -46,8 +46,7 @@ void testDatasetBorrowing() {
     // UI creates requests from its selected row, so App needs no title/list copy.
     common.editDatasets().loading=false;common.editDatasets().count=1;common.editDatasets().rows[0].id.assign("test-seven");common.editDatasets().revision=20;
     ui.setScreen({ScreenId::Settings,DisplayMode::View,4,common,0,ActionResult::None});
-    ui.keyPressed(UiKey::Enter,1); // Operation
-    while(ui.snapshot().selected_setting!=static_cast<unsigned>(SettingId::Dataset))ui.keyPressed(UiKey::Down,2);
+    while(ui.snapshot().selected_setting!=settingsRootIndex(SettingsRootItem::Dataset))ui.keyPressed(UiKey::Down,2);
     ui.keyPressed(UiKey::Enter,3);ui.keyPressed(UiKey::Enter,4); // Dataset menu -> list
     auto action=ui.snapshot().action;
     ui.updateContent({DisplayMode::View,4,common,action.action_id,ActionResult::Applied});

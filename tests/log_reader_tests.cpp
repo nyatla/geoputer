@@ -133,10 +133,10 @@ void sizeOnlyTests(const std::string& dir) {
     const auto reply=run(reader,request);
     check(reply.error==LogReadError::None && reply.count==4 && reply.data.list.total_files==4,"listing does not validate deliberately corrupt headers/records");
     check(reply.data.list.records[0]==LogMaxRecords && reply.data.list.records[1]==5 && reply.data.list.records[2]==0 && reply.data.list.records[3]==0,"size-only counts floor tails and guard short files");
-    char display[27];logListDisplayName("20261026_120000_0.gps.dat",display);
+    char display[29];logListDisplayName("20261026_120000_0.gps.dat",display);
     check(!std::strcmp(display,"20261026_120000_0"),"display omits the entire .gps.dat suffix");
     logListDisplayName("undated_0000000000000064_4294967295.gps.dat",display);
-    check(std::strlen(display)==26 && !std::strcmp(display+23,"..."),"long names are elided after suffix removal");
+    check(std::strlen(display)==28 && !std::strcmp(display+25,EllipsisUtf8),"long names use one display cell after suffix removal");
 }
 
 void readTests(const std::string& dir) {

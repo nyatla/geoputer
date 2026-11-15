@@ -64,23 +64,25 @@ void testSettingsLanguage() {
           ui.snapshot().page == SettingsPage::Operation && ui.snapshot().action.kind == ActionKind::None,
           "App acknowledgement applies language immediately without losing selection or navigating away");
     for (unsigned n=0;n<20;++n) ui.keyPressed(UiKey::Down, 10+n);
-    check(ui.snapshot().selected_setting == static_cast<unsigned>(SettingId::PowerSaving), "Operation includes power level without GPS source");
-    ui.keyPressed(UiKey::Up, 2); // Power saving -> Volume.
-
-    ui.keyPressed(UiKey::Up,29);
-    ui.keyPressed(UiKey::Enter, 30);
+    check(ui.snapshot().selected_setting == OperationRowCount-1, "Operation includes power level without GPS source");
+    ui.keyPressed(UiKey::Escape, 29);
+    for(unsigned n=0;n<settingsRootIndex(SettingsRootItem::Dataset);++n)ui.keyPressed(UiKey::Down,30+n);
+    ui.keyPressed(UiKey::Enter, 40);
     check(ui.snapshot().page == SettingsPage::DatasetMenu && !ui.editing(), "Dataset opens its submenu");
     check(std::strcmp(settingsRootLabel(UiLanguage::Japanese,SettingsSystemRow),"システム設定")==0 &&
           std::strcmp(settingsRootLabel(UiLanguage::English,SettingsSystemRow),"System settings")==0,
           "System is localized on the root menu");
-    check(OperationRowCount==8 && SettingCount==9 && std::strcmp(settingsOperationLabel(UiLanguage::English,OperationRowCount),"--")==0,
-          "moving GPS source preserves persisted setting IDs and record count");
+    check(OperationRowCount==7 && SettingCount==9 && std::strcmp(settingsOperationLabel(UiLanguage::English,OperationRowCount),"--")==0,
+          "moving dataset preserves persisted setting IDs and record count");
+    check(std::strcmp(settingsRootLabel(UiLanguage::Japanese,settingsRootIndex(SettingsRootItem::Dataset)),"データセット選択")==0 &&
+          std::strcmp(settingsRootLabel(UiLanguage::English,settingsRootIndex(SettingsRootItem::Dataset)),"Datasets")==0,
+          "dataset selection is localized on the root menu");
     check(std::strcmp(settingsSystemLabel(UiLanguage::Japanese,0),"モード")==0 &&
           std::strcmp(settingsSystemLabel(UiLanguage::English,1),"GPS source")==0 &&
           std::strcmp(settingsSystemLabel(UiLanguage::Japanese,2),"保存して再起動")==0 &&
           std::strcmp(settingsSystemLabel(UiLanguage::Japanese,SettingsSystemResetRow),"初期化")==0 &&
           std::strcmp(settingsSystemLabel(UiLanguage::English,SettingsSystemResetRow),"Reset")==0 &&
-          SettingsRootCount==6 && SettingsSystemCount==4,
+          SettingsRootCount==7 && SettingsSystemCount==4,
           "System labels are localized");
     check(std::strcmp(ProductName,"Geoputer")==0 && std::strlen(ApplicationVersion)>0,
           "About identifies the application separately from OSS licenses");

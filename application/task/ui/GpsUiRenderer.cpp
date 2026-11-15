@@ -102,6 +102,16 @@ void GpsUiRenderer::drawDialog(const GpsUiModel& model, UiLanguage language) {
         return;
     }
     switch (dialog.kind()) {
+        case DialogKind::BootFormat:
+            title = japanese ? "SDをFAT32にする?" : "Format SD as FAT32?";
+            detail = japanese ? "M5Launcherも消去" : "Erases all SD files";
+            accept = japanese ? "初期化" : "Format";
+            break;
+        case DialogKind::BootDirectories:
+            title = japanese ? "Geoputerを準備?" : "Set up Geoputer?";
+            detail = japanese ? "基本フォルダを作成" : "Create directories";
+            accept = japanese ? "作成" : "Create";
+            break;
         case DialogKind::RestartLogger:
             title = japanese ? "通常起動へ戻る？" : "Restart logger?";
             accept = japanese ? "再起動" : "Restart";
@@ -328,7 +338,7 @@ void GpsUiRenderer::drawLivePlace(const GpsUiModel& model, const UiSnapshot& con
         const auto mode = data.dataset.place_text_mode;
         if (liveAsciiWrapNeeded(data.place, mode)) {
             for (unsigned i = 0; i < 2; ++i) {
-                char rows[2][config::PlaceLinePixels / 8 + 1];
+                char rows[2][config::PlaceLinePixels / 8 + EllipsisBytes];
                 wrapAsciiPlaceLine(data.place[i], rows);
                 for (unsigned visual = 0; visual < 2; ++visual)
                     font_.draw(frame_, LivePlaceLayout::AddressX,
@@ -391,7 +401,7 @@ void GpsUiRenderer::drawLogBrowser(const GpsUiModel& model, const UiSnapshot& co
     if(content.screen==ScreenId::LogProperties || content.screen==ScreenId::LogStatistics) {
         const bool statistics=content.screen==ScreenId::LogStatistics;
         text(4,ViewHeaderTextY,statistics?"STATISTICS":"PROPERTIES",TFT_LIGHTGREY);
-        char name[27];logListDisplayName(view.name,name);text(4,25,name,TFT_WHITE);
+        char name[29];logListDisplayName(view.name,name);text(4,25,name,TFT_WHITE);
         if(statistics) {
             const auto& value=view.statistics;
             if(view.loading) {
@@ -437,7 +447,7 @@ void GpsUiRenderer::drawLogBrowser(const GpsUiModel& model, const UiSnapshot& co
             const int y=27+n*12;
             const auto color=view.loading?TFT_DARKGREY:n==content.selected_setting?TFT_CYAN:TFT_WHITE;
             text(4,y,n==content.selected_setting?">":" ",color);
-            char name[27];logListDisplayName(view.names[n],name);
+            char name[29];logListDisplayName(view.names[n],name);
             text(20,y,name,color);
             if(view.active_mask&(1u<<n)) text(228,y,"R",TFT_GREEN);
         }
@@ -574,10 +584,13 @@ void GpsUiRenderer::drawSettings(const GpsUiModel& model, const UiSnapshot& cont
         std::snprintf(line,sizeof(line),"%lu/%lu",static_cast<unsigned long>(model.licenseOffset()+1),static_cast<unsigned long>(licenseLineCount()));
         valueText(80,gps_header::TitleRight,ViewHeaderTextY,line,TFT_LIGHTGREY);
     }
-    if (content.page == SettingsPage::DatasetList || content.page == SettingsPage::DatasetDetail) {
+    if (content.page == SettingsPage::DatasetList || content.page == SettingsPage::DatasetChoice ||
+        content.page == SettingsPage::DatasetDetail) {
         const auto& view = data.datasets();
-        frame_.fillRect(0,0,240,ViewHeaderBottom,TFT_BLACK);text(4,ViewHeaderTextY,content.page==SettingsPage::DatasetDetail?"DATASET DETAIL":
-            view.purpose==DatasetPurpose::Rebuild?"REBUILD CACHE":view.purpose==DatasetPurpose::Verify?"VERIFY CACHE":"DATASETS",TFT_WHITE);
+        frame_.fillRect(0,0,240,ViewHeaderBottom,TFT_BLACK);
+        text(4,ViewHeaderTextY,content.page==SettingsPage::DatasetDetail?"DETAIL":
+            content.page==SettingsPage::DatasetChoice?"DATASET":
+            view.purpose==DatasetPurpose::Rebuild?"REBUILD":view.purpose==DatasetPurpose::Verify?"VERIFY":"SELECT",TFT_WHITE);
         if (view.loading || view.applying) {
             if(view.applying)item(4,27,view.progress.verifying?(japanese?"検証中です":"Verifying..."):(japanese?"適用中です":"Applying..."),TFT_YELLOW);
             if(view.applying) {
@@ -595,37 +608,61 @@ void GpsUiRenderer::drawSettings(const GpsUiModel& model, const UiSnapshot& cont
                 std::snprintf(line,sizeof(line),"%llu / %u",static_cast<unsigned long long>(view.info.chunks),static_cast<unsigned>(config::MaxDatasetChunks));
                 text(4,91,line,TFT_YELLOW);
             }
+            if(content.page==SettingsPage::DatasetChoice && datasetRecoverable(view.error))
+                text(4,108,"ENTER RETRY",TFT_YELLOW);
         } else if (content.page == SettingsPage::DatasetList) {
             if (!view.count) item(4,27,japanese?"候補がありません":"No datasets",TFT_YELLOW);
             for (unsigned row=0;row<view.count;++row) {
-                const int y=27+row*20;
+                const int y=27+row*14;
                 const auto blocked=datasetRowBlock(data,row);
-                const auto color=blocked!=DatasetError::None?TFT_DARKGREY:row==content.selected_setting?TFT_CYAN:TFT_WHITE;
-                item(4,y,row==content.selected_setting?">":" ",color);
-                if(!view.rows[row].id) item(20,y,japanese?"未選択":"None",color);
-                else {
-                    std::snprintf(line,sizeof(line),"%s",view.rows[row].id.c_str());
-                    font_.draw(frame_,20,y,line,TextRole::Ascii8x16,color);
-                    datasetSingleLine(view.rows[row].title,japanese,line,sizeof(line),10);item(148,y,line,color);
-                }
+                const bool active=view.rows[row].id==data.storage.selected_dataset &&
+                    bool(data.settings.dataset)==bool(view.rows[row].id);
+                const auto color=blocked!=DatasetError::None?TFT_DARKGREY:active?TFT_GREEN:
+                    row==content.selected_setting?TFT_CYAN:TFT_WHITE;
+                text(4,y,row==content.selected_setting?">":" ",row==content.selected_setting?TFT_CYAN:color);
+                const auto& entry=view.rows[row];
+                text(20,y,entry.id?entry.id.c_str():"NONE",color);
             }
             const auto reason=view.count?datasetRowBlock(data,content.selected_setting):DatasetError::None;
             if(reason!=DatasetError::None) notice(datasetErrorText(reason,japanese));
+            else {
+                std::snprintf(line,sizeof(line),"PAGE %u%s",unsigned(view.page)+1u,view.has_newer?"  MORE":"");
+                text(4,110,line,TFT_LIGHTGREY);
+            }
+        } else if (content.page == SettingsPage::DatasetChoice) {
+            text(4,19,view.id.c_str(),TFT_WHITE);
+            if(view.id==data.storage.selected_dataset && bool(data.settings.dataset))
+                text(168,19,"SELECTED",TFT_GREEN);
+            const auto offset=model.datasetTitleOffset();
+            if(offset)drawKeyArrow(4,31,UiKey::Left,true);
+            datasetSingleLine(uiTextAt(view.info.title,offset),japanese,line,sizeof(line),200);
+            item(20,27,line,content.selected_setting==0?TFT_CYAN:TFT_WHITE);
+            if(uiTextCanScroll(view.info.title,japanese,offset,200))drawKeyArrow(228,31,UiKey::Right,true);
+            const auto candidate=model.datasetWordbookIndex();
+            const auto type=candidate<view.info.language_count?view.info.wordbook_types[candidate]:view.info.language;
+            datasetSingleLine(type,false,line,sizeof(line),112);
+            const auto word_color=candidate!=view.info.language_index?TFT_YELLOW:
+                content.selected_setting==1?TFT_CYAN:TFT_WHITE;
+            item(4,47,content.selected_setting==1?">":" ",TFT_CYAN);
+            item(20,47,japanese?"辞書":"WORD",content.selected_setting==1?TFT_CYAN:TFT_WHITE);
+            font_.draw(frame_,SettingsLayout::ValueRight-PixelFont::width(line,TextRole::Ascii8x16),47,
+                line,TextRole::Ascii8x16,word_color);
+            item(4,67,content.selected_setting==2?">":" ",TFT_CYAN);
+            item(20,67,japanese?"詳細":"Details",content.selected_setting==2?TFT_CYAN:TFT_WHITE);
+            const auto blocked=datasetSelectionBlock(data,true);
+            const auto apply_color=blocked!=DatasetError::None?TFT_DARKGREY:content.selected_setting==3?TFT_CYAN:TFT_WHITE;
+            item(4,87,content.selected_setting==3?">":" ",apply_color);
+            item(20,87,japanese?"適用する":"Apply",apply_color);
+            if(content.selected_setting==3 && blocked!=DatasetError::None)notice(datasetErrorText(blocked,japanese));
         } else {
             const auto count=datasetDetailRows(view,japanese);
-            const unsigned first=SettingsLayout::firstVisible(content.selected_setting,count);
-            for (unsigned n=0;n<4 && first+n<count;++n) {
-                const unsigned row=first+n;const int y=27+n*20;
-                const auto color=row==count-1 && datasetSelectionBlock(data,true)!=DatasetError::None?TFT_DARKGREY:row==content.selected_setting?(model.editDirty()?TFT_YELLOW:TFT_CYAN):TFT_WHITE;
-                item(4,y,row==content.selected_setting?">":" ",color);
-                const bool ascii=datasetDetailLine(view,row,japanese,line,sizeof(line));
-                font_.draw(frame_,20,y,line,ascii?TextRole::Ascii8x16:item_role,color);
+            const unsigned first=content.selected_setting;
+            for (unsigned n=0;n<DatasetDetailVisibleRows && first+n<count;++n) {
+                const int y=27+n*20;
+                const bool ascii=datasetDetailLine(view,first+n,japanese,line,sizeof(line));
+                font_.draw(frame_,4,y,line,ascii?TextRole::Ascii8x16:item_role,TFT_WHITE);
             }
-            std::snprintf(line,sizeof(line),"%u/%u",content.selected_setting+1u,count);text(4,110,line);
-            const auto reason=datasetSelectionBlock(data,true);
-            if(content.selected_setting==count-1 && reason!=DatasetError::None) {
-                notice(datasetErrorText(reason,japanese));
-            }
+            std::snprintf(line,sizeof(line),"%u/%u",first+1u,count);text(4,110,line);
         }
     } else if (model.cardInfo()) {
         if (data.storage.card_state == CardState::Mounted)
@@ -673,21 +710,22 @@ void GpsUiRenderer::drawSettings(const GpsUiModel& model, const UiSnapshot& cont
         const unsigned first = SettingsLayout::firstVisible(content.selected_setting, OperationRowCount);
         for (unsigned visible = 0; visible < SettingsLayout::VisibleRows && first + visible < OperationRowCount; ++visible) {
             const unsigned row = first + visible;
+            const unsigned setting = operationSettingIndex(row);
             const int y = SettingsLayout::FirstRowY + visible * SettingsLayout::RowStep;
             const bool selected = row == content.selected_setting;
-            const uint16_t color = !settingEditable(row) && row != static_cast<unsigned>(SettingId::Dataset) ? TFT_DARKGREY : selected ? (model.editDirty()?TFT_YELLOW:TFT_CYAN) : TFT_WHITE;
+            const uint16_t color = !settingEditable(setting) ? TFT_DARKGREY : selected ? (model.editDirty()?TFT_YELLOW:TFT_CYAN) : TFT_WHITE;
             item(4, y, selected ? ">" : " ", TFT_CYAN);
             item(SettingsLayout::LabelX, y, settingsOperationLabel(language, row), color);
             char value[24];
-            settingsValueText(language, row, selected && model.editing() ? model.editValue() : settingValue(settings, row), value, sizeof(value));
-            const auto value_role = row == static_cast<unsigned>(SettingId::Language) ? TextRole::Ascii8x16 : item_role;
-            font_.draw(frame_, SettingsLayout::ValueRight - PixelFont::width(value, value_role), y, value, value_role, !settingEditable(row)?color:selected&&model.editDirty()?TFT_YELLOW:TFT_CYAN);
+            settingsValueText(language, setting, selected && model.editing() ? model.editValue() : settingValue(settings, setting), value, sizeof(value));
+            const auto value_role = setting == static_cast<unsigned>(SettingId::Language) ? TextRole::Ascii8x16 : item_role;
+            font_.draw(frame_, SettingsLayout::ValueRight - PixelFont::width(value, value_role), y, value, value_role, !settingEditable(setting)?color:selected&&model.editDirty()?TFT_YELLOW:TFT_CYAN);
         }
         std::snprintf(line, sizeof(line), "%u/%u", content.selected_setting + 1u, OperationRowCount);
         text(4, LivePlaceLayout::LogY, line, TFT_WHITE);
     } else if(content.page==SettingsPage::DatasetMenu) {
         frame_.fillRect(0,0,240,ViewHeaderBottom,TFT_BLACK);text(4,ViewHeaderTextY,"DATASET");
-        if(settings.dataset) std::snprintf(line,sizeof(line),"CURRENT SELECTED / ALL LANGUAGES");
+        if(settings.dataset) std::snprintf(line,sizeof(line),"CURRENT %s",data.storage.selected_dataset.c_str());
         else std::snprintf(line,sizeof(line),"CURRENT NONE");
         text(4,26,line,TFT_LIGHTGREY);
         for(unsigned row=0;row<3;++row) {

@@ -48,6 +48,7 @@ private:
     void mountCard();
     void closeCard();
     bool formatCard();
+    bool prepareDirectories();
     void configureDataset();
     void loadAlarmProfile();
     bool saveAlarmProfile();

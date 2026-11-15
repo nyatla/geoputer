@@ -180,33 +180,67 @@ void navigationAndGate() {
     rec.pending=true;check(!datasetLogStopped(rec,log),"App pending sample blocks reboot");rec.pending=false;
     GpsUiModel model;UiData data{};data.settings=defaultSettings();data.storage.card_state=CardState::Mounted;data.storage.settings_state=SettingsState::Loaded;
     check(model.setScreen({ScreenId::Settings,DisplayMode::View,1,data,0,ActionResult::None})==OperationStatus::Ok,"settings opens");
-    model.keyPressed(UiKey::Enter,1);for(unsigned i=0;i<5;++i)model.keyPressed(UiKey::Down,2+i);model.keyPressed(UiKey::Enter,8);
+    for(unsigned i=0;i<settingsRootIndex(SettingsRootItem::Dataset);++i)model.keyPressed(UiKey::Down,2+i);
+    model.keyPressed(UiKey::Enter,8);
     check(model.snapshot().page==SettingsPage::DatasetMenu && model.snapshot().action.kind==ActionKind::None,"Dataset opens its menu without reading or validating files");
     model.keyPressed(UiKey::Enter,8);
     check(model.snapshot().action.kind==ActionKind::Dataset && model.snapshot().action.dataset_action==DatasetAction::Open,"Select dataset opens the existing list");
     auto publish=[&](){const auto action=model.snapshot().action;data.revision++;data.editDatasets().revision=model.data().datasets().revision+1;model.updateContent({DisplayMode::View,1,data,action.action_id,ActionResult::Applied});};
-    data.editDatasets().count=1;data.editDatasets().rows[0].id.assign("jp-tokyo");std::strcpy(data.editDatasets().rows[0].title,"Tokyo");publish();
+    data.editDatasets().count=1;data.editDatasets().rows[0].id.assign("jp-tokyo");
+    std::strcpy(data.editDatasets().rows[0].title,"A long dataset title whose ending must remain reachable on the device");publish();
+    model.keyPressed(UiKey::Right,8);
+    check(model.datasetTitleOffset()==0,"SELECT list has no title to scroll");
     model.keyPressed(UiKey::Enter,9);check(model.snapshot().action.dataset_action==DatasetAction::Detail,"Enter opens details");
-    data.editDatasets()={};data.editDatasets().detail=true;data.editDatasets().id.assign("jp-tokyo");data.editDatasets().info.language_count=2;std::strcpy(data.editDatasets().info.language,"ja");std::strcpy(data.editDatasets().info.description,"説明文");publish();
+    data.editDatasets()={};data.editDatasets().detail=true;data.editDatasets().id.assign("jp-tokyo");data.editDatasets().info.language_count=2;std::strcpy(data.editDatasets().info.language,"ja");
+    std::strcpy(data.editDatasets().info.wordbook_types[0],"ja");std::strcpy(data.editDatasets().info.wordbook_types[1],"en");
+    std::strcpy(data.editDatasets().info.title,"A long dataset title whose ending must remain reachable on the device");std::strcpy(data.editDatasets().info.description,"説明文");publish();
+    check(model.snapshot().page==SettingsPage::DatasetChoice,"selected dataset opens its operation screen");
+    check(model.datasetWordbookIndex()==0,"DATASET starts with the metadata's selected Wordbook");
+    model.keyPressed(UiKey::Right,10);
+    check(model.datasetTitleOffset()==1,"operation title scrolls independently from the list");
+    model.keyPressed(UiKey::Down,10);model.keyPressed(UiKey::Right,11);
+    check(model.datasetWordbookIndex()==1 && model.snapshot().action.kind==ActionKind::None &&
+          !std::strcmp(model.data().datasets().info.language,"ja"),"Wordbook changes only the UI candidate");
+    model.keyPressed(UiKey::Left,12);
+    check(model.datasetWordbookIndex()==0,"Wordbook can be moved back with Left");
+    model.keyPressed(UiKey::Right,13);
+    model.keyPressed(UiKey::Down,14);model.keyPressed(UiKey::Enter,15);
+    check(model.snapshot().page==SettingsPage::DatasetDetail,"Details opens a separate parameter screen");
     const auto count=datasetDetailRows(data.editDatasets(),true);
-    for(unsigned i=0;i<count-2;++i)model.keyPressed(UiKey::Down,10+i);
-    model.keyPressed(UiKey::Enter,40);model.keyPressed(UiKey::Right,41);
-    check(model.snapshot().action.dataset_action==DatasetAction::Language && model.editing(),"language edits use L/R within settings");
-    data.editDatasets().loading=true;publish();
-    model.keyPressed(UiKey::Escape,42);
-    check(model.snapshot().action.dataset_action==DatasetAction::CancelLanguage && !std::strcmp(model.snapshot().action.settings.wordbook_language,"ja"),"Esc restores the pre-edit language draft without saving");
-    data.editDatasets().loading=false;std::strcpy(data.editDatasets().info.language,"ja");publish();
-    model.keyPressed(UiKey::Right,43);
-    check(model.snapshot().action.dataset_action==DatasetAction::Language && model.editing(),"Wordbook language changes without an entry Enter");
-    std::strcpy(data.editDatasets().info.language,"en");publish();
-    check(model.editDirty(),"completed language preview remains dirty until row confirmation");
-    model.keyPressed(UiKey::Down,44);
-    check(!model.editing() && model.snapshot().selected_setting==count-1 && model.snapshot().action.kind==ActionKind::None &&
-          !std::strcmp(model.data().datasets().info.language,"en"),"row movement confirms the language candidate without applying or saving the dataset");
-    model.keyPressed(UiKey::Enter,44);
-    check(model.snapshot().action.dataset_action==DatasetAction::Apply,"last detail row requests validated apply/restart");
+    char title_line[80]{};
+    std::string restored_title;
+    const auto title_lines=datasetTextLines(data.editDatasets().info.title,true,UINT32_MAX,title_line,sizeof(title_line));
+    check(title_lines>1,"long title wraps in read-only details");
+    for(unsigned i=0;i<title_lines;++i){datasetDetailLine(data.editDatasets(),i,true,title_line,sizeof(title_line));restored_title+=title_line;}
+    check(restored_title==data.editDatasets().info.title,"detail title is shown in full without horizontal scrolling");
+    char types[config::MaxDatasetLanguages*config::DatasetLanguageBytes]{};
+    datasetWordbookList(data.editDatasets(),types,sizeof(types));
+    check(!std::strcmp(types,"ja/en"),"Details lists Wordbook types separated by slashes");
+    model.keyPressed(UiKey::Enter,40);
+    check(model.snapshot().page==SettingsPage::DatasetDetail && model.snapshot().action.kind==ActionKind::None,
+          "Enter does not select or change a Wordbook in read-only details");
+    model.keyPressed(UiKey::Right,41);
+    const auto last=count>DatasetDetailVisibleRows?count-DatasetDetailVisibleRows:0;
+    check(model.snapshot().selected_setting==std::min<unsigned>(DatasetDetailVisibleRows,last) &&
+          model.snapshot().action.kind==ActionKind::None && !model.editing(),
+          "Right scrolls the read-only detail text by one page");
+    model.keyPressed(UiKey::Left,42);
+    check(model.snapshot().selected_setting==0,"Left scrolls the detail text back one page");
+    model.keyPressed(UiKey::Down,43);
+    check(model.snapshot().selected_setting==1,"Down scrolls the detail text by one line");
+    model.keyPressed(UiKey::Up,44);
+    check(model.snapshot().selected_setting==0,"Up scrolls the detail text back one line");
+    for(unsigned i=0;i<count+2;++i)model.keyPressed(UiKey::Down,45+i);
+    check(model.snapshot().selected_setting==last,"detail scroll stops at the last visible page");
+    model.keyPressed(UiKey::Escape,80);
+    check(model.snapshot().page==SettingsPage::DatasetChoice && model.snapshot().selected_setting==2,
+          "Esc returns from details to the operation screen without a Back row");
+    model.keyPressed(UiKey::Down,81);model.keyPressed(UiKey::Enter,82);
+    check(model.snapshot().action.dataset_action==DatasetAction::Apply &&
+          !std::strcmp(model.snapshot().action.settings.wordbook_language,"en"),
+          "DATASET applies the chosen Wordbook only when Apply is pressed");
     data.editDatasets().loading=data.editDatasets().applying=true;publish();model.keyPressed(UiKey::Escape,45);model.tick(100000);
-    check(model.snapshot().page==SettingsPage::DatasetDetail && model.snapshot().action.kind==ActionKind::None,"committed apply cannot be cancelled or put to sleep");
+    check(model.snapshot().page==SettingsPage::DatasetChoice && model.snapshot().action.kind==ActionKind::None,"committed apply cannot be cancelled or put to sleep");
     for (const auto error : {DatasetError::IndexFailed,DatasetError::IndexRestoreFailed,DatasetError::SaveFailed}) {
         data.editDatasets().loading=data.editDatasets().applying=false;data.editDatasets().error=error;publish();
         model.keyPressed(UiKey::Enter,100001);
@@ -232,7 +266,8 @@ void unselectedUi() {
     auto publish=[&](){const auto action=model.snapshot().action;++data.revision;
         data.editDatasets().revision=model.data().datasets().revision+1;
         model.updateContent({DisplayMode::View,1,data,action.action_id,ActionResult::Applied});};
-    key(UiKey::Enter);for(unsigned i=0;i<5;++i)key(UiKey::Down);key(UiKey::Enter);
+    for(unsigned i=0;i<settingsRootIndex(SettingsRootItem::Dataset);++i)key(UiKey::Down);
+    key(UiKey::Enter);
     key(UiKey::Down);
     check(datasetMenuBlock(model.data(),1)==DatasetError::CardUnavailable,"cache menu knows SD is unavailable");
     key(UiKey::Enter);check(model.snapshot().page==SettingsPage::DatasetMenu && !model.confirming() && model.snapshot().action.kind==ActionKind::None,
@@ -267,7 +302,8 @@ void cacheFlow(DatasetPurpose purpose) {
     auto publish=[&](){const auto action=model.snapshot().action;++data.revision;
         data.editDatasets().revision=model.data().datasets().revision+1;
         model.updateContent({DisplayMode::View,1,data,action.action_id,ActionResult::Applied});};
-    key(UiKey::Enter);for(unsigned i=0;i<5;++i)key(UiKey::Down);key(UiKey::Enter);
+    for(unsigned i=0;i<settingsRootIndex(SettingsRootItem::Dataset);++i)key(UiKey::Down);
+    key(UiKey::Enter);
     const auto entry=static_cast<unsigned>(purpose);for(unsigned i=0;i<entry;++i)key(UiKey::Down);
     check(datasetMenuBlock(data,entry)==DatasetError::None,"unselected active dataset does not disable cache maintenance");
     data.recording.state=RecordingState::Recording;publish();key(UiKey::Enter);
@@ -299,7 +335,7 @@ void cacheFlow(DatasetPurpose purpose) {
         "result returns to the same kind of target list");
     data.editDatasets().error=DatasetError::None;publish();key(UiKey::Escape);
     check(model.snapshot().page==SettingsPage::DatasetMenu && model.snapshot().selected_setting==entry,"target list backs to its own menu entry");
-    key(UiKey::Escape);check(model.snapshot().page==SettingsPage::Operation,"dataset menu backs to Operation");
+    key(UiKey::Escape);check(model.snapshot().page==SettingsPage::Root && model.snapshot().selected_setting==settingsRootIndex(SettingsRootItem::Dataset),"dataset menu backs to its root entry");
 }
 }
 void testDatasets() {

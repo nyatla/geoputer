@@ -8,7 +8,7 @@ python3 tools/build_release.py
 
 スクリプトは`application/Version.h`の`ApplicationVersion`を採用し、PlatformIOの`cardputer-adv`環境でファームウェアをビルドする。続けてGaluchat GIS SDKの`release/`を入力として、既存の`tools/build_mapsets_from_sdk.py`で44セットの実機用マップセットを一時領域へ再生成する。SDKの配置を変えた場合は`--sdk-release`、PlatformIOの実行ファイルを自動検出できない場合は`--pio`を指定する。
 
-成功時は`release/v<version>/`へファームウェアBINを1個、マップセットごとのZIPを44個置く。`release/`はGitの管理対象外とする。同じバージョンの出力先が存在する場合は上書きせず停止する。
+成功時は`release/v<version>/`へファームウェアBINを1個、マップセットごとのZIPを44個置く。初回公開版は`v0.1.0`であり、生成したファイルを同名のGitHub Releasesタグ`v0.1.0`へそのまま配置する。`release/`はGitの管理対象外とする。同じバージョンの出力先が存在する場合は上書きせず停止する。
 
 ```text
 geoputer-v<version>-firmware.bin

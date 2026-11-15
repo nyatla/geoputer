@@ -157,7 +157,7 @@ bool Files::inspectText(const char* path,char version[17]) {
 bool Files::recover() {
     if(open_)return fail("File operation busy");
     char root[64];std::snprintf(root,sizeof(root),"%u:%s",drive_,DataRoot);
-    const auto root_made=f_mkdir(root);if(root_made!=FR_OK && root_made!=FR_EXIST)return fail("Cannot prepare GeoPuter directory");
+    const auto root_made=f_mkdir(root);if(root_made!=FR_OK && root_made!=FR_EXIST)return fail("Cannot prepare Geoputer directory");
     char dir[64];std::snprintf(dir,sizeof(dir),"%u:%s",drive_,Private);
     const auto made=f_mkdir(dir);if(made!=FR_OK && made!=FR_EXIST)return fail("Cannot prepare recovery directory");
     char record[64];privatePath("transaction",record,sizeof(record));FILINFO info{};
@@ -228,7 +228,7 @@ bool Files::finish() {
 }
 void Files::abort(){close();writing_=false;erasePrivate("upload");}
 bool Files::remove(const char* logical,bool(*cancelled)(void*),void* context) {
-    if(!validPath(logical,false) || dataRoot(logical))return fail("Cannot delete GeoPuter root or invalid path");
+    if(!validPath(logical,false) || dataRoot(logical))return fail("Cannot delete Geoputer root or invalid path");
     // Iterative depth-first removal: one directory object, no recursive stack or
     // full subtree list. A failure reports a possibly partially removed subtree.
     char path[256];std::strcpy(path,logical);const size_t base=std::strlen(path);unsigned depth=0;

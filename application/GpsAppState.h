@@ -3,7 +3,7 @@
 #include "alarm/AlarmEngine.h"
 #include "task/storage/PlaceSearchFlow.h"
 namespace geoputer {
-enum class AppBootStage {NeedSettings,WaitSettings,SelectMode,NeedDataset,WaitDataset,Complete};
+enum class AppBootStage {NeedSettings,WaitSettings,NeedSdDecision,AwaitSdDecision,WaitSdOperation,SelectMode,NeedDataset,WaitDataset,Complete};
 struct GpsAppState {
     LogCommand log_pending_record_{};
     UiAction log_control_{};

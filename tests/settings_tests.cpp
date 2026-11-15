@@ -89,9 +89,9 @@ SetUiScreen screen() {
 }
 
 void navigationAndEditing() {
-    for (unsigned selected = 0; selected < SettingCount; ++selected) {
-        const unsigned first = SettingsLayout::firstVisible(selected, SettingCount);
-        check(first <= selected && selected < first + SettingsLayout::VisibleRows && first + SettingsLayout::VisibleRows <= SettingCount,
+    for (unsigned selected = 0; selected < OperationRowCount; ++selected) {
+        const unsigned first = SettingsLayout::firstVisible(selected, OperationRowCount);
+        check(first <= selected && selected < first + SettingsLayout::VisibleRows && first + SettingsLayout::VisibleRows <= OperationRowCount,
               "all seven operation settings remain selectable inside the four-row large-font window");
     }
     GpsUiModel ui;
@@ -143,13 +143,14 @@ void navigationAndEditing() {
 void directEditing() {
     // Exercise every NVS scalar in both UI languages, including wrap/cancel/no-op saves.
     for(const auto language:{UiLanguage::Japanese,UiLanguage::English})for(unsigned row=0;row<OperationRowCount;++row) {
-        if(!settingEditable(row))continue;
+        const auto setting=operationSettingIndex(row);
+        if(!settingEditable(setting))continue;
         UiData data{};data.settings=defaultSettings();data.settings.language=language;
         GpsUiModel model;model.setScreen({ScreenId::Settings,DisplayMode::View,1,data,0,ActionResult::None});
         uint32_t now=0;auto key=[&](UiKey k){model.keyPressed(k,++now);};
         key(UiKey::Enter);for(unsigned n=0;n<row;++n)key(UiKey::Down);
-        const auto original=settingValue(data.settings,row);
-        const auto next=uint8_t((original+1)%settingChoices(row));
+        const auto original=settingValue(data.settings,setting);
+        const auto next=uint8_t((original+1)%settingChoices(setting));
         check(model.keyGuide().left && model.keyGuide().right,"scalar exposes Left/Right before editing");
         key(UiKey::Enter);check(!model.editing() && model.snapshot().action.kind==ActionKind::None,"unchanged Enter never saves");
         key(UiKey::Right);check(model.editDirty() && model.editValue()==next && model.snapshot().action.kind==ActionKind::None,"direct change is a local dirty preview");
@@ -161,7 +162,7 @@ void directEditing() {
               model.snapshot().action.kind==ActionKind::None && sameSettings(model.data().settings,data.settings),"Del cancels only the dirty item");
         key(UiKey::Right);key(row?UiKey::Up:UiKey::Down);
         const auto saved=model.snapshot().action;
-        check(saved.kind==ActionKind::SaveSettings && settingValue(saved.settings,row)==next && !model.editing() &&
+        check(saved.kind==ActionKind::SaveSettings && settingValue(saved.settings,setting)==next && !model.editing() &&
               model.snapshot().selected_setting==(row?row-1:row+1),"moving to another row confirms exactly the departing field");
         data.settings=saved.settings;++data.revision;
         model.updateContent({DisplayMode::View,1,data,saved.action_id,ActionResult::Applied});

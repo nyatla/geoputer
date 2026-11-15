@@ -1,6 +1,8 @@
 #include "PixelFont.h"
 #include "Shinonome.h"
+#include "EllipsisGlyph.h"
 #include "../../PlaceText.h"
+#include "../../utils/Ellipsis.h"
 #include <cstring>
 
 namespace geoputer {
@@ -22,7 +24,8 @@ int PixelFont::width(const char* text, TextRole role) {
         const int length = first < 0x80 ? 1 : first < 0xE0 ? 2 : first < 0xF0 ? 3 : 4;
         for (int i = 0; i < length; ++i)
             if (!text[i] || (i && (static_cast<unsigned char>(text[i]) & 0xC0) != 0x80)) return result;
-        result += role == TextRole::Place ? placeCharacterWidth(first) :
+        result += isEllipsis(text) ? (role == TextRole::UI || role == TextRole::Ascii8x16 ? 8 : 16) :
+            role == TextRole::Place ? placeCharacterWidth(first) :
             role == TextRole::UI || (role == TextRole::Ascii8x16 && first < 0x80) ? 8 : 16;
         text += length;
     }
@@ -34,6 +37,21 @@ void PixelFont::draw(UiCanvas& target, int x, int y, const char* text,
     while (*text) {
         const auto first = static_cast<unsigned char>(*text);
         if (role == TextRole::Place && first == ' ') { x += 8; ++text; continue; }
+        if (isEllipsis(text)) {
+            const bool narrow = role == TextRole::UI || role == TextRole::Ascii8x16;
+            const int cell = narrow ? 8 : 16;
+            const int height = role == TextRole::UI ? 8 : 16;
+            if (x + cell > target.width()) break;
+            for (int row = 0; row < height; ++row) {
+                const uint16_t bits = narrow ? (height == 8 ? ellipsis_glyph::Narrow8[row] : ellipsis_glyph::Narrow16[row]) :
+                    ellipsis_glyph::Wide16[row];
+                for (int col = 0; col < cell; ++col)
+                    if (bits & (narrow ? (0x80u >> col) : (0x8000u >> col))) target.drawPixel(x + col, y + row, color);
+            }
+            text += EllipsisBytes;
+            x += cell;
+            continue;
+        }
         const bool ascii16 = role == TextRole::Ascii8x16 && first < 0x80;
         const int cell = role == TextRole::UI || ascii16 ? 8 : 16;
         const int height = role == TextRole::UI ? 8 : 16;

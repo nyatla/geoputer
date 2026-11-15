@@ -1,5 +1,6 @@
 #pragma once
 #include "GpsUiTypes.h"
+#include "../../utils/UiTextClip.h"
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
@@ -59,32 +60,50 @@ inline unsigned datasetTextLines(const char* text,bool japanese,unsigned wanted,
     for(size_t i=0;text[i];) {
         const auto c=static_cast<unsigned char>(text[i]);
         const size_t bytes=c<0x80?1:c<0xe0?2:c<0xf0?3:4;
-        const unsigned advance=japanese || c>=0x80?2:1;
+        const unsigned advance=japanese || (c>=0x80 && !isEllipsis(text+i))?2:1;
         if(width+advance>columns) {++row;width=0;}
         if(row==wanted && used+bytes<capacity) {std::memcpy(out+used,text+i,bytes);used+=bytes;out[used]=0;}
         width+=advance;i+=bytes;
     }
     return row+1;
 }
-inline void datasetSingleLine(const char* text,bool ja,char* out,size_t capacity,unsigned columns=26) {
-    if(datasetTextLines(text,ja,0,out,capacity,columns)<=1 || capacity<4) return;
-    auto units=[&]() {unsigned total=0;for(size_t i=0;out[i];) {
-        const auto ch=static_cast<unsigned char>(out[i]);total+=ja || ch>=128?2:1;
-        i+=ch<128?1:ch<224?2:ch<240?3:4;
-    }return total;};
-    size_t bytes=std::strlen(out);
-    while(bytes && (units()+(ja?6:3)>columns || bytes+3>=capacity)) {
-        --bytes;while(bytes && (static_cast<unsigned char>(out[bytes])&0xc0)==0x80) --bytes;
-        out[bytes]=0;
+inline void datasetSingleLine(const char* text,bool ja,char* out,size_t capacity,unsigned max_pixels=216) {
+    clipUiText(text,ja,out,capacity,max_pixels);
+}
+inline const char* datasetRowTitle(const DatasetRow& row,bool ja) {
+    return row.id?row.title:(ja?"未選択":"None");
+}
+inline constexpr unsigned DatasetChoiceRows=4; // Title, Wordbook, details, apply.
+inline constexpr unsigned DatasetDetailVisibleRows=4;
+inline void datasetWordbookList(const DatasetView& view,char* out,size_t capacity) {
+    if(!capacity)return;
+    size_t used=0;out[0]=0;
+    for(unsigned i=0;i<view.info.language_count && i<config::MaxDatasetLanguages;++i){
+        const auto* type=view.info.wordbook_types[i];
+        const size_t length=std::strlen(type);
+        if(used+length+(i?1:0)>=capacity)break;
+        if(i)out[used++]='/';
+        std::memcpy(out+used,type,length);used+=length;out[used]=0;
     }
-    std::memcpy(out+bytes,"...",4);
 }
 inline unsigned datasetDetailRows(const DatasetView& view,bool ja) {
-    char unused[1];return 1+datasetTextLines(view.info.description,ja,UINT32_MAX,unused,sizeof(unused))+7;
+    char types[config::MaxDatasetLanguages*config::DatasetLanguageBytes],unused[1];
+    datasetWordbookList(view,types,sizeof(types));
+    return datasetTextLines(view.info.title,ja,UINT32_MAX,unused,sizeof(unused))+
+        1+datasetTextLines(types,false,UINT32_MAX,unused,sizeof(unused))+
+        datasetTextLines(view.info.description,ja,UINT32_MAX,unused,sizeof(unused))+5;
 }
 inline bool datasetDetailLine(const DatasetView& view,unsigned row,bool ja,char* out,size_t size) {
-    char unused[1];const auto lines=datasetTextLines(view.info.description,ja,UINT32_MAX,unused,sizeof(unused));
-    if(!row) {datasetSingleLine(view.info.title,ja,out,size);return false;}
+    char types[config::MaxDatasetLanguages*config::DatasetLanguageBytes],unused[1];
+    datasetWordbookList(view,types,sizeof(types));
+    const auto title_lines=datasetTextLines(view.info.title,ja,UINT32_MAX,unused,sizeof(unused));
+    if(row<title_lines) {datasetTextLines(view.info.title,ja,row,out,size);return false;}
+    row-=title_lines;
+    if(!row) {std::snprintf(out,size,"%s",ja?"辞書":"WORD");return !ja;}
+    const auto type_lines=datasetTextLines(types,false,UINT32_MAX,unused,sizeof(unused));
+    if(row<=type_lines) {datasetTextLines(types,false,row-1,out,size);return true;}
+    row-=type_lines;
+    const auto lines=datasetTextLines(view.info.description,ja,UINT32_MAX,unused,sizeof(unused));
     if(row<=lines) {datasetTextLines(view.info.description,ja,row-1,out,size);return false;}
     const auto& d=view.info;
     switch(row-lines-1) {
@@ -93,8 +112,7 @@ inline bool datasetDetailLine(const DatasetView& view,unsigned row,bool ja,char*
         case 2:std::snprintf(out,size,"W %.5f S %.5f",d.west,d.south);return true;
         case 3:std::snprintf(out,size,"E %.5f N %.5f",d.east,d.north);return true;
         case 4:std::snprintf(out,size,"CHUNKS %llu / %u",static_cast<unsigned long long>(d.chunks),static_cast<unsigned>(config::MaxDatasetChunks));return true;
-        case 5:std::snprintf(out,size,"LANG %.21s",d.language);return true;
-        default:std::snprintf(out,size,"%s",ja?"適用する":"Apply");return false;
+        default:out[0]=0;return true;
     }
 }
 } // namespace geoputer

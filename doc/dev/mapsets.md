@@ -9,7 +9,7 @@ map.glc
 <日本語Wordbook>.giswordbook  # 日本の3セットのみ
 ```
 
-GLCは対応するSDKリリースのうち、ヘッダーの `unit_inv_x`・`unit_inv_y` が等しく、チャンク数がファームの上限1500件以内である候補から、最も細かいものを1つ選ぶ。採用元のファイル名、解像度、チャンク数は[選定一覧](mapsets-selection.tsv)に記録する。低解像度のGLC、元言語が日本語・英語以外のWordbook、名前の対照表、チェックサム、SDKの説明書は実機用セットへ収録しない。英字Wordbookは印字可能ASCIIの言語パック版を使う。
+GLCは対応するSDKリリースのうち、ヘッダーの `unit_inv_x`・`unit_inv_y` が等しく、チャンク数がファームの上限1500件以内である候補から、最も細かいものを1つ選ぶ。採用元のファイル名、解像度、チャンク数は[選定一覧](mapsets-selection.tsv)に記録する。低解像度のGLC、元言語が日本語・英語以外のWordbook、名前の対照表、チェックサム、SDKの説明書は実機用セットへ収録しない。英字WordbookはSDK v0.2.8の印字可能ASCII言語パックrev2を使う。地図ZIPは[構築元一覧](../../tools/mapsets_sources.tsv)に記載した版を使う。
 
 e-Stat 2020はrev2の地図と4階層 `subdiv` の日本語・英字Wordbookを使う。3階層辞書は収録しない。
 

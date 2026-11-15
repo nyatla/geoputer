@@ -255,9 +255,9 @@ static void testScreenResourceLifetime() {
     check(ui.map.frame.commit(info) && ui.map.frame.image().bytes(),"UI owns a committed fixed image");
     ui.enter(ScreenGroup::Settings);
     check(!ui.map.frame.image().bytes() && !ui.map.cursor.valid,"map image is hidden at screen leave");
-    ui.settings.editing=true;ui.settings.dataset.edit_original[0]='x';ui.settings.license_offset=81;
+    ui.settings.editing=true;ui.settings.dataset.wordbook_index=3;ui.settings.license_offset=81;
     ui.enter(ScreenGroup::Logs);
-    check(!ui.settings.editing && !ui.settings.dataset.edit_original[0] && !ui.settings.license_offset,
+    check(!ui.settings.editing && !ui.settings.dataset.wordbook_index && !ui.settings.license_offset,
           "departed settings and license state are cleared before log entry");
 }
 

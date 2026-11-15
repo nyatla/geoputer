@@ -1,6 +1,7 @@
 #include "DatasetMetadata.h"
 #include "../StoragePath.h"
 #include "../../../utils/Utf8.h"
+#include "../../../utils/Ellipsis.h"
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
@@ -37,7 +38,7 @@ void datasetCopyText(char* target,size_t capacity,std::string_view source) {
     size_t bytes=std::min(capacity-(clipped?4:1),source.size());
     if(bytes<source.size()) while(bytes && (static_cast<unsigned char>(source[bytes])&0xc0)==0x80) --bytes;
     if(bytes)std::memcpy(target,source.data(),bytes);
-    if(clipped) {std::memcpy(target+bytes,"...",3);bytes+=3;}
+    if(clipped) {std::memcpy(target+bytes,EllipsisUtf8,EllipsisBytes);bytes+=EllipsisBytes;}
     target[bytes]='\0';
 }
 void readDatasetMetadataInto(std::string_view directory,UiLanguage ui,const char* requested,

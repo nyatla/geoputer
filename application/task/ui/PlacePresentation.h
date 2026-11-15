@@ -11,6 +11,8 @@ inline const char* mainError(const UiData& data) {
     if (data.storage.log_result == LogError::Io || data.storage.log_result == LogError::BufferFull || data.storage.log_result == LogError::Capacity)
         return logErrorName(data.storage.log_result);
     if (data.storage.dataset_failure.save_failed) return "DATASET CLEAR SAVE FAILED";
+    if (data.storage.card_state == CardState::NeedsSetup) return "GEOPUTER SETUP REQUIRED";
+    if (data.storage.card_state == CardState::Unsupported) return "SD FAT32 REQUIRED";
     if (data.storage.card_state != CardState::Mounted) return "SD NOT READY";
     if (data.gps.reception == GpsReception::Unavailable) return "GPS UNAVAILABLE";
     if (data.gps.reception == GpsReception::NoData) return "GPS SIGNAL LOST";

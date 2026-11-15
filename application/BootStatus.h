@@ -8,6 +8,7 @@ namespace geoputer {
 
 enum class BootItem : uint8_t { Display, Tasks, Settings, SD, GPS, Dataset, Count };
 enum class BootCheckState : uint8_t { Pending, Checking, Passed, Warning, Failed };
+enum class BootSetupPrompt : uint8_t { None, Format, Directories };
 
 struct BootCheck {
     BootCheckState state;
@@ -22,6 +23,7 @@ struct BootStatus {
     BootCheck checks[Count]{};
     bool complete = false;
     bool maintenance = false; // Selected before GIS startup, or from a stopped error screen.
+    BootSetupPrompt setup_prompt = BootSetupPrompt::None;
 
     void set(BootItem item, BootCheckState state, const char* detail) {
         auto& check = checks[static_cast<unsigned>(item)];
@@ -53,6 +55,7 @@ struct BootStatus {
             case CardState::Mounted: set(BootItem::SD, BootCheckState::Passed, "FAT32"); break;
             case CardState::NoCard: set(BootItem::SD, BootCheckState::Warning, "NO CARD"); break;
             case CardState::Unsupported: set(BootItem::SD, BootCheckState::Warning, "NOT FAT32"); break;
+            case CardState::NeedsSetup: set(BootItem::SD, BootCheckState::Warning, "NO SETUP"); break;
             default: set(BootItem::SD, BootCheckState::Failed, "SD ERROR"); break;
         }
     }

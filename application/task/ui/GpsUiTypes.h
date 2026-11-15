@@ -15,11 +15,11 @@ namespace geoputer {
 
 inline bool isLogBrowser(ScreenId screen) { return screen==ScreenId::Logs || screen==ScreenId::LogPoint || screen==ScreenId::LogProperties || screen==ScreenId::LogStatistics; }
 
-enum class ActionKind : uint8_t { None, ChangeScreen, SaveSettings, ResetSettings, Storage, Sleep, Wake, Logging, Browse, Dataset, Maintenance, RestartLogger, MapScale, SaveAlarm, ReloadAlarm, PreviewAlarm, SilenceAlarm };
+enum class ActionKind : uint8_t { None, ChangeScreen, SaveSettings, ResetSettings, Storage, Sleep, Wake, Logging, Browse, Dataset, Maintenance, RestartLogger, MapScale, SaveAlarm, ReloadAlarm, PreviewAlarm, SilenceAlarm, BootSetup };
 enum class BrowseAction : uint8_t { OpenFile, Older, Newer, Reload, Point, Delete, Playback, PausePlayback, OpenPoint, Text, Map, Statistics, Recalculate, ReplayFaster, ReplaySlower, ReplayForward, ReplayReverse };
-enum class SettingsPage : uint8_t { Root, Operation, Storage, Reset, Licenses, DatasetList, DatasetDetail, About, DatasetIndex, DatasetMenu, System, Alarm };
+enum class SettingsPage : uint8_t { Root, Operation, Storage, Reset, Licenses, DatasetList, DatasetChoice, DatasetDetail, About, DatasetIndex, DatasetMenu, System, Alarm };
 // Menu commands are separate from persisted settings and page identifiers.
-enum class SettingsRootItem : uint8_t { Operation, System, Alarm, Storage, About, Licenses, Count };
+enum class SettingsRootItem : uint8_t { Operation, System, Alarm, Dataset, Storage, About, Licenses, Count };
 constexpr unsigned settingsRootIndex(SettingsRootItem item) { return static_cast<unsigned>(item); }
 constexpr unsigned SettingsRootCount = settingsRootIndex(SettingsRootItem::Count);
 constexpr unsigned SettingsSystemRow = settingsRootIndex(SettingsRootItem::System);

@@ -13,7 +13,11 @@ namespace geoputer {
 enum class UiLanguage : uint8_t { Japanese, English };
 enum class SettingId : uint8_t { Language, LogInterval, FlushInterval, ScreenTimeout, Brightness, Dataset, Volume, PowerSaving, GpsMode, Count };
 constexpr unsigned SettingCount = static_cast<unsigned>(SettingId::Count);
-constexpr unsigned OperationRowCount = static_cast<unsigned>(SettingId::GpsMode);
+// Operation rows omit Dataset; persisted SettingId values stay unchanged.
+constexpr unsigned OperationRowCount = static_cast<unsigned>(SettingId::GpsMode) - 1;
+constexpr unsigned operationSettingIndex(unsigned row) {
+    return row < static_cast<unsigned>(SettingId::Dataset) ? row : row + 1;
+}
 constexpr bool settingEditable(unsigned index) { return index < static_cast<unsigned>(SettingId::Dataset) || index==static_cast<unsigned>(SettingId::Volume) || index==static_cast<unsigned>(SettingId::PowerSaving); }
 
 struct Settings {

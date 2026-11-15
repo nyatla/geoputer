@@ -9,6 +9,7 @@
 #include <SD.h>
 #include "StorageCard.h"
 #include "StorageFs.h"
+#include "StorageDirectories.h"
 #include "alarm/AlarmFile.h"
 #include <esp_heap_caps.h>
 #include <cstring>
@@ -52,13 +53,18 @@ void GpsStorageTask::mountCard() {
         gpsState().log_writer_.setDrive(drive_);
         work().setDrive(drive_);
     }
-    mounted_ = mountStorageCard(drive_, "/sd", config::SdMaxOpenFiles, false);  // Never format on mount failure.
+    int mount_result=FR_INT_ERR;
+    mounted_ = mountStorageCard(drive_, "/sd", config::SdMaxOpenFiles, false,&mount_result);  // Never format on mount failure.
     const auto type = sdcard_type(drive_);
     if (type == CARD_SD || type == CARD_SDHC || type == CARD_MMC) {
         state_.card_bytes = static_cast<uint64_t>(sdcard_num_sectors(drive_)) * 512;
         state_.card_state = CardState::Unsupported;
     }
-    if (!mounted_) { state_.sd_error = state_.error = -11; return; }
+    if (!mounted_) {
+        state_.card_state=mount_result==FR_NO_FILESYSTEM?CardState::Unsupported:CardState::Failed;
+        state_.sd_error=state_.error=mount_result;
+        return;
+    }
     char volume[] = {static_cast<char>('0' + drive_), ':', '\0'};
     FATFS* fs = nullptr;
     DWORD free_clusters = 0;
@@ -73,6 +79,23 @@ void GpsStorageTask::mountCard() {
     state_.free_bytes = static_cast<uint64_t>(free_clusters) * fs->csize * 512;
     state_.card_state = fs->fs_type == FS_FAT32 ? CardState::Mounted : CardState::Unsupported;
     state_.sd_error = state_.error = 0;
+    if(state_.card_state==CardState::Mounted) {
+        const auto layout=storage_directories::check();
+        if(layout==storage_directories::State::Missing)state_.card_state=CardState::NeedsSetup;
+        else if(layout==storage_directories::State::Error) {
+            state_.card_state=CardState::Failed;
+            state_.sd_error=state_.error=-12;
+        }
+    }
+}
+
+bool GpsStorageTask::prepareDirectories() {
+    SdAccessScope access(this);
+    if(!mounted_ || (state_.card_state!=CardState::NeedsSetup && state_.card_state!=CardState::Mounted))return false;
+    if(!storage_directories::create())return false;
+    state_.card_state=CardState::Mounted;
+    state_.sd_error=state_.error=0;
+    return true;
 }
 
 bool GpsStorageTask::formatCard() {
@@ -83,7 +106,8 @@ bool GpsStorageTask::formatCard() {
     if (drive_ == 0xFF) { state_.sd_error = state_.error = -10; return false; }
     char volume[] = {static_cast<char>('0' + drive_), ':', '\0'};
     uint8_t work[4096];
-    const auto result = f_mkfs(volume, FM_FAT32 | FM_SFD, 0, work, sizeof(work));
+    // MBR partitioning keeps a freshly formatted card usable by M5Launcher.
+    const auto result = f_mkfs(volume, FM_FAT32, 0, work, sizeof(work));
     closeCard();
     if (result != FR_OK) {
         state_.card_state = CardState::Failed;
@@ -93,12 +117,14 @@ bool GpsStorageTask::formatCard() {
         return false;
     }
     mountCard();
-    return state_.card_state == CardState::Mounted;
+    return state_.card_state == CardState::Mounted ||
+           (state_.card_state == CardState::NeedsSetup && prepareDirectories());
 }
 
 void GpsStorageTask::configureDataset() {
 
     state_.alarm={};
+    state_.selected_dataset = gpsState().selected_dataset_.id;
     gpsState().screen_resources_.clearMaps();
     gpsState().place_lookup_.configure(gpsState().selected_dataset_.id.view(),
                             state_.settings.wordbook_language);
@@ -135,6 +161,7 @@ bool GpsStorageTask::saveSettings(const Settings& value,const DatasetId* id) {
         gpsState().selected_dataset_.id!=selected ||
         std::strcmp(state_.settings.wordbook_language, value.wordbook_language);
     state_.settings = value;
+    state_.selected_dataset = selected;
     state_.dataset_failure.save_failed = false;
     if (selection_changed) {
         gpsState().place_lookup_.configure(selected.view(),value.wordbook_language);
@@ -247,7 +274,7 @@ void GpsStorageTask::handle(const StorageRequest& request) {
                             command.operation == StorageOperation::SaveSettings && validSettings(command.settings);
         const bool sd_operation = request.kind == MessageKind::OperateStorage &&
                                   (command.operation == StorageOperation::Remount || command.operation == StorageOperation::Unmount ||
-                                   (command.operation == StorageOperation::Format && command.confirmed));
+                                   ((command.operation == StorageOperation::Format || command.operation==StorageOperation::PrepareDirectories) && command.confirmed));
         const bool alarm_operation=!has_read_ && state_.card_state==CardState::Mounted && gpsState().selected_dataset_.ready() &&
             request.kind==MessageKind::OperateStorage && command.settings.dataset==state_.settings.dataset &&
             (command.operation==StorageOperation::SaveAlarm || command.operation==StorageOperation::ReloadAlarm);
@@ -295,7 +322,7 @@ void GpsStorageTask::completeDatasetJob() {
             if(!workspace){view.detail=true;view.error=DatasetError::Busy;}
             else {
                 DatasetRequest lookup=gpsState().dataset_request_;
-                if(lookup.id==gpsState().selected_dataset_.id)
+                if(lookup.id==gpsState().selected_dataset_.id && !lookup.language[0])
                     std::memcpy(lookup.language,state_.settings.wordbook_language,sizeof(lookup.language));
                 DatasetCatalog(config::DatasetRoot,this,drive_,&work().files(),workspace.work()).readInto(lookup,state_.settings.language,view);
             }
@@ -431,6 +458,7 @@ void GpsStorageTask::completeJob() {
             state_.sd_error = 0;
             ok = true; break;
         case StorageOperation::Format: ok = formatCard(); break;
+        case StorageOperation::PrepareDirectories: ok = prepareDirectories(); break;
         case StorageOperation::EnterUsbMode: case StorageOperation::EnterWifiMode:
             ok = saveBootMode(job_.operation==StorageOperation::EnterWifiMode?BootMode::WifiManagement:BootMode::UsbStorage);
             if (ok) { closeCard(); state_.card_state = CardState::Unmounted; }

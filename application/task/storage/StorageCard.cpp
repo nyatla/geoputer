@@ -46,7 +46,8 @@ uint8_t initStorageCard(uint8_t cs,SPIClass* spi,int hz) {
     if(c && bind(*c,drive))return drive;
     ::sdcard_uninit(drive);return 0xff;
 }
-bool mountStorageCard(uint8_t drive,const char* path,uint8_t max_files,bool format_if_empty) {
+bool mountStorageCard(uint8_t drive,const char* path,uint8_t max_files,bool format_if_empty,int* mount_result) {
+    if(mount_result)*mount_result=SD_FATFS_FR_INT_ERR;
     auto* c=card(drive);
     if(!c || !c->bound || !path || std::strcmp(path,MountPath) || format_if_empty)return false;
     char volume[3];volumeName(drive,volume);
@@ -54,7 +55,9 @@ bool mountStorageCard(uint8_t drive,const char* path,uint8_t max_files,bool form
         if(sd_fatfs_vfs_register(MountPath,volume,max_files,&c->fs)!=ESP_OK)return false;
         c->registered=true;
     }
-    if(sd_fatfs_f_mount(c->fs,volume,1)==SD_FATFS_FR_OK)return true;
+    const auto result=sd_fatfs_f_mount(c->fs,volume,1);
+    if(mount_result)*mount_result=result;
+    if(result==SD_FATFS_FR_OK)return true;
     (void)sd_fatfs_f_mount(nullptr,volume,0);
     if(sd_fatfs_vfs_unregister_path(MountPath)==ESP_OK){c->registered=false;c->fs=nullptr;}
     return false;

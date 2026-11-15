@@ -21,6 +21,8 @@ SCENE = r'''
 #include "task/ui/AlarmText.h"
 #include "task/ui/Shinonome.h"
 #include "task/ui/LicenseText.h"
+#include "task/ui/DatasetPresentation.h"
+#include "utils/Ellipsis.h"
 using namespace geoputer;
 void check(bool value,const char* message){if(!value)throw std::runtime_error(message);}
 int width(const char* text,bool english){
@@ -44,9 +46,9 @@ int main(int argc,char** argv){
     check(20+width(settingsSystemLabel(language,0),english)+8<=236-width(settingsModeValue(language),english),
           "system mode label overlaps right-aligned value");
     for(unsigned n=0;n<OperationRowCount;++n){
-        for(unsigned choice=0;choice<settingChoices(n);++choice){
-            if(n==static_cast<unsigned>(SettingId::Dataset) && !choice)continue;
-            char value[32];settingsValueText(language,n,choice,value,sizeof(value));
+        const auto setting=operationSettingIndex(n);
+        for(unsigned choice=0;choice<settingChoices(setting);++choice){
+            char value[32];settingsValueText(language,setting,choice,value,sizeof(value));
             const int value_x=236-width(value,english||n==0);
             check(20+width(settingsOperationLabel(language,n),english)+8<=value_x,"setting label overlaps right-aligned value");
         }
@@ -59,6 +61,10 @@ int main(int argc,char** argv){
         char value[32];alarmValueText(row,choice,!english,value,sizeof(value));
         check(20+width(alarmLabel(row,!english),english)+8<=236-width(value,english),"alert field overlaps value");
     }
+    check(PixelFont::width(EllipsisUtf8,TextRole::UiLarge)==16 &&
+          PixelFont::width(EllipsisUtf8,TextRole::Ascii8x16)==8 &&
+          PixelFont::width(EllipsisUtf8,TextRole::UI)==8,
+          "ellipsis must take exactly one glyph in every display size");
     M5GFX display;GpsUiRenderer renderer(display);check(renderer.begin(previewColorDepth()),"renderer init");
     GpsUiModel ui;UiData data{};data.settings=defaultSettings();data.settings.language=language;
     if(!std::strcmp(mode,"timeout-never"))data.settings.screen_timeout=4;
@@ -70,13 +76,58 @@ int main(int argc,char** argv){
         if(!std::strcmp(mode,"alarms-unavailable")){a={};data.dataset.state=PlaceState::Unselected;data.settings.dataset=0;}
     }
     if(!std::strcmp(mode,"mode-blocked"))data.recording.state=RecordingState::Recording;
+    if(!std::strncmp(mode,"dataset-",8)) {
+        data.settings.dataset=1;data.storage.selected_dataset.assign("jp-n03-y2026-1");
+        auto& view=data.editDatasets();view.purpose=DatasetPurpose::Select;view.count=6;view.has_newer=true;
+        view.rows[0]={};
+        view.rows[1].id.assign("jp-n03-y2026-1");
+        std::snprintf(view.rows[1].title,sizeof(view.rows[1].title),"%s",english?"Japanese administrative boundaries":"日本全国市区町村の行政区域");
+        view.rows[2].id.assign("jp-est-y2020-1");
+        std::snprintf(view.rows[2].title,sizeof(view.rows[2].title),"%s",english?"Statistics subdivision areas":"日本統計区と町字の境界");
+        for(unsigned n=3;n<6;++n){
+            char id[16];std::snprintf(id,sizeof(id),"jp-test-%u",n);
+            view.rows[n].id.assign(id);
+            std::snprintf(view.rows[n].title,sizeof(view.rows[n].title),"%s",english?"Additional administrative areas":"追加の行政区域");
+        }
+        char clipped[64];datasetSingleLine(view.rows[1].title,!english,clipped,sizeof(clipped));
+        check(PixelFont::width(clipped,english?TextRole::Ascii8x16:TextRole::UiLarge)<=216,"dataset title crosses the screen");
+    }
     if(std::strcmp(mode,"license-baseline")){
         data.storage.card_state=CardState::Mounted;data.storage.fat_type=32;
         data.storage.card_bytes=16ull<<30;data.storage.total_bytes=15ull<<30;data.storage.free_bytes=12ull<<30;
     }
     ui.setScreen({ScreenId::Settings,DisplayMode::View,1,data,0,ActionResult::None});
     auto key=[&](UiKey k){ui.keyPressed(k,1);};
-    if(!std::strncmp(mode,"alarms",6)){
+    if(!std::strncmp(mode,"dataset-",8)) {
+        for(unsigned n=0;n<settingsRootIndex(SettingsRootItem::Dataset);++n)key(UiKey::Down);
+        key(UiKey::Enter);
+        if(!std::strcmp(mode,"dataset-list") || !std::strcmp(mode,"dataset-choice") || !std::strcmp(mode,"dataset-wordbook") || !std::strcmp(mode,"dataset-detail") || !std::strcmp(mode,"dataset-blocked")){
+            key(UiKey::Enter);
+            ++data.editDatasets().revision;
+            ui.updateContent({DisplayMode::View,1,data,ui.snapshot().action.action_id,ActionResult::Applied});
+            if(!std::strcmp(mode,"dataset-list"))key(UiKey::Down);
+            if(std::strcmp(mode,"dataset-list")){
+                key(UiKey::Down);key(UiKey::Enter);
+                auto& detail=data.editDatasets();detail={};detail.detail=true;detail.id.assign("jp-n03-y2026-1");
+                std::snprintf(detail.info.title,sizeof(detail.info.title),"%s",english?"Japanese administrative boundaries":"日本全国市区町村の行政区域");
+                std::snprintf(detail.info.description,sizeof(detail.info.description),"%s",english?"Boundary map":"行政区域の境界地図");
+                detail.info.language_count=3;detail.info.language_index=0;
+                std::strcpy(detail.info.wordbook_types[0],"ja");std::strcpy(detail.info.wordbook_types[1],"en");
+                std::strcpy(detail.info.wordbook_types[2],"ja-ham");std::strcpy(detail.info.language,"ja");
+                detail.info.unit_inv_x=10000;detail.info.unit_inv_y=10000;detail.info.chunks=422;
+                detail.info.west=122.0;detail.info.south=24.0;detail.info.east=154.0;detail.info.north=46.0;
+                detail.revision=2;
+                ui.updateContent({DisplayMode::View,1,data,ui.snapshot().action.action_id,ActionResult::Applied});
+                if(!std::strcmp(mode,"dataset-wordbook")){key(UiKey::Down);key(UiKey::Right);}
+                if(!std::strcmp(mode,"dataset-detail")){key(UiKey::Down);key(UiKey::Down);key(UiKey::Enter);}
+                if(!std::strcmp(mode,"dataset-blocked")){
+                    data.recording.state=RecordingState::Recording;data.revision++;
+                    ui.updateContent({DisplayMode::View,1,data,0,ActionResult::Applied});
+                    key(UiKey::Down);key(UiKey::Down);key(UiKey::Down);
+                }
+            }
+        }
+    }else if(!std::strncmp(mode,"alarms",6)){
         for(unsigned n=0;n<settingsRootIndex(SettingsRootItem::Alarm);++n)key(UiKey::Down);
         key(UiKey::Enter);
         if(!std::strcmp(mode,"alarms-bottom"))for(unsigned n=0;n<AlarmRows-1;++n)key(UiKey::Down);
@@ -141,10 +192,10 @@ int main(int argc,char** argv){
                 x+=narrow?8:16;
             }
         };
-        for(unsigned row=0;row<OperationRowCount;++row)for(unsigned choice=0;choice<settingChoices(row);++choice) {
-            if(row==static_cast<unsigned>(SettingId::Dataset) && !choice)continue;
+        for(unsigned row=0;row<OperationRowCount;++row)for(unsigned choice=0;choice<settingChoices(operationSettingIndex(row));++choice) {
+            const auto setting=operationSettingIndex(row);
             UiData trial=data;
-            check(setSettingValue(trial.settings,row,choice),"setting choice fixture");
+            check(setSettingValue(trial.settings,setting,choice),"setting choice fixture");
             trial.settings.language=language;
             GpsUiModel model;model.setScreen({ScreenId::Settings,DisplayMode::View,1,trial,0,ActionResult::None});
             model.keyPressed(UiKey::Enter,1);
@@ -154,17 +205,17 @@ int main(int argc,char** argv){
                 if(choice!=static_cast<unsigned>(language))model.keyPressed(UiKey::Right,11);
             }
             model.tick(2000);renderer.draw(model);
-            const auto color=settingEditable(row)||row==static_cast<unsigned>(SettingId::Dataset)?(model.editDirty()?TFT_YELLOW:TFT_CYAN):TFT_DARKGREY;
+            const auto color=settingEditable(setting)?(model.editDirty()?TFT_YELLOW:TFT_CYAN):TFT_DARKGREY;
             const int y=27+(row-SettingsLayout::firstVisible(row,OperationRowCount))*20;
             verifyText(20,y,settingsOperationLabel(language,row),english,color);
-            char value[32];settingsValueText(language,row,choice,value,sizeof(value));
+            char value[32];settingsValueText(language,setting,choice,value,sizeof(value));
             verifyText(236-width(value,english||!row),y,value,english||!row,color);
             for(int yy=y;yy<y+16;++yy)for(int x=236;x<240;++x)
                 check(display.pixels.at(yy*240+x)==TFT_BLACK,"value crossed the right margin");
         }
     }
     ui.tick(2000);renderAndCheckDialog(renderer,ui,display);
-    auto pixel=[&](int x,int y,uint16_t color){check(display.pixels.at(y*240+x)==color,"native font pixel mismatch");};
+    auto pixel=[&](int x,int y,uint16_t color){if(display.pixels.at(y*240+x)!=color){std::fprintf(stderr,"pixel mismatch %s %s (%d,%d): %u != %u\n",mode,argv[2],x,y,display.pixels.at(y*240+x),color);throw std::runtime_error("native font pixel mismatch");}};
     auto ascii=[&](int x,int y,char c,uint16_t color){
         for(int row=0;row<16;++row)for(int col=0;col<8;++col)
             pixel(x+col,y+row,FontLib8x16[static_cast<unsigned char>(c)*16+row]&(0x80u>>col)?color:TFT_BLACK);
@@ -197,7 +248,7 @@ int main(int argc,char** argv){
     }
     if(!std::strcmp(mode,"about")||!std::strcmp(mode,"about-busy")) {
         check(ui.snapshot().page==SettingsPage::About,"About page not opened");
-        ascii(4,27,'R',TFT_WHITE);ascii(4,47,'V',TFT_CYAN);ascii(4,97,'G',TFT_LIGHTGREY);
+        ascii(4,27,'G',TFT_WHITE);ascii(4,47,'V',TFT_CYAN);ascii(4,97,'G',TFT_LIGHTGREY);
         check(std::strlen(ProductName)<=29 && std::strlen(ApplicationVersion)+8<=29 &&
               std::strlen(BuildGitRevision)+std::strlen(buildGitSuffix())+4<=29,
               "About text exceeds native ASCII width");
@@ -252,7 +303,7 @@ def main():
     for name in sorted(set(re.findall(r"\bTFT_[A-Z]+\b", SCENE + renderer))):
         value = re.search(rf"\b{name}\s*=\s*(0x[0-9A-Fa-f]+)", enum_source)[1]
         colors.append(f"inline constexpr uint16_t {name}={value};")
-    modes = ("alarms", "alarms-bottom", "alarms-edit", "alarms-repaired", "alarms-unavailable", "mode", "mode-confirm", "mode-blocked", "root", "root-bottom", "operation", "operation-bottom", "language-edit", "timeout-never", "storage", "card", "reset", "reset-confirm", "format-confirm", "licenses", "license-first", "license-last", "about", "about-busy")
+    modes = ("dataset-menu", "dataset-list", "dataset-choice", "dataset-wordbook", "dataset-detail", "dataset-blocked", "alarms", "alarms-bottom", "alarms-edit", "alarms-repaired", "alarms-unavailable", "mode", "mode-confirm", "mode-blocked", "root", "root-bottom", "operation", "operation-bottom", "language-edit", "timeout-never", "storage", "card", "reset", "reset-confirm", "format-confirm", "licenses", "license-first", "license-last", "about", "about-busy")
     with tempfile.TemporaryDirectory(prefix="geoputer-settings-") as directory:
         work = Path(directory)
         write_metadata(work / "BuildMetadata.h", ROOT)

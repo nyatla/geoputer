@@ -22,7 +22,7 @@ from galuchat.format.wgsmapset3.WGSMapSetHeader3 import WGSMapSetHeader3
 from galuchat.io import BytesBufferReader
 from galuchat.wordbook.core.GaluchatGisWordBookReader import GaluchatGisWordBookReader
 
-EN_PACK = 'galuchat-languagepack-en-rev1.zip'
+EN_PACK = 'galuchat-languagepack-en-rev2.zip'
 ESTAT_ID = 'jp-est-y2020-2'
 ESTAT_SUBDIV = 'jp-2020-e-stat-go-jp-a002005212020-stat-small-area-subdiv-rev2.zip'
 MAX_CHUNKS = 1500  # application/Config.h: MaxDatasetChunks

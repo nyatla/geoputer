@@ -1,4 +1,5 @@
 #include "task/storage/dataset/DatasetMetadata.h"
+#include "utils/Ellipsis.h"
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -46,7 +47,7 @@ int main() {
     write(ini);read();
     check(result.error==DatasetError::None && result.language_count==16 && result.language_index==0 && languages.count==16,"sixteen languages accepted");
     check(std::string_view(result.language)==id && std::strlen(result.map)==127 && std::strlen(result.wordbook)==127,"fixed fields preserve maximum byte lengths and default fallback");
-    check(std::string_view(title)==std::string(60,'t')+"..." && std::strlen(description)==243,"UI strings written directly with UTF-8-safe ellipsis");
+    check(std::string_view(title)==std::string(60,'t')+EllipsisUtf8 && std::strlen(description)==243,"UI strings written directly with UTF-8-safe ellipsis");
     read(id.c_str(),-1);check(result.error==DatasetError::None && result.language_index==15 && std::string_view(result.language)=="x-p","previous wraps to last language");
     read("x-p",1);check(result.language_index==0 && std::string_view(result.language)==id,"next wraps to first language");
     write(ini+"[extra]\ntitle=Extra\nwordbook=extra.giswordbook\n");read();

@@ -60,6 +60,8 @@ public:
     UiKeyGuide keyGuide() const;
     UiShortcutGuide shortcutGuide() const;
     uint32_t licenseOffset() const { return screen_resources_.settings.license_offset; }
+    unsigned datasetTitleOffset() const { return screen_resources_.settings.dataset.title_offset; }
+    unsigned datasetWordbookIndex() const { return screen_resources_.settings.dataset.wordbook_index; }
     const DatasetId& datasetDialogId() const { return screen_resources_.settings.dataset.dialog_id; }
     static constexpr uint32_t DatasetNoticeMs = 5000;
     bool datasetFailureVisible() const {

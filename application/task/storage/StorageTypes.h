@@ -17,6 +17,7 @@ struct StorageSnapshot {
     uint32_t revision;
     SettingsState settings_state;
     Settings settings;
+    DatasetId selected_dataset; // Exact active directory ID; Settings::dataset is only a boolean.
     DatasetFailure dataset_failure; // Latest automatic release; not persisted across reboot.
     CardState card_state;
     uint8_t fat_type;

@@ -13,7 +13,8 @@ struct UiDatasetResources {
     DatasetPurpose purpose=DatasetPurpose::Select;
     DatasetId dialog_id{},list_start{};
     uint16_t page=0;
-    char edit_original[config::DatasetLanguageBytes]{};
+    uint8_t wordbook_index=0;
+    uint8_t title_offset=0;
 };
 struct UiSettingsResources {
     SettingsPage page=SettingsPage::Root;

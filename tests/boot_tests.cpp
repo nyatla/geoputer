@@ -1,6 +1,10 @@
 #include <cstring>
+#include <cstdio>
+#include <cstdlib>
 #include <stdexcept>
+#include <unistd.h>
 #include "BootStatus.h"
+#include "task/storage/StorageDirectories.h"
 #include "task/ui/GpsUiModel.h"
 
 using namespace geoputer;
@@ -19,6 +23,40 @@ BootStatus ready() {
 }
 
 void testBoot() {
+    char card[]="/tmp/geoputer-setup-XXXXXX";
+    check(mkdtemp(card)!=nullptr,"temporary SD root");
+    char root[160];std::snprintf(root,sizeof(root),"%s/geoputer",card);
+    char foreign[160];std::snprintf(foreign,sizeof(foreign),"%s/launcher.bin",card);
+    auto* file=std::fopen(foreign,"wb");check(file!=nullptr,"foreign SD file");
+    check(std::fputs("launcher",file)>=0 && !std::fclose(file),"foreign file write");
+    check(storage_directories::check(root)==storage_directories::State::Missing,"missing GeoPuter root requires setup");
+    check(storage_directories::create(root) && storage_directories::check(root)==storage_directories::State::Ready,
+          "setup creates the four GeoPuter directories");
+    check(storage_directories::create(root),"setup is repeatable");
+    file=std::fopen(foreign,"rb");check(file!=nullptr,"setup preserves Launcher data");std::fclose(file);
+    char sub[180];for(const char* suffix:{"/dataset","/logs","/export"}){std::snprintf(sub,sizeof(sub),"%s%s",root,suffix);check(!rmdir(sub),"remove test directory");}
+    check(!rmdir(root) && !std::remove(foreign) && !rmdir(card),"remove test card");
+
+    for(const auto prompt:{BootSetupPrompt::Format,BootSetupPrompt::Directories}) {
+        GpsUiModel setup;UiData data{};data.settings=defaultSettings();data.boot.setup_prompt=prompt;
+        data.revision=1;
+        check(setup.setScreen({ScreenId::Boot,DisplayMode::View,1,data,0,ActionResult::None})==OperationStatus::Ok,"boot setup screen");
+        // The App publishes the prompt after its first Boot screen acknowledgement.
+        UpdateUiContent update{};update.generation=1;update.mode=DisplayMode::View;update.data=data;update.data.revision=2;
+        check(setup.updateContent(update)==OperationStatus::Ok && setup.confirming(),"boot setup opens confirmation");
+        setup.keyPressed(UiKey::Enter,1);
+        check(setup.snapshot().action.kind==ActionKind::BootSetup && !setup.snapshot().action.confirmed,
+              "default choice declines SD modification");
+        data.boot.setup_prompt=BootSetupPrompt::None;data.revision=3;
+        update.data=data;update.processed_action_id=setup.snapshot().action.action_id;update.action_result=ActionResult::Applied;
+        check(setup.updateContent(update)==OperationStatus::Ok && !setup.confirming(),"decline closes setup prompt");
+        data.boot.setup_prompt=prompt;data.revision=4;update.data=data;update.processed_action_id=0;update.action_result=ActionResult::None;
+        check(setup.updateContent(update)==OperationStatus::Ok && setup.confirming(),"prompt can be shown again next boot");
+        setup.keyPressed(UiKey::Right,2);setup.keyPressed(UiKey::Enter,3);
+        check(setup.snapshot().action.kind==ActionKind::BootSetup && setup.snapshot().action.confirmed,
+              "explicit right and Enter accepts setup");
+    }
+
     BootStatus progress{};
     check(!progress.finish(), "pending checks cannot report Ready");
     progress = ready();

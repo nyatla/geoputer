@@ -24,20 +24,24 @@ void testDatasetFiles(const std::string& temporary,const std::string& map,const 
     fs::copy_file(book,dir/"en.giswordbook");
     {std::ofstream(dir/"unselected.glc")<<"invalid";std::ofstream(dir/"unselected.giswordbook")<<"invalid";}
     for(unsigned n:{2u,10u,21u,55u,99u})manifest(n,ini);
+    const std::string long_title="An administrative dataset title that extends far beyond the previous sixty-four byte catalog field";
+    auto long_ini=ini;long_ini.replace(long_ini.find("title=Japan"),std::strlen("title=Japan"),"title="+long_title);
+    manifest(21,long_ini);
     fs::create_directories(root/"00");fs::create_directories(root/"A100");fs::create_directories(root/"a--bad");
     test_storage::Resources catalog_resources;
     DatasetCatalog catalog(dataset_root,nullptr,0,&catalog_resources.files,&catalog_resources.work);DatasetRequest request{};request.action=DatasetAction::Open;
     auto list=catalog.read(request,UiLanguage::English);
-    check(list.count==4 && !list.rows[0].id && list.rows[3].id.view()=="a10" && list.has_newer && !list.has_older,"named ID list is ordered, bounded and paginated without opening GLCs");
+    check(list.count==6 && !list.rows[0].id && list.rows[5].id.view()=="a55" && list.has_newer && !list.has_older,"named ID list is ordered, bounded and paginated without opening GLCs");
     check(!std::strcmp(list.rows[1].title,"Japan"),"catalog chooses the UI title independently");
-    request.action=DatasetAction::Newer;request.id.assign("a10");list=catalog.read(request,UiLanguage::English);
-    check(list.count==3 && list.rows[0].id.view()=="a21" && list.rows[2].id.view()=="a99" && list.has_older && !list.has_newer,"second page skips sparse IDs and invalid names");
-    request.action=DatasetAction::Older;request.id.assign("a21");request.page=1;list=catalog.read(request,UiLanguage::Japanese);
-    check(list.count==4 && !list.rows[0].id && list.selected==3,"previous page restores the preceding selection");
+    check(!std::strcmp(list.rows[4].title,long_title.c_str()),"catalog retains the full title for horizontal scrolling");
+    request.action=DatasetAction::Newer;request.id.assign("a55");list=catalog.read(request,UiLanguage::English);
+    check(list.count==1 && list.rows[0].id.view()=="a99" && list.has_older && !list.has_newer,"second page skips sparse IDs and invalid names");
+    request.action=DatasetAction::Older;request.id.assign("a99");request.page=1;list=catalog.read(request,UiLanguage::Japanese);
+    check(list.count==6 && !list.rows[0].id && list.selected==5,"previous page restores the preceding selection");
     for(const auto purpose:{DatasetPurpose::Rebuild,DatasetPurpose::Verify}) {
         request={};request.action=DatasetAction::Open;request.purpose=purpose;
         list=catalog.read(request,UiLanguage::English);
-        check(list.purpose==purpose && list.count==4 && list.rows[0].id.view()=="a01" && list.rows[3].id.view()=="a21","maintenance lists omit None and read metadata only, even where data files are absent");
+        check(list.purpose==purpose && list.count==6 && list.rows[0].id.view()=="a01" && list.rows[5].id.view()=="a99","maintenance lists omit None and read metadata only, even where data files are absent");
     }
     manifest(99,"broken metadata");request={};request.action=DatasetAction::Open;request.id.assign("a99");
     list=catalog.read(request,UiLanguage::English);
@@ -46,7 +50,9 @@ void testDatasetFiles(const std::string& temporary,const std::string& map,const 
     request={};request.action=DatasetAction::Detail;request.id.assign("a01");
     auto detail=catalog.read(request,UiLanguage::English);
     check(detail.error==DatasetError::None && detail.detail && detail.info.chunks>0 && detail.info.chunks<=1500 && detail.info.unit_inv_x && detail.info.east>detail.info.west,"real GLC supplies resolution/coverage/chunk count");
-    check(!std::strcmp(detail.info.language,"ja") && !std::strcmp(detail.info.title,"Japan"),"first choice defaults to dataset language, not UI language");
+    check(!std::strcmp(detail.info.language,"ja") && !std::strcmp(detail.info.title,"Japan") && detail.info.language_count==2 &&
+          !std::strcmp(detail.info.wordbook_types[0],"ja") && !std::strcmp(detail.info.wordbook_types[1],"en"),
+          "Wordbook types are returned for direct choice without rereading the INI");
     request.action=DatasetAction::Language;std::strcpy(request.language,"ja");request.direction=1;
     detail=catalog.read(request,UiLanguage::Japanese);
     check(detail.error==DatasetError::None && !std::strcmp(detail.info.language,"en"),"next language selects the exact named Wordbook");

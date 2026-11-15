@@ -79,8 +79,8 @@ void testPlace() {
     check(!narrow_row.full() && std::strlen(narrow)==29,"8x16 place row accepts 29 ASCII glyphs");
     PlaceLineOutput narrow_clipped(narrow,sizeof(narrow),PlaceTextMode::Ascii8x16);
     narrow_clipped.append("123456789012345678901234567890");
-    check(narrow_clipped.full() && !std::strcmp(narrow,"12345678901234567890123456..."),
-          "8x16 place row reserves 24 pixels for the ellipsis");
+    check(narrow_clipped.full() && !std::strcmp(narrow,"1234567890123456789012345678…"),
+          "8x16 place row reserves one cell for the ellipsis");
     check(placeCharacterWidth('A',PlaceTextMode::Ascii8x16)==8 &&
           placeCharacterWidth(0xe5,PlaceTextMode::Ascii8x16)==16 &&
           placeCharacterWidth('A',PlaceTextMode::Japanese16)==16,
@@ -93,12 +93,12 @@ void testPlace() {
           "two 8x8 rows retain 58 ASCII characters before UI layout");
     PlaceLineOutput logical_overflow(logical,sizeof(logical),PlaceTextMode::Ascii8x16,placeLogicalLinePixels());
     logical_overflow.append(fifty_eight+"x");
-    check(logical_overflow.full() && std::string(logical)==std::string(55,'x')+"...",
+    check(logical_overflow.full() && std::string(logical)==std::string(57,'x')+EllipsisUtf8,
           "logical row reserves the second 8x8 row's ellipsis");
-    char visual[2][config::PlaceLinePixels/8+1]{};
+    char visual[2][config::PlaceLinePixels/8+EllipsisBytes]{};
     wrapAsciiPlaceLine(logical,visual);
     check(std::string(visual[0])==std::string(29,'x') &&
-          std::string(visual[1])==std::string(26,'x')+"...",
+          std::string(visual[1])==std::string(28,'x')+EllipsisUtf8,
           "long ASCII stays within two independent 29-cell visual rows");
     wrapAsciiPlaceLine("New York State Administrative Region",visual);
     check(!std::strcmp(visual[0],"New York State Administrative") &&
@@ -106,7 +106,7 @@ void testPlace() {
           "word boundary is preferred when the second visual row fits");
     char display[config::PlaceCachedLineBytes]{};
     fitPlaceDisplayLine(fifty_eight.c_str(),display,PlaceTextMode::Ascii8x16);
-    check(std::string(display)==std::string(26,'x')+"...",
+    check(std::string(display)==std::string(28,'x')+EllipsisUtf8,
           "map and point views still shorten one-row ASCII names");
     char names[2][config::PlaceCachedLineBytes]{};
     std::strcpy(names[0],fifty_eight.c_str());std::strcpy(names[1],"Town");
@@ -122,7 +122,7 @@ void testPlace() {
     check(std::strcmp(display,twenty_kanji.c_str())==0,
           "the map's 8x8 first row can display twenty Japanese glyphs");
     fitPlaceDisplayLine(logical,display,PlaceTextMode::Japanese16);
-    check(std::string(display)==std::string("日日日日日日日日日日日..."),
+    check(std::string(display)==std::string("日日日日日日日日日日日日日…"),
           "the 16x16 Japanese row clips independently of the map's 8x8 row");
     for(size_t i=std::strlen(direct)+1;i<sizeof(direct);++i)check(!direct[i],"clipped reply tail must stay empty");
     char unicode[config::PlaceResultLineBytes]{};PlaceLineOutput unicode_row(unicode,sizeof(unicode));
@@ -152,7 +152,7 @@ void testPlace() {
     formatPlaceLines({"東京都", "", "", "千代田区", ""}, lines);
     check(std::strcmp(lines[0], "東京都 千代田区") == 0 && !lines[1][0], "default N03 administrative layout");
     formatPlaceLines({"東京都", "あいうえおかきくけこさしすせそたちつてと"}, lines);
-    check(std::strcmp(lines[0], "東京都 あいうえおかきく...") == 0 && validUtf8(lines[0]),
+    check(std::strcmp(lines[0], "東京都 あいうえおかきくけこ…") == 0 && validUtf8(lines[0]),
           "ellipsis uses final pixel width with an eight-dot space");
     formatPlaceLines({"", "習志野市"}, lines);
     check(std::strcmp(lines[0], "習志野市") == 0, "missing prefecture has no invented separator");
@@ -184,13 +184,13 @@ void testPlace() {
     format = PlaceDisplayFormat{{"%0", "%0%0"}, true};
     const std::string spaces(29, ' ');
     formatPlaceLines({spaces}, lines, format);
-    check(std::string(lines[0]) == spaces && std::string(lines[1]) == std::string(23, ' ') + "...",
+    check(std::string(lines[0]) == spaces && std::string(lines[1]) == std::string(27, ' ') + EllipsisUtf8,
           "space-only rows fit exactly 232 pixels, then truncate with a fitting ellipsis");
     const std::string fourteen = "日日日日日日日日日日日日日日";
     formatPlaceLines({fourteen + " "}, lines, format);
     check(std::string(lines[0]) == fourteen + " ", "fourteen 16-dot glyphs plus an eight-dot space fit exactly");
     formatPlaceLines({std::string(200000, 'x')}, lines, format);
-    check(!std::strcmp(lines[0], "xxxxxxxxxxx...") && validUtf8(lines[1]), "large expansions retain only a bounded prefix");
+    check(!std::strcmp(lines[0], "xxxxxxxxxxxxx…") && validUtf8(lines[1]), "large expansions retain only a bounded prefix");
     format = PlaceDisplayFormat{{"%0", ""}, true}; bool rejected = false;
     try { formatPlaceLines({"valid", "\xc0\x80"}, lines, format); } catch (const std::runtime_error&) { rejected = true; }
     check(rejected, "unreferenced invalid UTF-8 cannot enter the name cache");

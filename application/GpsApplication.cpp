@@ -162,7 +162,7 @@ void GpsApplication::handleNotification(const AppNotification& event) {
         }
         if (completed.read_kind == StorageReadKind::Settings && gpsState().boot_stage_ == BootStage::WaitSettings && completed.request_id == BootSettingsRequest) {
             data_.boot.settings(completed.snapshot.settings_state);
-            gpsState().boot_stage_ = BootStage::SelectMode;
+            gpsState().boot_stage_ = BootStage::NeedSdDecision;
             gpsState().boot_selection_at_ = taskTimeMs();
             bootChanged();
             return;
@@ -173,7 +173,20 @@ void GpsApplication::handleNotification(const AppNotification& event) {
             if(gpsState().place_queued_ && gpsState().place_borrow_.alarm_sample?completed.request_id==gpsState().place_borrow_.token:gpsState().place_flow_.owns(completed.request_id) && samePlaceRequest(gpsState().place_borrow_,completed.place.request))gpsState().place_completion_ready_=true;
             return;
         }
+        const bool boot_setup=gpsState().boot_stage_==BootStage::WaitSdOperation &&
+            completed.operation_id && completed.operation_id==storage_operation_id_;
         if (completed.operation_id == storage_operation_id_) storage_operation_id_ = 0;
+        if(boot_setup) {
+            if(completed.snapshot.operation_ok && completed.snapshot.card_state==CardState::Mounted)restart_pending_=true;
+            else {
+                data_.boot.card(completed.snapshot.card_state);
+                data_.boot.set(BootItem::SD,BootCheckState::Failed,"SETUP ERR");
+                gpsState().boot_stage_=BootStage::SelectMode;
+                gpsState().boot_selection_at_=taskTimeMs();
+                bootChanged();
+            }
+            return;
+        }
         if (!completed.snapshot.operation_ok) {
             if(completed.snapshot.operation==StorageOperation::SaveAlarm || completed.snapshot.operation==StorageOperation::ReloadAlarm)
                 message(alarm::stateName(completed.snapshot.alarm.state));
@@ -187,7 +200,7 @@ void GpsApplication::handleNotification(const AppNotification& event) {
         else if(completed.snapshot.operation==StorageOperation::ReloadAlarm) message(alarm::stateName(completed.snapshot.alarm.state));
         else if (completed.snapshot.operation == StorageOperation::SaveSettings) message("SETTINGS SAVED");
         else if (completed.snapshot.operation == StorageOperation::Unmount) message("SAFE TO REMOVE SD");
-        else if (completed.snapshot.operation == StorageOperation::Format) { gpsState().dataset_check_needed_ = true; message("FAT32 FORMAT COMPLETE"); refreshPlace(); }
+        else if (completed.snapshot.operation == StorageOperation::Format) restart_pending_ = true;
         else if (completed.snapshot.operation == StorageOperation::Remount) { gpsState().dataset_check_needed_ = true; message("SD MOUNTED"); refreshPlace(); }
     }
     if (event.source == TaskId::GPS && (event.kind == MessageKind::GpsSampleReady || event.kind == MessageKind::GpsStatusChanged)) {
@@ -258,6 +271,29 @@ void GpsApplication::readUiContent() {
     }
     if (action.action_id == last_processed_action_) {
         if (!publishUiContent(action.action_id, ActionResult::Applied)) ui_changed_ = true;
+        return;
+    }
+
+    if(action.kind==ActionKind::BootSetup && screen_==ScreenId::Boot &&
+       gpsState().boot_stage_==BootStage::AwaitSdDecision && data_.boot.setup_prompt!=BootSetupPrompt::None) {
+        const auto prompt=data_.boot.setup_prompt;
+        data_.boot.setup_prompt=BootSetupPrompt::None;
+        bool accepted=true;
+        if(action.confirmed) {
+            gpsState().boot_stage_=BootStage::WaitSdOperation;
+            data_.boot.set(BootItem::SD,BootCheckState::Checking,"PREPARING");
+            UiAction command=action;
+            command.storage_operation=prompt==BootSetupPrompt::Format?StorageOperation::Format:StorageOperation::PrepareDirectories;
+            accepted=operateStorage(command);
+        }
+        if(!action.confirmed || !accepted) {
+            gpsState().boot_stage_=BootStage::SelectMode;
+            gpsState().boot_selection_at_=taskTimeMs();
+            data_.boot.card(data_.storage.card_state);
+            if(!accepted)message("SD SETUP FAILED");
+        }
+        bootChanged();last_processed_action_=action.action_id;
+        if(!publishUiContent(action.action_id,accepted?ActionResult::Applied:ActionResult::Rejected))ui_changed_=true;
         return;
     }
 
@@ -589,6 +625,14 @@ void GpsApplication::advanceBoot() {
     }
     // Maintenance is shown immediately; only NVS loading continues behind it.
     if (screen_ != ScreenId::Boot && !data_.boot.maintenance) return;
+    if (gpsState().boot_stage_ == BootStage::NeedSdDecision) {
+        const auto card=data_.storage.card_state;
+        data_.boot.setup_prompt=card==CardState::Unsupported?BootSetupPrompt::Format:
+                                card==CardState::NeedsSetup?BootSetupPrompt::Directories:BootSetupPrompt::None;
+        gpsState().boot_stage_=data_.boot.setup_prompt==BootSetupPrompt::None?BootStage::SelectMode:BootStage::AwaitSdDecision;
+        bootChanged();
+        if(gpsState().boot_stage_==BootStage::AwaitSdDecision)return;
+    }
     if (gpsState().boot_stage_ == BootStage::SelectMode) {
         if (taskTimeMs() - gpsState().boot_selection_at_ < config::BootMaintenanceWindowMs) return;
         initializeGps();
@@ -813,7 +857,7 @@ void GpsApplication::runOnce() {
             const auto elapsed = taskTimeMs() - gpsState().boot_completed_at_;
             const auto hold = data_.boot.holdMs();
             wait = elapsed < hold ? pdMS_TO_TICKS(hold - elapsed) : 0;
-        } else if (gpsState().boot_stage_ == BootStage::NeedSettings || gpsState().boot_stage_ == BootStage::SelectMode || gpsState().boot_stage_ == BootStage::NeedDataset) {
+        } else if (gpsState().boot_stage_ == BootStage::NeedSettings || gpsState().boot_stage_ == BootStage::NeedSdDecision || gpsState().boot_stage_ == BootStage::SelectMode || gpsState().boot_stage_ == BootStage::NeedDataset) {
             wait = pdMS_TO_TICKS(50);  // Only retry requests that were not queued.
         }
     } else if (canSearchPlace()) {

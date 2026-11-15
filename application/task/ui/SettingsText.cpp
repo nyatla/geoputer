@@ -15,7 +15,7 @@ const char* at(UiLanguage language, const Translation (&table)[N], unsigned row)
 }
 
 const char* settingsRootLabel(UiLanguage language, unsigned row) {
-    static const Translation values[] = {{"動作設定", "Operation"}, {"システム設定", "System settings"}, {"アラート", "Alerts"}, {"ストレージ操作", "Storage"},
+    static const Translation values[] = {{"動作設定", "Operation"}, {"システム設定", "System settings"}, {"アラート", "Alerts"}, {"データセット選択", "Datasets"}, {"ストレージ操作", "Storage"},
         {"バージョン情報", "About"}, {"ライセンス情報", "Licenses"}};
     return at(language, values, row);
 }
@@ -38,7 +38,7 @@ const char* systemModeBlockText(const UiData& data, bool changed, UiLanguage lan
 const char* settingsOperationLabel(UiLanguage language, unsigned row) {
     static const Translation values[] = {{"表示言語", "Language"}, {"記録間隔", "Log interval"},
         {"SD保存間隔", "SD flush interval"}, {"消灯時間", "Screen timeout"}, {"明るさ", "Brightness"},
-        {"データセット", "Dataset"}, {"音量", "Volume"}, {"省電力", "Power saving"}, {"GPS接続", "GPS source"}};
+        {"音量", "Volume"}, {"省電力", "Power saving"}};
     return row < OperationRowCount ? at(language, values, row) : "--";
 }
 const char* settingsStorageLabel(UiLanguage language, unsigned row) {
@@ -48,7 +48,7 @@ const char* settingsStorageLabel(UiLanguage language, unsigned row) {
 }
 const char* settingsLabel(UiLanguage language, SettingsLabel label) {
     static const Translation values[] = {{"FAT32初期化?", "Format as FAT32?"}, {"設定を初期化?", "Restore defaults?"},
-        {"SD全消去 / 設定保持", "Erase SD; keep settings"}, {"Geoputer設定のみ", "Geoputer settings only"},
+        {"M5Launcherも消去", "Erase all SD files"}, {"Geoputer設定のみ", "Geoputer settings only"},
         {"SDデータは保持", "Keep SD data"}, {"取消", "Cancel"}, {"実行", "Confirm"},
         {"設定を初期値に戻す", "Restore defaults"}, {"カード容量", "Card size"}, {"総容量", "Total"},
         {"空き容量", "Free"}, {"非対応", "UNSUPPORTED"}, {"処理中です", "STORAGE WORKING..."},
@@ -58,7 +58,7 @@ const char* settingsLabel(UiLanguage language, SettingsLabel label) {
 const char* settingsCardState(UiLanguage language, CardState state) {
     static const Translation values[] = {{"確認中", "WAITING"}, {"カードなし", "NO CARD"},
         {"接続済", "MOUNTED"}, {"取外し可能", "SAFE TO REMOVE"}, {"FAT32が必要", "FAT32 REQUIRED"},
-        {"SD異常", "SD ERROR"}};
+        {"SD異常", "SD ERROR"}, {"初期構成が必要", "SETUP REQUIRED"}};
     return at(language, values, static_cast<unsigned>(state));
 }
 const char* settingsMessage(UiLanguage language, const char* message) {

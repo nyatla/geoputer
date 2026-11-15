@@ -82,12 +82,15 @@ void DatasetCatalog::readInto(const DatasetRequest& request,UiLanguage ui,Datase
         view.detail=true;view.info={};view.id=request.id;
         if(!request.id.valid()) {view.error=DatasetError::Missing;return;}
         DatasetMetadata metadata;
+        DatasetLanguages wordbook_types;
         readDatasetMetadataInto(directory(request.id.view()).view(),ui,request.language,metadata,observer_,
             {view.info.title,sizeof(view.info.title),view.info.description,sizeof(view.info.description)},
-            request.action==DatasetAction::Language?(request.direction<0?-1:1):0);
+            request.action==DatasetAction::Language?(request.direction<0?-1:1):0,&wordbook_types);
         if(metadata.error!=DatasetError::None) {view.error=metadata.error;return;}
         datasetCopyText(view.info.language,sizeof(view.info.language),metadata.language);
         view.info.language_count=metadata.language_count;view.info.language_index=metadata.language_index;
+        for(unsigned i=0;i<wordbook_types.count;++i)
+            std::memcpy(view.info.wordbook_types[i],wordbook_types.ids[i].data(),config::DatasetLanguageBytes);
         const auto map_path=TemporaryPath({directory(request.id.view()).view(),"/",metadata.map});
         {
             SdAccessScope access(observer_); struct stat st{};
