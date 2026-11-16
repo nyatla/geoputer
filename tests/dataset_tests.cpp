@@ -29,7 +29,7 @@ struct MetadataSnapshot {
 };
 MetadataSnapshot readMetadata(std::string_view directory,UiLanguage ui,const char* language="",StorageObserver* observer=nullptr) {
     DatasetMetadata fixed;MetadataSnapshot snapshot;char title[256]{},description[256]{};
-    readDatasetMetadataInto(directory,ui,language,fixed,observer,{title,sizeof(title),description,sizeof(description)},0,&snapshot.languages);
+    readDatasetMetadataInto(directory,ui,language,fixed,observer,{title,sizeof(title),description,sizeof(description)},&snapshot.languages);
     snapshot.map=fixed.map;snapshot.wordbook=fixed.wordbook;snapshot.language=fixed.language;
     snapshot.title=title;snapshot.description=description;snapshot.display=fixed.display;snapshot.error=fixed.error;
     return snapshot;
@@ -187,7 +187,7 @@ void navigationAndGate() {
     check(model.snapshot().action.kind==ActionKind::Dataset && model.snapshot().action.dataset_action==DatasetAction::Open,"Select dataset opens the existing list");
     auto publish=[&](){const auto action=model.snapshot().action;data.revision++;data.editDatasets().revision=model.data().datasets().revision+1;model.updateContent({DisplayMode::View,1,data,action.action_id,ActionResult::Applied});};
     data.editDatasets().count=1;data.editDatasets().rows[0].id.assign("jp-tokyo");
-    std::strcpy(data.editDatasets().rows[0].title,"A long dataset title whose ending must remain reachable on the device");publish();
+    publish();
     model.keyPressed(UiKey::Right,8);
     check(model.datasetTitleOffset()==0,"SELECT list has no title to scroll");
     model.keyPressed(UiKey::Enter,9);check(model.snapshot().action.dataset_action==DatasetAction::Detail,"Enter opens details");
@@ -314,7 +314,7 @@ void cacheFlow(DatasetPurpose purpose) {
         model.snapshot().action.dataset_purpose==purpose,"maintenance opens a target list without opening a detail reader");
     data.editDatasets()={};data.editDatasets().purpose=purpose;data.editDatasets().count=2;
     data.editDatasets().rows[0].id.assign("jp-bad");data.editDatasets().rows[0].error=DatasetError::Metadata;
-    data.editDatasets().rows[1].id.assign("jp-good");std::strcpy(data.editDatasets().rows[1].title,"Candidate");publish();
+    data.editDatasets().rows[1].id.assign("jp-good");publish();
     key(UiKey::Enter);check(!model.confirming() && model.snapshot().action.kind==ActionKind::None && datasetRowBlock(model.data(),0)==DatasetError::Metadata,
         "metadata failure known from listing is disabled with its reason");
     key(UiKey::Down);key(UiKey::Enter);
@@ -324,8 +324,8 @@ void cacheFlow(DatasetPurpose purpose) {
     key(UiKey::Enter);key(UiKey::Right);key(UiKey::Enter);
     const auto action=model.snapshot().action;
     check(action.kind==ActionKind::Dataset && action.confirmed && action.dataset_action==(purpose==DatasetPurpose::Rebuild?DatasetAction::RebuildIndex:DatasetAction::VerifyIndex) &&
-        action.dataset_purpose==purpose && action.browse_index==1 && action.browse_revision==data.editDatasets().revision,
-        "confirmed maintenance identifies the exact list revision and target, for map and all languages");
+        action.dataset_purpose==purpose && action.dataset_id.view()=="jp-good",
+        "confirmed maintenance carries the selected dataset ID for map and all languages");
     data.editDatasets().applying=data.editDatasets().loading=true;data.editDatasets().id.assign("jp-good");data.editDatasets().progress.phase=IndexPhase::TT;publish();
     key(UiKey::Escape);model.tick(1000000);
     check(model.snapshot().page==SettingsPage::DatasetIndex && model.snapshot().action.kind==ActionKind::None,"maintenance progress owns input and prevents sleep");

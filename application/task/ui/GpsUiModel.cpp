@@ -355,8 +355,7 @@ UiKeyGuide GpsUiModel::keyGuide() const {
             guide.up=licenseTarget(UiKey::Up)!=screen_resources_.settings.license_offset;guide.down=licenseTarget(UiKey::Down)!=screen_resources_.settings.license_offset;
             guide.left=licenseTarget(UiKey::Left)!=screen_resources_.settings.license_offset;guide.right=licenseTarget(UiKey::Right)!=screen_resources_.settings.license_offset;
         } else if (screen_resources_.settings.page==SettingsPage::DatasetDetail) {
-            const auto& view=data_.datasets();
-            const bool ready=!view.loading && !view.applying && view.error==DatasetError::None;
+            const bool ready=datasetViewReady(data_);
             const auto count=ready?selectionCount():0;
             const auto last=count>DatasetDetailVisibleRows?count-DatasetDetailVisibleRows:0;
             guide.vertical=guide.horizontal=true;
@@ -364,15 +363,11 @@ UiKeyGuide GpsUiModel::keyGuide() const {
             guide.down=guide.right=ready && selection_<last;
         } else if (screen_resources_.settings.page==SettingsPage::DatasetList) {
             const auto& view=data_.datasets();guide.vertical=true;
-            const bool ready=!view.loading && !view.applying && view.error==DatasetError::None;
+            const bool ready=datasetViewReady(data_);
             guide.up=ready && (selection_>0 || view.has_older);guide.down=ready && (selection_+1u<view.count || view.has_newer);
         } else if (screen_resources_.settings.page!=SettingsPage::About && screen_resources_.settings.page!=SettingsPage::Reset && screen_resources_.settings.page!=SettingsPage::DatasetIndex) {
-            const bool ready=!dataset_wait &&
-                ((screen_resources_.settings.page!=SettingsPage::DatasetDetail &&
-                  screen_resources_.settings.page!=SettingsPage::DatasetChoice) ||
-                 (!data_.datasets().loading &&
-                  (data_.datasets().error==DatasetError::None ||
-                   (screen_resources_.settings.page==SettingsPage::DatasetChoice && datasetRecoverable(data_.datasets().error)))));
+            const bool ready=screen_resources_.settings.page==SettingsPage::DatasetChoice?
+                datasetChoiceReady(data_):!dataset_wait;
             list(ready?selectionCount():0);
             if (!ready) guide.up=guide.down=false;
             if(ready && screen_resources_.settings.page==SettingsPage::DatasetChoice){
@@ -444,14 +439,12 @@ void GpsUiModel::appendEnterShortcut(UiShortcutGuide& row,bool accepting) const 
             case SettingsPage::DatasetMenu:enabled=!data_.datasets().applying && datasetMenuBlock(data_,selection_)==DatasetError::None;break;
             case SettingsPage::DatasetList: {
                 const auto& view=data_.datasets();
-                enabled=!view.loading && !view.applying && (view.error!=DatasetError::None ||
+                enabled=!view.loading && !view.applying && (!datasetViewReady(data_) ||
                     (selection_<view.count && datasetRowBlock(data_,selection_)==DatasetError::None));break;
             }
             case SettingsPage::DatasetChoice: {
-                const auto& view=data_.datasets();
-                if(view.loading || view.applying || selection_<2)return;
-                enabled=selection_==2?view.error==DatasetError::None:
-                    datasetSelectionBlock(data_,true)==DatasetError::None && datasetRecoverable(view.error);
+                if(data_.datasets().loading || data_.datasets().applying || selection_<2)return;
+                enabled=selection_==2?data_.datasets().error==DatasetError::None:datasetChoiceCanApply(data_);
                 break;
             }
             case SettingsPage::DatasetDetail:return;
@@ -727,50 +720,18 @@ bool GpsUiModel::commitSettingEdit() {
     settings.editing=false;changed();return true;
 }
 
-void GpsUiModel::settingsKey(UiKey key) {
-    auto& edit=screen_resources_.settings;
-    if(edit.editing) {
-        if(key==UiKey::Escape) {
-            const bool dirty=editDirty();edit.editing=false;
-            if(dirty) {
-                changed();return; // A second Escape leaves the page.
-            }
-        } else if(key==UiKey::Enter || key==UiKey::Up || key==UiKey::Down) {
-            if(!commitSettingEdit())return;
-            if(key==UiKey::Enter)return;
-        }
+void GpsUiModel::alarmSettingsKey(UiKey key) {
+    auto& settings=screen_resources_.settings;
+    if(key==UiKey::Escape) {settings.page=SettingsPage::Root;selection_=settingsRootIndex(SettingsRootItem::Alarm);changed();return;}
+    if(key==UiKey::Up){--selection_;changed();}else if(key==UiKey::Down){++selection_;changed();}
+    else if(key==UiKey::Enter && !data_.storage.busy && !data_.storage.nvs_error) {
+        if(selection_==AlarmReloadRow && logMapAvailable(data_))action(ActionKind::ReloadAlarm);
     }
-    if(key==UiKey::Left || key==UiKey::Right) {
-        const auto count=editableSettingChoices();
-        if(count>1) {
-            if(!edit.editing) {
-                edit.edit_original=edit.page==SettingsPage::System?edit.usb_mode:
-                    edit.page==SettingsPage::Alarm?alarmValue(data_.storage.alarm.settings,selection_):
-                    settingValue(data_.settings,operationSettingIndex(selection_));
-                edit.edit_value=edit.edit_original;
-                edit.editing=true;
-            }
-            edit.edit_value=(edit.edit_value+(key==UiKey::Right?1:count-1))%count;changed();
-            if(edit.page==SettingsPage::Alarm && selection_==AlarmSoundRow) {
-                action(ActionKind::PreviewAlarm);action_.alarm_settings=data_.storage.alarm.settings;
-                action_.alarm_settings.tone=static_cast<alarm::Tone>(edit.edit_value);
-                action_.alarm_identity=data_.storage.alarm.identity;
-            }
-            return;
-        }
-    }
-    if(screen_resources_.settings.page==SettingsPage::Alarm) {
-        auto& settings=screen_resources_.settings;
-        if(key==UiKey::Escape) {settings.page=SettingsPage::Root;selection_=settingsRootIndex(SettingsRootItem::Alarm);changed();return;}
-        if(key==UiKey::Up){--selection_;changed();}else if(key==UiKey::Down){++selection_;changed();}
-        else if(key==UiKey::Enter && !data_.storage.busy && !data_.storage.nvs_error) {
-            if(selection_==AlarmReloadRow && logMapAvailable(data_))action(ActionKind::ReloadAlarm);
-        }
-        return;
-    }
+}
 
-    if (screen_ == ScreenId::Settings && (screen_resources_.settings.page == SettingsPage::DatasetList ||
-        screen_resources_.settings.page == SettingsPage::DatasetChoice || screen_resources_.settings.page == SettingsPage::DatasetDetail)) {
+void GpsUiModel::datasetSettingsKey(UiKey key) {
+    if (screen_resources_.settings.page == SettingsPage::DatasetList ||
+        screen_resources_.settings.page == SettingsPage::DatasetChoice || screen_resources_.settings.page == SettingsPage::DatasetDetail) {
         const auto& view = data_.datasets();
         if (view.applying) return;
         if (key == UiKey::Escape) {
@@ -821,8 +782,7 @@ void GpsUiModel::settingsKey(UiKey key) {
             else if(key==UiKey::Down){if(unsigned(selection_)+1<DatasetChoiceRows){++selection_;changed();}}
             else if(key==UiKey::Enter){
                 if(selection_==2 && view.error==DatasetError::None){screen_resources_.settings.page=SettingsPage::DatasetDetail;selection_=0;changed();}
-                else if(selection_==3 && datasetSelectionBlock(data_,true)==DatasetError::None &&
-                    datasetRecoverable(view.error))datasetAction(DatasetAction::Apply);
+                else if(selection_==3 && datasetChoiceCanApply(data_))datasetAction(DatasetAction::Apply);
             }
             return;
         }
@@ -835,7 +795,7 @@ void GpsUiModel::settingsKey(UiKey key) {
         if (key == UiKey::Right && selection_<last) { selection_=std::min<unsigned>(selection_+DatasetDetailVisibleRows,last);changed(); }
         return;
     }
-    if(screen_==ScreenId::Settings && screen_resources_.settings.page==SettingsPage::DatasetMenu) {
+    if(screen_resources_.settings.page==SettingsPage::DatasetMenu) {
         if(data_.datasets().applying)return;
         if(key==UiKey::Escape) {screen_resources_.settings.page=SettingsPage::Root;selection_=settingsRootIndex(SettingsRootItem::Dataset);changed();return;}
         if(key==UiKey::Up) {--selection_;changed();}
@@ -847,7 +807,7 @@ void GpsUiModel::settingsKey(UiKey key) {
         }
         return;
     }
-    if(screen_==ScreenId::Settings && screen_resources_.settings.page==SettingsPage::DatasetIndex) {
+    if(screen_resources_.settings.page==SettingsPage::DatasetIndex) {
         if(data_.datasets().applying)return;
         if(key==UiKey::Escape || key==UiKey::Enter) {
             if(data_.storage.busy)return;
@@ -855,6 +815,46 @@ void GpsUiModel::settingsKey(UiKey key) {
         }
         return;
     }
+}
+
+void GpsUiModel::settingsKey(UiKey key) {
+    auto& edit=screen_resources_.settings;
+    if(edit.editing) {
+        if(key==UiKey::Escape) {
+            const bool dirty=editDirty();edit.editing=false;
+            if(dirty) {
+                changed();return; // A second Escape leaves the page.
+            }
+        } else if(key==UiKey::Enter || key==UiKey::Up || key==UiKey::Down) {
+            if(!commitSettingEdit())return;
+            if(key==UiKey::Enter)return;
+        }
+    }
+    if(key==UiKey::Left || key==UiKey::Right) {
+        const auto count=editableSettingChoices();
+        if(count>1) {
+            if(!edit.editing) {
+                edit.edit_original=edit.page==SettingsPage::System?edit.usb_mode:
+                    edit.page==SettingsPage::Alarm?alarmValue(data_.storage.alarm.settings,selection_):
+                    settingValue(data_.settings,operationSettingIndex(selection_));
+                edit.edit_value=edit.edit_original;
+                edit.editing=true;
+            }
+            edit.edit_value=(edit.edit_value+(key==UiKey::Right?1:count-1))%count;changed();
+            if(edit.page==SettingsPage::Alarm && selection_==AlarmSoundRow) {
+                action(ActionKind::PreviewAlarm);action_.alarm_settings=data_.storage.alarm.settings;
+                action_.alarm_settings.tone=static_cast<alarm::Tone>(edit.edit_value);
+                action_.alarm_identity=data_.storage.alarm.identity;
+            }
+            return;
+        }
+    }
+    if(screen_resources_.settings.page==SettingsPage::Alarm) {alarmSettingsKey(key);return;}
+    if(screen_resources_.settings.page==SettingsPage::DatasetList ||
+       screen_resources_.settings.page==SettingsPage::DatasetChoice ||
+       screen_resources_.settings.page==SettingsPage::DatasetDetail ||
+       screen_resources_.settings.page==SettingsPage::DatasetMenu ||
+       screen_resources_.settings.page==SettingsPage::DatasetIndex) {datasetSettingsKey(key);return;}
     if (screen_resources_.settings.card_info) {
         if (key == UiKey::Escape || key == UiKey::Enter) { screen_resources_.settings.card_info = false; changed(); }
         return;
@@ -959,8 +959,8 @@ void GpsUiModel::acceptDialog(DialogKind kind) {
 }
 
 void GpsUiModel::datasetAction(DatasetAction kind,uint32_t index) {
-    action(ActionKind::Dataset);action_.dataset_action=kind;action_.browse_index=index;
-    action_.dataset_purpose=screen_resources_.settings.dataset.purpose;action_.browse_revision=data_.datasets().revision;
+    action(ActionKind::Dataset);action_.dataset_action=kind;
+    action_.dataset_purpose=screen_resources_.settings.dataset.purpose;
     const auto& view=data_.datasets();
     action_.dataset_page=kind==DatasetAction::Open?screen_resources_.settings.dataset.page:view.page;
     switch(kind) {
@@ -974,9 +974,9 @@ void GpsUiModel::datasetAction(DatasetAction kind,uint32_t index) {
         case DatasetAction::Clear:break;
         default:action_.dataset_id=view.id;break;
     }
-    if(kind==DatasetAction::Language || kind==DatasetAction::Apply) {
+    if(kind==DatasetAction::Apply) {
         const auto candidate=screen_resources_.settings.dataset.wordbook_index;
-        const char* language=kind==DatasetAction::Apply && candidate<view.info.language_count?
+        const char* language=candidate<view.info.language_count?
             view.info.wordbook_types[candidate]:view.info.language;
         std::snprintf(action_.settings.wordbook_language,sizeof(action_.settings.wordbook_language),"%s",language);
     }

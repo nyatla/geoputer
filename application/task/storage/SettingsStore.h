@@ -5,7 +5,8 @@
 
 namespace geoputer {
 
-// Accessed only by GpsStorageTask. SD initialization is not a prerequisite.
+// The boot path reads this once before USB initialization; GpsStorageTask owns
+// later settings reads and writes. SD initialization is not a prerequisite.
 class SettingsStore {
 public:
     bool begin();

@@ -42,11 +42,10 @@ void datasetCopyText(char* target,size_t capacity,std::string_view source) {
     target[bytes]='\0';
 }
 void readDatasetMetadataInto(std::string_view directory,UiLanguage ui,const char* requested,
-    DatasetMetadata& result,StorageObserver* observer,DatasetMetadataText text,int direction,DatasetLanguages* languages) {
+    DatasetMetadata& result,StorageObserver* observer,DatasetMetadataText text,DatasetLanguages* languages) {
     result={};
     datasetCopyText(text.title,text.title_capacity,{});datasetCopyText(text.description,text.description_capacity,{});
     if(languages)*languages={};
-    if(direction<-1 || direction>1) {result.error=DatasetError::Metadata;return;}
     DatasetLanguages choices;
     char default_language[config::DatasetLanguageBytes]{};
     struct Close {StorageObserver* observer;void operator()(FILE* file) const {SdAccessScope access(observer);std::fclose(file);}};
@@ -135,7 +134,6 @@ void readDatasetMetadataInto(std::string_view directory,UiLanguage ui,const char
             if(!finish() || common!=7 || !choices.count || choices.find(default_language)==choices.count)return fail();
             auto selected=choices.find(requested && *requested?requested:default_language);
             if(selected==choices.count)return fail(DatasetError::Missing);
-            if(direction)selected=(selected+choices.count+direction)%choices.count;
             std::memcpy(result.language,choices.ids[selected].data(),sizeof(result.language));
             result.language_count=choices.count;result.language_index=selected;
         }

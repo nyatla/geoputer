@@ -38,6 +38,17 @@ inline DatasetError datasetRowBlock(const UiData& data,unsigned row) {
     if(data.storage.busy || data.datasets().loading) return DatasetError::Busy;
     return data.storage.card_state==CardState::Mounted?DatasetError::None:DatasetError::CardUnavailable;
 }
+inline bool datasetViewReady(const UiData& data) {
+    const auto& view=data.datasets();
+    return !view.loading && !view.applying && view.error==DatasetError::None;
+}
+inline bool datasetChoiceReady(const UiData& data) {
+    const auto& view=data.datasets();
+    return !view.loading && !view.applying && datasetRecoverable(view.error);
+}
+inline bool datasetChoiceCanApply(const UiData& data) {
+    return datasetChoiceReady(data) && datasetSelectionBlock(data,true)==DatasetError::None;
+}
 inline const char* indexPhaseText(IndexPhase phase,bool ja) {
     switch(phase) {
         case IndexPhase::Preparing:return ja?"準備中":"Preparing";
@@ -69,9 +80,6 @@ inline unsigned datasetTextLines(const char* text,bool japanese,unsigned wanted,
 }
 inline void datasetSingleLine(const char* text,bool ja,char* out,size_t capacity,unsigned max_pixels=216) {
     clipUiText(text,ja,out,capacity,max_pixels);
-}
-inline const char* datasetRowTitle(const DatasetRow& row,bool ja) {
-    return row.id?row.title:(ja?"未選択":"None");
 }
 inline constexpr unsigned DatasetChoiceRows=4; // Title, Wordbook, details, apply.
 inline constexpr unsigned DatasetDetailVisibleRows=4;

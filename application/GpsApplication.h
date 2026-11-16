@@ -48,6 +48,7 @@ private:
     void readUiContent();
     // Keep the transfer frame out of action dispatch even under optimization.
     [[gnu::noinline]] bool readUiSnapshot(UiSnapshot& content);
+    void finishUiAction(uint32_t action_id,bool accepted);
     void applyStorage(const StorageSnapshot& state);
     bool operateStorage(const UiAction& action);
     bool operateBootMode(const UiAction& action);
@@ -67,6 +68,8 @@ private:
     bool appendPendingLog();
     void processLog();
     void updateLogElapsed();
+    void updateCpuClock();
+    void setDisplayMode(DisplayMode mode);
     bool logRequest(MessageKind kind, const LogCommand& command);
     bool queueLogAction(const UiAction& action);
     void prepareLogScreen(ScreenId target,ScreenId previous);
@@ -97,6 +100,8 @@ private:
     uint32_t storage_operation_id_ = 0;
     uint32_t browse_token_=0,browse_waiting_=0,browse_release_generation_=0;
     bool browse_cancel_=false,restart_pending_=false;
+    uint32_t active_cpu_mhz_=0;
+    bool cpu_reduced_=false;
     using BootStage=AppBootStage;
     GpsAppState& gpsState(){return state_;}
     const GpsAppState& gpsState()const{return state_;}

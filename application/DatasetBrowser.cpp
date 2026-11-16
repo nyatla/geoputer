@@ -35,19 +35,15 @@ bool GpsApplication::operateDataset(const UiAction& action) {
     switch(request.action) {
         case DatasetAction::Open:case DatasetAction::Older:case DatasetAction::Newer:break;
         case DatasetAction::Detail:if(!request.id)return false;break;
-        case DatasetAction::CancelLanguage:
-            request.action=DatasetAction::Detail;
-            if(!request.id || !validDatasetLanguage(action.settings.wordbook_language))return false;
-            break;
         case DatasetAction::Clear:
             if(!action.confirmed || !data_.settings.dataset || request.purpose!=DatasetPurpose::Select)return false;
             break;
         case DatasetAction::RebuildIndex:case DatasetAction::VerifyIndex:
             if(!action.confirmed || !request.id || request.purpose!=(request.action==DatasetAction::RebuildIndex?DatasetPurpose::Rebuild:DatasetPurpose::Verify))return false;
             break;
-        case DatasetAction::Language:case DatasetAction::Apply:
+        case DatasetAction::Apply:
             if(!request.id || !validDatasetLanguage(action.settings.wordbook_language))return false;
-            request.direction=action.browse_index?1:-1;break;
+            break;
         default:return false;
     }
     std::memcpy(request.language,action.settings.wordbook_language,sizeof(request.language));

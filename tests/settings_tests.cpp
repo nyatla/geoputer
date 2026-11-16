@@ -14,6 +14,7 @@ void check(bool value, const char* detail) { if (!value) throw std::runtime_erro
 void codec() {
     Settings value = defaultSettings();
     check(!value.dataset && !value.wordbook_language[0] && validSettings(value), "new configurations start without a dataset");
+    check(value.power_level==power::Level::Maximum,"new configurations default to maximum power saving");
     uint8_t record[SettingsRecordSize];
     for (unsigned log = 0; log < 3; ++log) for (unsigned flush = 0; flush < 5; ++flush)
     for (unsigned timeout = 0; timeout < settingChoices(static_cast<unsigned>(SettingId::ScreenTimeout)); ++timeout) for (unsigned light = 0; light < 5; ++light)

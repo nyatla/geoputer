@@ -12,8 +12,15 @@ void policyTests(){
     for(auto level:{power::Level::None,power::Level::Normal,power::Level::Maximum}){
         const auto gps=power::policy(level,BootMode::GpsLogger),usb=power::policy(level,BootMode::UsbStorage);
         check(gps.audio_available && gps.manage_audio==(level!=power::Level::None),"GPS policy level");
-        check(!usb.audio_available && usb.usb_enabled && gps.usb_enabled,"USB unchanged; unused audio disabled");
+        check(!usb.audio_available && usb.usb_enabled &&
+              gps.usb_enabled==(level!=power::Level::Maximum),"maximum disables logger USB only");
+        check(!power::policy(level,BootMode::WifiManagement).audio_available &&
+              power::policy(level,BootMode::WifiManagement).usb_enabled,"Wi-Fi retains USB diagnostics");
     }
+    check(power::ScreenOffCpuMhz==80 &&
+          power::reduceCpuWhileScreenOff(power::Level::Maximum,BootMode::GpsLogger) &&
+          !power::reduceCpuWhileScreenOff(power::Level::Normal,BootMode::GpsLogger) &&
+          !power::reduceCpuWhileScreenOff(power::Level::Maximum,BootMode::UsbStorage),"CPU reduction is GPS maximum only");
     power::PowerManager manager;manager.configure(static_cast<power::Level>(0),BootMode::GpsLogger);
     check(manager.level()==power::Level::None,"invalid level falls back safely");
 }

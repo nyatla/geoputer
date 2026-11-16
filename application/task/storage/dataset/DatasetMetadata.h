@@ -33,7 +33,7 @@ struct DatasetLanguages {
 static_assert(sizeof(DatasetLanguages::ids)==512,"Sixteen terminated language IDs");
 [[gnu::noinline]] void readDatasetMetadataInto(std::string_view directory,UiLanguage ui,const char* language,
     DatasetMetadata& result,StorageObserver* observer=nullptr,DatasetMetadataText text={},
-    int direction=0,DatasetLanguages* languages=nullptr);
+    DatasetLanguages* languages=nullptr);
 // Value-return convenience for non-UI callers; the result is fixed-size.
 inline DatasetMetadata readDatasetMetadata(std::string_view directory,UiLanguage ui,const char* language="",StorageObserver* observer=nullptr) {
     DatasetMetadata result;readDatasetMetadataInto(directory,ui,language,result,observer);return result;

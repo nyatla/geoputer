@@ -55,6 +55,26 @@ bool GpsApplication::begin() {
     return true;
 }
 
+void GpsApplication::updateCpuClock() {
+    const bool reduce = mode_==DisplayMode::Background &&
+        power::reduceCpuWhileScreenOff(data_.settings.power_level,BootMode::GpsLogger);
+    if (reduce == cpu_reduced_) return;
+    if (reduce) {
+        const auto current=getCpuFrequencyMhz();
+        if (current>power::ScreenOffCpuMhz && setCpuFrequencyMhz(power::ScreenOffCpuMhz)) {
+            active_cpu_mhz_=current;
+            cpu_reduced_=true;
+        }
+    } else if (active_cpu_mhz_ && setCpuFrequencyMhz(active_cpu_mhz_)) {
+        cpu_reduced_=false;
+    }
+}
+
+void GpsApplication::setDisplayMode(DisplayMode mode) {
+    mode_=mode;
+    updateCpuClock();
+}
+
 bool GpsApplication::callUi(UiRequest& request, SyncReturn& result) {
     return callTask(TaskId::UI, ui_.inbox(), request, result);
 }
@@ -102,7 +122,7 @@ bool GpsApplication::setScreen(ScreenId target, uint32_t action_id, ActionResult
     prepareScreenView(data_,target,previous);
     if(isLogBrowser(target) || isLogBrowser(previous))prepareLogScreen(target,previous);
     screen_ = target;
-    mode_ = DisplayMode::View;
+    setDisplayMode(DisplayMode::View);
     ++generation_;
     if (target == ScreenId::LivePlace || target == ScreenId::Map || viewingLogPoint(target)) refreshPlace();
     ui_data_dirty_ = data_.revision != sent_revision;
@@ -255,6 +275,11 @@ bool GpsApplication::readUiSnapshot(UiSnapshot& content) {
     return true;
 }
 
+void GpsApplication::finishUiAction(uint32_t action_id,bool accepted) {
+    last_processed_action_=action_id;
+    if(!publishUiContent(action_id,accepted?ActionResult::Applied:ActionResult::Rejected))ui_changed_=true;
+}
+
 void GpsApplication::readUiContent() {
     ui_changed_ = false;
     UiSnapshot content{};
@@ -292,30 +317,26 @@ void GpsApplication::readUiContent() {
             data_.boot.card(data_.storage.card_state);
             if(!accepted)message("SD SETUP FAILED");
         }
-        bootChanged();last_processed_action_=action.action_id;
-        if(!publishUiContent(action.action_id,accepted?ActionResult::Applied:ActionResult::Rejected))ui_changed_=true;
+        bootChanged();finishUiAction(action.action_id,accepted);
         return;
     }
 
 
     if(action.kind==ActionKind::SilenceAlarm) {
-        stopAlarm();mode_=DisplayMode::View;
-        last_processed_action_=action.action_id;
-        if(!publishUiContent(action.action_id,ActionResult::Applied))ui_changed_=true;
+        stopAlarm();setDisplayMode(DisplayMode::View);
+        finishUiAction(action.action_id,true);
         return;
     }
     if(screen_==ScreenId::Settings && content.page==SettingsPage::Alarm && mode_==DisplayMode::View && (action.kind==ActionKind::SaveAlarm || action.kind==ActionKind::ReloadAlarm || action.kind==ActionKind::PreviewAlarm)) {
         const bool accepted=action.kind==ActionKind::PreviewAlarm?
             (data_.storage.alarm.usable() && action.alarm_identity==data_.storage.alarm.identity &&
              alarm::valid(action.alarm_settings,data_.storage.alarm.depth) && playAlarm(action.alarm_settings,true)):operateStorage(action);
-        last_processed_action_=action.action_id;
-        if(!publishUiContent(action.action_id,accepted?ActionResult::Applied:ActionResult::Rejected))ui_changed_=true;
+        finishUiAction(action.action_id,accepted);
         return;
     }
     if(action.kind==ActionKind::MapScale) {
         const bool accepted=changeMapScale(action.map_scale);
-        last_processed_action_=action.action_id;
-        if(!publishUiContent(action.action_id,accepted?ActionResult::Applied:ActionResult::Rejected))ui_changed_=true;
+        finishUiAction(action.action_id,accepted);
         return;
     }
     if (action.kind == ActionKind::Maintenance && mode_ == DisplayMode::View && (screen_ == ScreenId::Boot || (screen_ == ScreenId::LivePlace && placeIssue(data_) != PlaceState::Ready))) {
@@ -325,8 +346,7 @@ void GpsApplication::readUiContent() {
             bootChanged();
             Console.println("[BOOT] maintenance requested; automatic GPS/GIS startup disabled");
         } else message("STOP LOGGER FIRST");
-        last_processed_action_ = action.action_id;
-        if (!publishUiContent(action.action_id, allowed ? ActionResult::Applied : ActionResult::Rejected)) ui_changed_ = true;
+        finishUiAction(action.action_id,allowed);
         if (allowed) enterMaintenance();
         return;
     }
@@ -335,54 +355,47 @@ void GpsApplication::readUiContent() {
         const bool allowed = !data_.storage.busy && !storage_operation_id_ && !gpsState().dataset_waiting_;
         if (allowed) restart_pending_ = true;
         else message("STORAGE BUSY");
-        last_processed_action_ = action.action_id;
-        if (!publishUiContent(action.action_id, allowed ? ActionResult::Applied : ActionResult::Rejected)) ui_changed_ = true;
+        finishUiAction(action.action_id,allowed);
         return;
     }
     if (action.kind == ActionKind::Wake && mode_ == DisplayMode::Background) {
-        mode_ = DisplayMode::View;
-        last_processed_action_ = action.action_id;
-        if (!publishUiContent(action.action_id, ActionResult::Applied)) ui_changed_ = true;
+        setDisplayMode(DisplayMode::View);
+        finishUiAction(action.action_id,true);
         return;
     }
 
     if (action.kind == ActionKind::Sleep && !data_.boot.maintenance && mode_ == DisplayMode::View) {
-        mode_ = DisplayMode::Background;
+        setDisplayMode(DisplayMode::Background);
         if(viewingLogPoint(screen_)) {data_.editBrowse().playing=false;++data_.revision;}
-        last_processed_action_ = action.action_id;
-        if (!publishUiContent(action.action_id, ActionResult::Applied)) ui_changed_ = true;
+        finishUiAction(action.action_id,true);
         return;
     }
     if (action.kind == ActionKind::Storage && mode_ == DisplayMode::View && screen_ == ScreenId::Settings && content.page == SettingsPage::System && content.selected_setting == 2 && (action.storage_operation == StorageOperation::EnterUsbMode || action.storage_operation==StorageOperation::EnterWifiMode)) {
         const bool accepted = operateBootMode(action);
-        last_processed_action_ = action.action_id;
-        if (!publishUiContent(action.action_id,accepted?ActionResult::Applied:ActionResult::Rejected)) ui_changed_ = true;
+        finishUiAction(action.action_id,accepted);
         return;
     }
     if (screen_ == ScreenId::Settings && mode_ == DisplayMode::View && ((action.kind == ActionKind::SaveSettings && content.page == SettingsPage::Operation) || (action.kind == ActionKind::ResetSettings && content.page == SettingsPage::Reset && action.confirmed) || (action.kind == ActionKind::Storage && content.page == SettingsPage::Storage))) {
         const bool accepted = operateStorage(action);
-        last_processed_action_ = action.action_id;
-        if (!publishUiContent(action.action_id, accepted ? ActionResult::Applied : ActionResult::Rejected)) ui_changed_ = true;
+        finishUiAction(action.action_id,accepted);
         return;
     }
     if (action.kind == ActionKind::Dataset && screen_ == ScreenId::Settings && mode_ == DisplayMode::View) {
         const bool accepted = operateDataset(action);
-        last_processed_action_ = action.action_id;
-        if (!publishUiContent(action.action_id, accepted ? ActionResult::Applied : ActionResult::Rejected)) ui_changed_ = true;
+        finishUiAction(action.action_id,accepted);
         return;
     }
     if (action.kind == ActionKind::Logging && mode_ == DisplayMode::View) {
         if (!queueLogAction(action)) {
-            last_processed_action_ = action.action_id;
-            if (!publishUiContent(action.action_id, ActionResult::Rejected)) ui_changed_ = true;
+            finishUiAction(action.action_id,false);
         }
         return;
     }
     if(action.kind==ActionKind::Browse && isLogBrowser(screen_) && mode_==DisplayMode::View) {
         const auto before=generation_;
         const bool accepted=operateBrowser(action);
-        last_processed_action_=action.action_id;
-        if(before==generation_ && !publishUiContent(action.action_id,accepted?ActionResult::Applied:ActionResult::Rejected)) ui_changed_=true;
+        if(before==generation_)finishUiAction(action.action_id,accepted);
+        else last_processed_action_=action.action_id;
         return;
     }
     const bool valid = !data_.boot.maintenance && action.kind == ActionKind::ChangeScreen && content.screen == screen_ &&
@@ -806,8 +819,7 @@ void GpsApplication::processLog() {
     data_.recording.now_ms = gpsState().log_elapsed_at_;
     ++data_.revision; ui_data_dirty_ = true;
     gpsState().log_control_ = {};
-    last_processed_action_ = action.action_id;
-    if (!publishUiContent(action.action_id, ok ? ActionResult::Applied : ActionResult::Rejected)) ui_changed_ = true;
+    finishUiAction(action.action_id,ok);
     Console.printf("[APP] logger state=%u accepted=%lu saved=%lu dropped=%lu\n", static_cast<unsigned>(data_.recording.state),
                   static_cast<unsigned long>(data_.storage.log.accepted), static_cast<unsigned long>(data_.storage.log.saved),
                   static_cast<unsigned long>(data_.recording.dropped));

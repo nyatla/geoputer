@@ -7,12 +7,17 @@ constexpr bool valid(Level level){return unsigned(level)>=1 && unsigned(level)<=
 struct Policy {
     bool audio_available=true;
     bool manage_audio=false;
-    // USB remains enabled at every level, including Maximum for now.
     bool usb_enabled=true;
 };
 constexpr Policy policy(Level level,BootMode mode){
     const bool logger=mode==BootMode::GpsLogger;
-    return {logger,logger && valid(level) && level!=Level::None,true};
+    // USB storage and Wi-Fi management keep their existing USB transport.
+    return {logger,logger && valid(level) && level!=Level::None,
+            !logger || level!=Level::Maximum};
+}
+inline constexpr uint32_t ScreenOffCpuMhz=80;
+constexpr bool reduceCpuWhileScreenOff(Level level,BootMode mode){
+    return mode==BootMode::GpsLogger && level==Level::Maximum;
 }
 // Policy only. Hardware is operated by the task which owns that peripheral.
 class PowerManager {

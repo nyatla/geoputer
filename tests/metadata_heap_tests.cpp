@@ -30,10 +30,10 @@ int main() {
     const auto path=std::string(folder)+"/dataset.ini";
     auto write=[&](const std::string& text) {std::ofstream(path,std::ios::binary)<<text;};
     DatasetMetadata result;DatasetLanguages languages;Observer observer;char title[64],description[256];
-    auto read=[&](const char* selected="",int direction=0) {
+    auto read=[&](const char* selected="") {
         allocations=0;tracking=true;
         readDatasetMetadataInto(folder,UiLanguage::English,selected,result,&observer,
-            {title,sizeof(title),description,sizeof(description)},direction,&languages);
+            {title,sizeof(title),description,sizeof(description)},&languages);
         tracking=false;
         check(!allocations,"INI parser must perform no C++ dynamic allocations");
         check(!observer.depth,"all file access scopes must finish");
@@ -48,8 +48,8 @@ int main() {
     check(result.error==DatasetError::None && result.language_count==16 && result.language_index==0 && languages.count==16,"sixteen languages accepted");
     check(std::string_view(result.language)==id && std::strlen(result.map)==127 && std::strlen(result.wordbook)==127,"fixed fields preserve maximum byte lengths and default fallback");
     check(std::string_view(title)==std::string(60,'t')+EllipsisUtf8 && std::strlen(description)==243,"UI strings written directly with UTF-8-safe ellipsis");
-    read(id.c_str(),-1);check(result.error==DatasetError::None && result.language_index==15 && std::string_view(result.language)=="x-p","previous wraps to last language");
-    read("x-p",1);check(result.language_index==0 && std::string_view(result.language)==id,"next wraps to first language");
+    read("x-p");check(result.error==DatasetError::None && result.language_index==15 && std::string_view(result.language)=="x-p","explicit final language is selected");
+    read(id.c_str());check(result.language_index==0 && std::string_view(result.language)==id,"explicit first language is selected");
     write(ini+"[extra]\ntitle=Extra\nwordbook=extra.giswordbook\n");read();
     check(result.error==DatasetError::Metadata && !languages.count && !title[0],"seventeenth language rejected before publication");
     write(ini+"[x-b]\ntitle=Duplicate\nwordbook=extra.giswordbook\n");read();
@@ -63,5 +63,5 @@ int main() {
     write("[dataset]\nversion=1\nmap=map.glc\ndefault_language=ja\n[ja]\ntitle=\xc0\x80\nwordbook=names.giswordbook\n");read();
     check(result.error==DatasetError::Metadata,"invalid UTF-8 is rejected without heap use");
     std::filesystem::remove_all(folder);
-    std::puts("PASS: INI C++ allocations=0; 16/17 languages, duplicates, long IDs/names, direct UTF-8 output, switching, reset and failures");
+    std::puts("PASS: INI C++ allocations=0; 16/17 languages, duplicates, long IDs/names, direct UTF-8 output, explicit selection, reset and failures");
 }

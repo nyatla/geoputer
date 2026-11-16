@@ -6,6 +6,7 @@
 #include "task/storage/log/LogFormat.h"
 #include "task/ui/KeyBindings.h"
 #include "task/ui/AlarmText.h"
+#include <Arduino.h>
 #include <stdexcept>
 #include <cstring>
 #include <cstdio>
@@ -158,8 +159,8 @@ int main(){
     operation(LogAction::Stop);app->storage_.gpsState().log_writer_.flush(host_tick);app->data_.storage.log=app->storage_.gpsState().log_writer_.snapshot();app->publishUiContent();
     fail_open=true;operation(LogAction::Start);check(app->data_.recording.state==RecordingState::Stopped && !app->gpsState().log_accepting_,"failed session start cannot enable recording");
     // Display sleep/wake never changes task, record or current screen state.
-    app->ui_.model_.keyPressed(UiKey::ScreenOff,host_tick);app->readUiContent();check(app->mode_==DisplayMode::Background,"S sleep");
-    app->ui_.model_.keyPressed(UiKey::OpenMap,host_tick);app->readUiContent();check(app->mode_==DisplayMode::View && app->screen_==ScreenId::GpsLogger,"wake preserves screen without shortcut execution");
+    app->ui_.model_.keyPressed(UiKey::ScreenOff,host_tick);app->readUiContent();check(app->mode_==DisplayMode::Background && host_cpu_mhz==80,"S sleep reduces CPU at maximum");
+    app->ui_.model_.keyPressed(UiKey::OpenMap,host_tick);app->readUiContent();check(app->mode_==DisplayMode::View && app->screen_==ScreenId::GpsLogger && host_cpu_mhz==240,"wake restores CPU without shortcut execution");
     // Map tracking does not gate current-place searches. Feed real App dispatch
     // two completed name results while the boundary image's anchor stays fixed.
     hold_place_queries=true;
@@ -238,15 +239,14 @@ int main(){
     DatasetRequest catalog{};catalog.action=DatasetAction::Open;
     check(app->requestDataset(catalog) && !app->data_.hasDatasets() && app->ui_.model_.data().datasets().loading,"UI owns pending catalog, App holds control only");
     auto request=app->gpsState().dataset_borrow_;check(validDatasetMemory(request) && app->ui_.model_.mapFrame().leased(),"catalog borrows the fixed back image");
-    auto makeCatalog=[&](const DatasetRequest& req,const char* title) {
-        auto& view=*datasetResultMemory(req);view={};view.revision=req.token;view.count=1;view.rows[0].id.assign("a02");
-        std::snprintf(view.rows[0].title,sizeof(view.rows[0].title),"%s",title);
+    auto makeCatalog=[&](const DatasetRequest& req,const char* id) {
+        auto& view=*datasetResultMemory(req);view={};view.revision=req.token;view.count=1;view.rows[0].id.assign(id);
         AppNotification event{};event.source=TaskId::Storage;event.kind=MessageKind::ReadCompleted;
         auto& done=event.payload.storage_completion;done.read_kind=StorageReadKind::DatasetBrowser;
         done.snapshot=app->data_.storage;++done.snapshot.revision;done.snapshot.busy=false;
         done.dataset={req,DatasetError::None};return event;
     };
-    late_dataset=makeCatalog(request,"DELAYED DATASET");deliver_dataset_on_ui_send=true;
+    late_dataset=makeCatalog(request,"test-delayed");deliver_dataset_on_ui_send=true;
     check(app->setScreen(ScreenId::Logs),"shortcut to logs during catalog write");
     check(app->gpsState().dataset_waiting_ && app->ui_.model_.mapFrame().leased(),"notification cannot return a loan from inside a sync wait");
     app->processDataset();
@@ -257,28 +257,28 @@ int main(){
     LogReadReply late_log{};late_log.request=log_request;late_log.count=1;std::strcpy(late_log.data.list.names[0],"must-not-overwrite-dataset.gps.dat");
     app->completeBrowser(late_log);app->processDataset();
     check(app->gpsState().dataset_waiting_ && !app->data_.hasDatasets(),"App never stores catalog result");
-    auto current=makeCatalog(app->gpsState().dataset_borrow_,"CURRENT DATASET");app->handleNotification(current);app->processDataset();
-    check(!app->gpsState().dataset_waiting_ && !std::strcmp(app->ui_.model_.data().datasets().rows[0].title,"CURRENT DATASET"),"current catalog publishes in UI");
+    auto current=makeCatalog(app->gpsState().dataset_borrow_,"test-current");app->handleNotification(current);app->processDataset();
+    check(!app->gpsState().dataset_waiting_ && app->ui_.model_.data().datasets().rows[0].id.view()=="test-current","current catalog publishes in UI");
     app->publishUiContent();
-    check(!std::strcmp(app->ui_.model_.data().datasets().rows[0].title,"CURRENT DATASET"),"general App updates cannot overwrite the UI-owned page");
+    check(app->ui_.model_.data().datasets().rows[0].id.view()=="test-current","general App updates cannot overwrite the UI-owned page");
     // Superseding read, failed return and resubmission preserve the old lease.
     app->data_.storage.busy=false;check(app->requestDataset(catalog),"first superseded read");request=app->gpsState().dataset_borrow_;
     catalog.id.assign("a02");check(app->requestDataset(catalog) && app->gpsState().dataset_borrow_.token==request.token,"new intent cannot revoke Storage loan");
-    auto superseded=makeCatalog(request,"SUPERSEDED");app->handleNotification(superseded);reject_dataset_return=true;app->processDataset();
+    auto superseded=makeCatalog(request,"test-superseded");app->handleNotification(superseded);reject_dataset_return=true;app->processDataset();
     check(app->gpsState().dataset_borrow_.token==request.token,"failed return retains owner");app->processDataset();
     check(app->gpsState().dataset_borrow_.token && app->gpsState().dataset_borrow_.token!=request.token,"next read begins after old loan returns");
-    current=makeCatalog(app->gpsState().dataset_borrow_,"LATEST");app->handleNotification(current);app->processDataset();
-    check(!std::strcmp(app->ui_.model_.data().datasets().rows[0].title,"LATEST"),"superseded text never publishes");
+    current=makeCatalog(app->gpsState().dataset_borrow_,"test-latest");app->handleNotification(current);app->processDataset();
+    check(app->ui_.model_.data().datasets().rows[0].id.view()=="test-latest","superseded result never publishes");
     reject_dataset_once=true;check(app->requestDataset(catalog) && app->gpsState().dataset_ready_,"rejected Storage submission schedules loan return");
     app->processDataset();check(app->gpsState().dataset_borrow_.token && app->gpsState().dataset_queued_,"rejected request retries after returning UI back");
-    current=makeCatalog(app->gpsState().dataset_borrow_,"RETRIED");app->handleNotification(current);app->processDataset();
+    current=makeCatalog(app->gpsState().dataset_borrow_,"test-retried");app->handleNotification(current);app->processDataset();
     DatasetRequest verify{};verify.action=DatasetAction::VerifyIndex;verify.purpose=DatasetPurpose::Verify;verify.id.assign("a02");
     check(app->requestDataset(verify) && app->gpsState().dataset_applying_,"maintenance enters busy state without an App result payload");
     AppNotification progress_event{};progress_event.source=TaskId::Storage;progress_event.kind=MessageKind::DatasetProgress;
     progress_event.payload.index_progress.token=app->gpsState().dataset_waiting_;progress_event.payload.index_progress.percent=55;
     app->handleNotification(progress_event);app->processDataset();
     check(app->ui_.model_.data().datasets().progress.percent==55,"App forwards progress without copying display text");
-    current=makeCatalog(app->gpsState().dataset_borrow_,"UNUSED MAINTENANCE TEXT");app->handleNotification(current);app->processDataset();
+    current=makeCatalog(app->gpsState().dataset_borrow_,"test-maintenance");app->handleNotification(current);app->processDataset();
     check(app->gpsState().dataset_check_needed_ && !app->gpsState().dataset_applying_ && !app->ui_.model_.data().datasets().applying,"maintenance completion schedules dataset check and releases UI loan");
     app->gpsState().dataset_check_needed_=false;
     // Scratch contention during initialization is retryable and keeps the selected dataset.
@@ -566,8 +566,11 @@ int main(){
     // and the display is dark. No test substitutes the App scheduling logic.
     static GpsApplication alarm_instance;app=&alarm_instance;
     check(app->results_.initialize() && app->notifications_.initialize() && app->ui_.initialize() && app->gps_.initialize() && app->storage_.initialize(),"alarm App queues");
-    app->screen_=ScreenId::LogPoint;app->generation_=1;app->mode_=DisplayMode::Background;
+    app->screen_=ScreenId::LogPoint;app->generation_=1;
     app->data_.settings=defaultSettings();app->data_.settings.dataset=1;
+    app->data_.settings.power_level=power::Level::Maximum;
+    app->setDisplayMode(DisplayMode::Background);
+    check(host_cpu_mhz==power::ScreenOffCpuMhz,"alarm scenario starts with reduced screen-off CPU");
     app->data_.dataset.state=PlaceState::Ready;app->data_.storage.card_state=CardState::Mounted;
     app->data_.gps.fix={35.68,140.02,0,true};app->data_.gps.reception=GpsReception::Fix;app->data_.gps.sample_seq=100;
     auto& alarm_profile=app->data_.storage.alarm;alarm_profile.dataset=1;alarm_profile.depth=2;alarm_profile.identity=77;
@@ -593,11 +596,12 @@ int main(){
     ++app->data_.gps.sample_seq;alarmSample(2,6);check(!audio_starts,"standard waits for seven adjacent-cell votes");
     ++app->data_.gps.sample_seq;alarmSample(2,7);check(audio_starts==1 && app->gpsState().alarm_audio_owned_,"standard crossing starts audio on the qualifying sample in dark-screen mode");
     alarm_ui.keyPressed(UiKey::OpenMap,host_tick);app->readUiContent();
-    check(!app->gpsState().alarm_audio_owned_ && audio_stops==1 && app->mode_==DisplayMode::View && app->screen_==ScreenId::LogPoint,"first key silences and wakes without executing map shortcut");
+    check(!app->gpsState().alarm_audio_owned_ && audio_stops==1 && app->mode_==DisplayMode::View && app->screen_==ScreenId::LogPoint && host_cpu_mhz==240,"first key silences, wakes and restores CPU without executing map shortcut");
     ++app->data_.gps.sample_seq;alarmSample(1,1);check(audio_starts==1,"silence preserves accepted region and the return threshold");
     ++app->data_.gps.sample_seq;alarmSample(3,7);check(audio_starts==2,"third region can trigger another live alarm");
     app->data_.storage.card_state=CardState::NoCard;app->processAlarm();check(!app->gpsState().alarm_audio_owned_ && audio_stops==2,"SD unavailable stops sounding alarm");
     app->data_.storage.card_state=CardState::Mounted;alarm_profile.settings.enabled=false;++alarm_profile.revision;app->processAlarm();
+    app->data_.settings.power_level=power::Level::None; // The first audition covers unmanaged audio.
     check(app->playAlarm(alarm_profile.settings,true),"audition works while notifications are OFF");
     host_tick+=alarm::SoundSession::cycleMs(alarm_profile.settings.tone)+1;app->processAlarm();
     check(!app->gpsState().alarm_audio_owned_,"audition ends after one pattern");

@@ -4,6 +4,7 @@
 #include "hardware/LoraSafety.h"
 #include "utils/Console.h"
 #include "task/storage/usb/UsbStorage.h"
+#include "task/storage/SettingsStore.h"
 #include <USB.h>
 #include <esp_mac.h>
 #include <esp_heap_caps.h>
@@ -12,7 +13,7 @@
 namespace {
 geoputer::ApplicationRuntime application;
 bool ready = false;
-bool usb_boot = false, wifi_boot = false, console_reported = false;
+bool usb_boot = false, wifi_boot = false, console_started = false, console_reported = false;
 uint32_t memory_report_at = 0;
 }
 
@@ -20,23 +21,34 @@ void setup() {
     geoputer::holdUnusedLoraInReset(); // Before NVS, USB, UI, GPS or SD initialization.
     geoputer::BootMode mode;
     const bool valid_mode = geoputer::loadBootMode(mode);
-    geoputer::Console.begin(115200);
     const bool usb_mode = mode == geoputer::BootMode::UsbStorage;
     usb_boot = usb_mode;wifi_boot=mode==geoputer::BootMode::WifiManagement;
-    USB.productName(usb_mode ? "Geoputer SD" : "Geoputer");
-    // Start the USB transport before display/SD initialization in both modes.
-    // MSC initially reports no medium; Storage publishes it once SD is ready.
-    if (usb_mode) {
-        geoputer::UsbStorage::registerInterface();
-        uint8_t mac[6];
-        esp_efuse_mac_get_default(mac);
-        char serial[20];
-        snprintf(serial, sizeof(serial), "%02X%02X%02X%02X%02X%02X-SD",
-                 mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
-        USB.serialNumber(serial);
+    bool start_usb=true;
+    if (mode==geoputer::BootMode::GpsLogger && valid_mode) {
+        geoputer::Settings boot_settings=geoputer::defaultSettings();
+        geoputer::SettingsStore store;
+        const auto state=store.begin()?store.load(boot_settings):geoputer::SettingsState::Unavailable;
+        // Keep a diagnostics path when NVS cannot provide a trustworthy policy.
+        if (state==geoputer::SettingsState::Loaded || state==geoputer::SettingsState::Defaults)
+            start_usb=geoputer::power::policy(boot_settings.power_level,mode).usb_enabled;
     }
-    USB.begin();
-    if (usb_mode) tud_disconnect();
+    if (start_usb) {
+        geoputer::Console.begin(115200);
+        console_started=true;
+        USB.productName(usb_mode ? "Geoputer SD" : "Geoputer");
+        // MSC initially reports no medium; Storage publishes it once SD is ready.
+        if (usb_mode) {
+            geoputer::UsbStorage::registerInterface();
+            uint8_t mac[6];
+            esp_efuse_mac_get_default(mac);
+            char serial[20];
+            snprintf(serial, sizeof(serial), "%02X%02X%02X%02X%02X%02X-SD",
+                     mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+            USB.serialNumber(serial);
+        }
+        USB.begin();
+        if (usb_mode) tud_disconnect();
+    }
     ready = application.begin(mode);
     if (usb_mode) {
         // Enumerate once SD initialization has completed, even on NO SD, so
@@ -52,7 +64,7 @@ void loop() {
     // Retry a retained snapshot after CDC attaches; early boot output may be lost.
     // No allocations, buffers or sampling task are needed for this report.
     const auto now = millis();
-    if ((!console_reported || geoputer::config::DetailedDiagnostics) && now-memory_report_at>=10000) {
+    if (console_started && (!console_reported || geoputer::config::DetailedDiagnostics) && now-memory_report_at>=10000) {
         memory_report_at=now;
         const auto written=geoputer::Console.printf(
             "[MODE-MEM] mode=%s fixed_gps=%u fixed_usb=%u fixed_wifi=%u union=%u app=%u sd_fil=%u heap=%u min_heap=%u largest=%u internal=%u stack_free=%u\n",

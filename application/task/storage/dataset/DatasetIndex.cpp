@@ -407,7 +407,7 @@ void readBookSources(uint8_t drive,std::string_view directory,const DatasetMetad
     DatasetLanguages languages;
     if(metadata.language_count) {
         DatasetMetadata selected;
-        readDatasetMetadataInto(directory,UiLanguage::Japanese,metadata.language,selected,observer,{},0,&languages);
+        readDatasetMetadataInto(directory,UiLanguage::Japanese,metadata.language,selected,observer,{},&languages);
         require(selected.error==DatasetError::None && std::string_view(selected.map)==metadata.map);
     } else {
         require(validDatasetLanguage(metadata.language));

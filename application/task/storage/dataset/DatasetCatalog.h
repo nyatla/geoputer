@@ -15,6 +15,8 @@ public:
     void readInto(const DatasetRequest& request,UiLanguage ui,DatasetView& view) const;
     TemporaryPath directory(std::string_view id) const;
 private:
+    void readListInto(const DatasetRequest& request,UiLanguage ui,DatasetView& view) const;
+    void readDetailInto(const DatasetRequest& request,UiLanguage ui,DatasetView& view) const;
     std::string_view root_; // ROM/caller-owned; must outlive the catalog.
     StorageObserver* observer_;
     uint8_t drive_;

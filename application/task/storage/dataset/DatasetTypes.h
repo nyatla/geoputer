@@ -7,7 +7,7 @@
 
 namespace geoputer {
 enum class DatasetPurpose : uint8_t { Select, Rebuild, Verify };
-enum class DatasetAction : uint8_t { Open, Older, Newer, Detail, Language, Apply, CancelLanguage, RebuildIndex, VerifyIndex, Clear };
+enum class DatasetAction : uint8_t { Open, Older, Newer, Detail, Apply, RebuildIndex, VerifyIndex, Clear };
 enum class DatasetError : uint8_t { None, Missing, Metadata, Version, Data, Encoding, TooManyChunks, NoMemory, NotStopped, SaveFailed, IndexFailed, IndexRestoreFailed, Busy, IndexMismatch, Unselected, CardUnavailable, AlreadyUnselected, SettingsUnavailable };
 enum class IndexPhase : uint8_t { Idle, Preparing, Map, TI, TT, TM, Structure, Publish, Complete, Failed };
 struct IndexProgress {
@@ -24,13 +24,12 @@ struct DatasetRequest {
     uint32_t token;
     DatasetId id;
     uint16_t page;
-    int8_t direction;
     bool reset_settings;
     char language[config::DatasetLanguageBytes];
     uint32_t screen_generation=0;
     map::BufferLease buffer{};
 };
-struct DatasetRow { DatasetId id; char title[config::DatasetLineBytes]; DatasetError error; };
+struct DatasetRow { DatasetId id; DatasetError error; };
 struct DatasetDetail {
     char title[config::DatasetLineBytes], description[config::DatasetLineBytes], language[config::DatasetLanguageBytes];
     char wordbook_types[config::MaxDatasetLanguages][config::DatasetLanguageBytes];

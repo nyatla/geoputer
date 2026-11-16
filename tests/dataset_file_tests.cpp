@@ -32,8 +32,7 @@ void testDatasetFiles(const std::string& temporary,const std::string& map,const 
     DatasetCatalog catalog(dataset_root,nullptr,0,&catalog_resources.files,&catalog_resources.work);DatasetRequest request{};request.action=DatasetAction::Open;
     auto list=catalog.read(request,UiLanguage::English);
     check(list.count==6 && !list.rows[0].id && list.rows[5].id.view()=="a55" && list.has_newer && !list.has_older,"named ID list is ordered, bounded and paginated without opening GLCs");
-    check(!std::strcmp(list.rows[1].title,"Japan"),"catalog chooses the UI title independently");
-    check(!std::strcmp(list.rows[4].title,long_title.c_str()),"catalog retains the full title for horizontal scrolling");
+    check(list.rows[1].id.view()=="a01" && list.rows[4].id.view()=="a21","catalog rows carry folder IDs without duplicate titles");
     request.action=DatasetAction::Newer;request.id.assign("a55");list=catalog.read(request,UiLanguage::English);
     check(list.count==1 && list.rows[0].id.view()=="a99" && list.has_older && !list.has_newer,"second page skips sparse IDs and invalid names");
     request.action=DatasetAction::Older;request.id.assign("a99");request.page=1;list=catalog.read(request,UiLanguage::Japanese);
@@ -53,9 +52,9 @@ void testDatasetFiles(const std::string& temporary,const std::string& map,const 
     check(!std::strcmp(detail.info.language,"ja") && !std::strcmp(detail.info.title,"Japan") && detail.info.language_count==2 &&
           !std::strcmp(detail.info.wordbook_types[0],"ja") && !std::strcmp(detail.info.wordbook_types[1],"en"),
           "Wordbook types are returned for direct choice without rereading the INI");
-    request.action=DatasetAction::Language;std::strcpy(request.language,"ja");request.direction=1;
+    request.action=DatasetAction::Detail;std::strcpy(request.language,"en");
     detail=catalog.read(request,UiLanguage::Japanese);
-    check(detail.error==DatasetError::None && !std::strcmp(detail.info.language,"en"),"next language selects the exact named Wordbook");
+    check(detail.error==DatasetError::None && !std::strcmp(detail.info.language,"en"),"explicit language selects the exact named Wordbook");
     {
         static StorageCodeImages images;StorageScreenResources screens(images.map.image());
         auto* address=images.map.image().data();images.point[0]=0x1234abcd;
@@ -71,11 +70,11 @@ void testDatasetFiles(const std::string& temporary,const std::string& map,const 
                   "candidate detail uses stack Readers, borrowed buffers and zero C++ allocations");
             check(received.info.chunks==detail.info.chunks && received.info.west==detail.info.west && received.info.east==detail.info.east &&
                   received.info.unit_inv_x==detail.info.unit_inv_x && !std::strcmp(received.info.title,"Japan"),"borrowed map coverage and direct text equal the compatibility result");
-            query.action=DatasetAction::Language;std::strcpy(query.language,"ja");query.direction=1;
+            query.action=DatasetAction::Detail;std::strcpy(query.language,"en");
             candidate_heap::calls=candidate_heap::bytes=0;candidate_heap::track=true;
             borrowed.readInto(query,UiLanguage::Japanese,received);candidate_heap::track=false;
             check(received.error==DatasetError::None && !candidate_heap::calls && !std::strcmp(received.info.language,"en") &&
-                  !lease.work()->inUse() && !files.inUse(),"language candidate checks use the same zero-allocation SD path");
+                  !lease.work()->inUse() && !files.inUse(),"explicit language checks use the same zero-allocation SD path");
             // A bad candidate cannot retain either FIL or borrowed buffer.
             query.id.assign("a02");query.action=DatasetAction::Detail;
             borrowed.readInto(query,UiLanguage::Japanese,received);

@@ -29,7 +29,7 @@ struct Settings {
     uint8_t gps_mode;
     UiLanguage language;
     char wordbook_language[config::DatasetLanguageBytes]{}; // Empty means the dataset default at first boot.
-    power::Level power_level=power::Level::None;
+    power::Level power_level=power::Level::Maximum;
     uint8_t volume=1; // Shared system volume, UI levels 1..5.
 };
 

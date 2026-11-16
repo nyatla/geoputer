@@ -90,6 +90,8 @@ private:
     void gpsLoggerKey(UiKey key);
     void logBrowserKey(UiKey key);
     void settingsKey(UiKey key);
+    void alarmSettingsKey(UiKey key);
+    void datasetSettingsKey(UiKey key);
     unsigned editableSettingChoices() const;
     bool commitSettingEdit();
 

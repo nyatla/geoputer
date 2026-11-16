@@ -8,29 +8,29 @@ void check(bool ok,const char* why){if(!ok)throw std::runtime_error(why);}
 }
 void testDatasetBorrowing() {
     UiData common{};common.settings=defaultSettings();common.storage.card_state=CardState::Mounted;common.storage.settings_state=SettingsState::Loaded;
-    common.editDatasets().count=1;common.editDatasets().rows[0].id.assign("test-old");std::strcpy(common.editDatasets().rows[0].title,"OLD");
+    common.editDatasets().count=1;common.editDatasets().rows[0].id.assign("test-old");
     GpsUiModel ui;check(ui.setScreen({ScreenId::Settings,DisplayMode::View,1,common,0,ActionResult::None})==OperationStatus::Ok,"dataset test enters settings");
     DatasetRequest request{};request.token=10;request.screen_generation=1;map::BufferLease buffer{};
     check(ui.beginDatasetRead(request,buffer)==OperationStatus::Ok,"dataset borrows fixed UI back");request.buffer=buffer;
     check(validDatasetMemory(request) && buffer.capacity==6060,"dataset typed layout fits existing image");
     DatasetRequest other{};other.token=11;other.screen_generation=1;
     map::BufferLease second{};check(ui.beginDatasetRead(other,second)==OperationStatus::Unavailable,"only one back operation may own bytes");
-    auto& result=*datasetResultMemory(request);result={};result.revision=request.token;result.count=1;result.rows[0].id.assign("test-new");std::strcpy(result.rows[0].title,"NEW");
-    std::strcpy(common.editDatasets().rows[0].title,"STALE APP");++common.revision;
+    auto& result=*datasetResultMemory(request);result={};result.revision=request.token;result.count=1;result.rows[0].id.assign("test-new");
+    common.editDatasets().rows[0].id.assign("test-stale");++common.revision;
     check(ui.updateContent({DisplayMode::View,1,common,0,ActionResult::None})==OperationStatus::Ok &&
-          !std::strcmp(ui.data().datasets().rows[0].title,"OLD") && ui.data().datasets().loading,"UI cannot display partial Storage writes or stale App payload");
+          ui.data().datasets().rows[0].id.view()=="test-old" && ui.data().datasets().loading,"UI cannot display partial Storage writes or stale App payload");
     DatasetCompletion done{request,DatasetError::None};
     auto wrong=done;++wrong.request.buffer.id;
     check(ui.commitDatasetRead(wrong)==OperationStatus::StaleContent && ui.mapFrame().leased(),"wrong lease cannot publish or return current loan");
-    check(ui.commitDatasetRead(done)==OperationStatus::Ok && !ui.mapFrame().leased() && !std::strcmp(ui.data().datasets().rows[0].title,"NEW"),"UI publishes then releases result memory");
+    check(ui.commitDatasetRead(done)==OperationStatus::Ok && !ui.mapFrame().leased() && ui.data().datasets().rows[0].id.view()=="test-new","UI publishes then releases result memory");
     ++common.revision;ui.updateContent({DisplayMode::View,1,common,0,ActionResult::None});
-    check(!std::strcmp(ui.data().datasets().rows[0].title,"NEW"),"common state update retains UI-owned dataset");
+    check(ui.data().datasets().rows[0].id.view()=="test-new","common state update retains UI-owned dataset");
     check(ui.commitDatasetRead(done)==OperationStatus::StaleContent,"duplicate completion cannot republish reused bytes");
     request={};request.token=12;request.screen_generation=1;buffer={};
     check(ui.beginDatasetRead(request,buffer)==OperationStatus::Ok,"start read before leaving settings");request.buffer=buffer;
     UiData logs=common;logs.editBrowse()={};
     check(ui.setScreen({ScreenId::Logs,DisplayMode::View,2,logs,0,ActionResult::None})==OperationStatus::Ok && ui.mapFrame().leased(),"screen replacement cannot revoke Storage writer");
-    auto& late=*datasetResultMemory(request);late={};late.revision=request.token;late.count=1;std::strcpy(late.rows[0].title,"LATE");done={request,DatasetError::None};
+    auto& late=*datasetResultMemory(request);late={};late.revision=request.token;late.count=1;late.rows[0].id.assign("test-late");done={request,DatasetError::None};
     check(ui.commitDatasetRead(done)==OperationStatus::StaleContent && ui.data().hasBrowse(),"old page cannot overwrite Logs");
     check(ui.discardDatasetRead(done)==OperationStatus::Ok && !ui.mapFrame().leased(),"stale completion returns writer only after completion");
     ui.setScreen({ScreenId::Settings,DisplayMode::View,3,common,0,ActionResult::None});
