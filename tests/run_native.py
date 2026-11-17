@@ -7,11 +7,13 @@ import sys
 from check_export_files import check_exports
 
 root = Path(__file__).resolve().parents[1]
+leak_check = os.environ.get("GEOPUTER_LSAN") == "1"
+sanitizer = ["-fsanitize=address,undefined", "-no-pie"] if leak_check else ["-fsanitize=undefined"]
 with tempfile.TemporaryDirectory(prefix="geoputer-native-") as directory:
     binary = Path(directory) / "native-tests"
     subprocess.run([
         "g++", "-std=c++17", "-Wall", "-Wextra", "-Werror", "-pedantic",
-        "-fsanitize=undefined", "-fno-sanitize-recover=all", "-D_GLIBCXX_ASSERTIONS", "-g", "-pthread",
+        *sanitizer, "-fno-sanitize-recover=all", "-D_GLIBCXX_ASSERTIONS", "-g1" if leak_check else "-g", "-pthread",
         "-I", str(root / "tests/support"), "-I", str(root / "application"),
         str(root / "tests/native_tests.cpp"),
         str(root / "tests/ui_notice_tests.cpp"),
@@ -46,13 +48,13 @@ with tempfile.TemporaryDirectory(prefix="geoputer-native-") as directory:
         str(root / "application/task/storage/galuchat/TextEncoding.cpp"),
         str(root / "application/Settings.cpp"),
         str(root / "application/task/storage/SettingsStore.cpp"),
-        str(root / "application/task/ui/GpsUiModel.cpp"),
+        *[str(p) for p in sorted((root / "application/task/ui").glob("GpsUiModel*.cpp"))],
         str(root / "application/task/ui/SettingsText.cpp"),
         str(root / "application/task/ui/LicenseText.cpp"),
         str(root / "application/task/ui/Shinonome.cpp"),
         str(root / "application/task/gps/NmeaParser.cpp"),
         str(root / "application/task/gps/GpsReceiver.cpp"), "-o", str(binary),
-    ], check=True, timeout=180)
+    ], check=True, timeout=600 if leak_check else 180)
     # Exercise the hardware guard with GPIO adapters, independent of USB/GPS mode.
     guard = Path(directory) / "lora-safety-tests"
     subprocess.run(['g++', '-std=c++17', '-Wall', '-Wextra', '-Werror', '-pedantic',

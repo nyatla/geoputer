@@ -17,6 +17,21 @@ if not M5GFX.is_dir():
 if os.environ.get("RGP_M5GFX_DIR"):
     M5GFX = Path(os.environ["RGP_M5GFX_DIR"]) / "src/lgfx"
 
+
+def ui_cpp_sources():
+    """Production UI translation units used by framebuffer previews."""
+    directory = ROOT / "application/task/ui"
+    return ([directory / "PixelFont.cpp"]
+            + sorted(directory.glob("GpsUiRenderer*.cpp"))
+            + sorted(directory.glob("GpsUiModel*.cpp"))
+            + [directory / f"{name}.cpp" for name in ("LicenseText", "SettingsText", "Shinonome")])
+
+
+def ui_renderer_source():
+    directory = ROOT / "application/task/ui"
+    return ("".join(path.read_text() for path in sorted(directory.glob("GpsUiRenderer*.cpp")))
+            + (directory / "UiCanvas.h").read_text())
+
 ADAPTER = r'''
 #pragma once
 #include <algorithm>

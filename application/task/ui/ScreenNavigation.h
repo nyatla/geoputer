@@ -36,10 +36,7 @@ inline const char* screenName(ScreenId screen) {
         default:return "";
     }
 }
-inline bool hasRuntimeHeader(ScreenId screen,const UiData&) {
-    return screen==ScreenId::LivePlace || screen==ScreenId::Map || screen==ScreenId::GpsLogger ||
-        screen==ScreenId::Logs;
-}
+inline constexpr bool hasRuntimeHeader(ScreenId screen) { return hasScreenName(screen); }
 inline bool hasPlaybackHeader(ScreenId screen,const UiData& data) {
     return screen==ScreenId::LogPoint && data.browse().map_mode;
 }

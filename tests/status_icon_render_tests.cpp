@@ -63,7 +63,7 @@ Mask render(ScreenId screen,int page,bool active,bool japanese,int depth,bool di
         usb.update(content,0);usb.page_=static_cast<UsbPage>(page);usb.setBattery(percent,charging,charge_known);usb.tick(200);
         PanelRenderer panel(display);check(panel.begin(backing,sizeof(backing),depth),"USB renderer begin");panel.draw(usb);
     }else renderer.draw(model);
-    if((hasRuntimeHeader(screen,data) || hasPlaybackHeader(screen,data)) && !notice) {
+    if((hasRuntimeHeader(screen) || hasPlaybackHeader(screen,data)) && !notice) {
         std::array<uint16_t,gps_header::IconsLeft*16> expected{};
         auto label=[&](unsigned x,const char* value,uint16_t color) {
             for(unsigned n=0;value[n];++n)for(unsigned y=0;y<8;++y)for(unsigned col=0;col<8;++col) {

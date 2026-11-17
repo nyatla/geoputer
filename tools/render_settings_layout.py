@@ -5,7 +5,7 @@ import re
 import subprocess
 import tempfile
 from PIL import Image
-from ui_preview_support import ROOT, M5GFX, ADAPTER, reference_frame
+from ui_preview_support import ROOT, M5GFX, ADAPTER, reference_frame, ui_cpp_sources, ui_renderer_source
 from build_metadata import write_metadata
 
 SCENE = r'''
@@ -81,15 +81,12 @@ int main(int argc,char** argv){
         auto& view=data.editDatasets();view.purpose=DatasetPurpose::Select;view.count=6;view.has_newer=true;
         view.rows[0]={};
         view.rows[1].id.assign("jp-n03-y2026-1");
-        std::snprintf(view.rows[1].title,sizeof(view.rows[1].title),"%s",english?"Japanese administrative boundaries":"日本全国市区町村の行政区域");
         view.rows[2].id.assign("jp-est-y2020-1");
-        std::snprintf(view.rows[2].title,sizeof(view.rows[2].title),"%s",english?"Statistics subdivision areas":"日本統計区と町字の境界");
         for(unsigned n=3;n<6;++n){
             char id[16];std::snprintf(id,sizeof(id),"jp-test-%u",n);
             view.rows[n].id.assign(id);
-            std::snprintf(view.rows[n].title,sizeof(view.rows[n].title),"%s",english?"Additional administrative areas":"追加の行政区域");
         }
-        char clipped[64];datasetSingleLine(view.rows[1].title,!english,clipped,sizeof(clipped));
+        char clipped[64];datasetSingleLine(english?"Japanese administrative boundaries":"日本全国市区町村の行政区域",!english,clipped,sizeof(clipped));
         check(PixelFont::width(clipped,english?TextRole::Ascii8x16:TextRole::UiLarge)<=216,"dataset title crosses the screen");
     }
     if(std::strcmp(mode,"license-baseline")){
@@ -298,7 +295,7 @@ def main():
     output = args.output
     output.mkdir(parents=True, exist_ok=True)
     enum_source = (M5GFX / "v1/misc/enum.hpp").read_text()
-    renderer = (ROOT / "application/task/ui/GpsUiRenderer.cpp").read_text() + (ROOT / "application/task/ui/UiCanvas.h").read_text()
+    renderer = ui_renderer_source()
     colors = []
     for name in sorted(set(re.findall(r"\bTFT_[A-Z]+\b", SCENE + renderer))):
         value = re.search(rf"\b{name}\s*=\s*(0x[0-9A-Fa-f]+)", enum_source)[1]
@@ -309,8 +306,7 @@ def main():
         write_metadata(work / "BuildMetadata.h", ROOT)
         (work / "M5GFX.h").write_text(ADAPTER + "\n" + "\n".join(colors))
         (work / "scene.cpp").write_text(SCENE)
-        source = [ROOT / "application/task/ui" / f"{name}.cpp" for name in
-                  ("PixelFont", "GpsUiRenderer", "GpsUiModel", "LicenseText", "SettingsText", "Shinonome")]
+        source = ui_cpp_sources()
         executable = work / "render"
         subprocess.run(["g++", "-std=c++17", "-Wall", "-Wextra", "-Werror", "-pedantic", "-fsanitize=undefined",
                         "-fno-sanitize-recover=all", "-I", str(work), "-I", str(ROOT / "tools"), "-I", str(ROOT / "application"),

@@ -7,6 +7,7 @@
 #include "ScreenNavigation.h"
 #include "GpsControls.h"
 #include "DatasetPresentation.h"
+#include "SettingsAvailability.h"
 #include "../storage/dataset/DatasetReadMemory.h"
 #include <cstring>
 #include <cmath>
@@ -59,130 +60,6 @@ OperationStatus GpsUiModel::updateContent(const UpdateUiContent& command) {
     return OperationStatus::Ok;
 }
 
-OperationStatus GpsUiModel::beginDatasetRead(const DatasetRequest& request,map::BufferLease& buffer) {
-    if(!request.token || request.screen_generation!=generation_ || screen_!=ScreenId::Settings || mode_!=DisplayMode::View)
-        return OperationStatus::StaleContent;
-    if(!request.id.valid(true) || request.purpose>DatasetPurpose::Verify || request.action>DatasetAction::Clear || request.buffer.data || request.buffer.capacity || request.buffer.id)return OperationStatus::InvalidRequest;
-    if(dataset_borrow_.token || !screen_resources_.map.frame.beginWork(request.token,buffer))return OperationStatus::Unavailable;
-    dataset_borrow_=request;dataset_borrow_.buffer=buffer;
-    if(!validDatasetMemory(dataset_borrow_)) {
-        screen_resources_.map.frame.returnWork(request.token,buffer);dataset_borrow_={};return OperationStatus::Unavailable;
-    }
-    *beginDatasetMemory(dataset_borrow_)={};dataset_owned_=dataset_publishable_=true;
-    auto& view=data_.editDatasets();
-    const bool maintenance=request.action==DatasetAction::RebuildIndex || request.action==DatasetAction::VerifyIndex;
-    const bool listing=request.action==DatasetAction::Open || request.action==DatasetAction::Older || request.action==DatasetAction::Newer;
-    const bool detail=!maintenance && request.action!=DatasetAction::Clear && !listing;
-    if(detail && !view.detail)view.info={};
-    view.detail=detail;view.purpose=request.purpose;
-    if(maintenance)view.id=request.id;
-    view.loading=true;view.applying=datasetMutation(request.action);view.error=DatasetError::None;
-    if(view.applying){view.progress={};view.progress.verifying=request.action==DatasetAction::VerifyIndex;}
-    ++view.revision;redraw_=true;return OperationStatus::Ok;
-}
-OperationStatus GpsUiModel::discardDatasetRead(const DatasetCompletion& completion) {
-    const auto& request=completion.request;
-    if(!dataset_borrow_.token || !sameDatasetRequest(dataset_borrow_,request))return OperationStatus::StaleContent;
-    // Storage has completed (or rejected submission). A changed screen still returns the loan.
-    endDatasetMemory(dataset_borrow_);
-    if(!screen_resources_.map.frame.returnWork(request.token,request.buffer))return OperationStatus::InvalidRequest;
-    dataset_borrow_={};dataset_publishable_=false;
-    if(request.screen_generation==generation_ && screen_==ScreenId::Settings && dataset_owned_) {
-        auto& view=data_.editDatasets();view.loading=view.applying=false;
-        if(completion.error!=DatasetError::None)view.error=completion.error;
-        redraw_=true;updateDialogState();
-    }
-    return OperationStatus::Ok;
-}
-OperationStatus GpsUiModel::commitDatasetRead(const DatasetCompletion& completion) {
-    const auto& request=completion.request;
-    if(!dataset_borrow_.token || !sameDatasetRequest(dataset_borrow_,request))return OperationStatus::StaleContent;
-    if(!dataset_publishable_ || request.screen_generation!=generation_ || screen_!=ScreenId::Settings || !dataset_owned_)return OperationStatus::StaleContent;
-    const auto& incoming=*datasetResultMemory(dataset_borrow_);
-    if(incoming.revision!=request.token || incoming.error!=completion.error)return OperationStatus::InvalidRequest;
-    auto& view=data_.editDatasets();const auto revision=view.revision+1;
-    if(datasetMutation(request.action)) {
-        view.error=incoming.error;view.progress=incoming.progress;view.loading=view.applying=false;
-    } else view=incoming;
-    view.revision=revision;datasetChanged();updateDialogState();redraw_=true;
-    return discardDatasetRead(completion);
-}
-OperationStatus GpsUiModel::datasetReadError(const DatasetCompletion& completion) {
-    if(completion.request.screen_generation!=generation_ || screen_!=ScreenId::Settings)return OperationStatus::StaleContent;
-    dataset_owned_=true;auto& view=data_.editDatasets();view.error=completion.error;view.loading=view.applying=false;
-    ++view.revision;redraw_=true;updateDialogState();return OperationStatus::Ok;
-}
-OperationStatus GpsUiModel::updateDatasetProgress(const IndexProgress& progress) {
-    if(!dataset_borrow_.token || !dataset_publishable_ || progress.token!=dataset_borrow_.token || dataset_borrow_.screen_generation!=generation_ || !dataset_owned_)return OperationStatus::StaleContent;
-    auto& view=data_.editDatasets();view.progress=progress;redraw_=true;return OperationStatus::Ok;
-}
-
-OperationStatus GpsUiModel::beginPlaceSearch(const PlaceRequest& request,map::BufferLease& buffer) {
-    if(!request.token || request.screen_generation!=generation_ || request.dataset_generation!=data_.dataset.generation || (!request.alarm_sample && (mode_!=DisplayMode::View || (screen_!=ScreenId::LivePlace && screen_!=ScreenId::Map && !viewingLogPoint(screen_)))) || (request.alarm_sample && (data_.boot.maintenance || screen_==ScreenId::Boot)))
-        return OperationStatus::StaleContent;
-    if(request.buffer.data || request.buffer.id || request.buffer.capacity || request.work_bytes!=config::IndexReadBufferBytes)return OperationStatus::InvalidRequest;
-    if(place_borrow_.token || !screen_resources_.map.frame.beginWork(request.token,buffer))return OperationStatus::Unavailable;
-    place_borrow_=request;place_borrow_.buffer=buffer;
-    if(!validPlaceMemory(place_borrow_)) {
-        screen_resources_.map.frame.returnWork(request.token,buffer);place_borrow_={};return OperationStatus::Unavailable;
-    }
-    auto* output=beginPlaceMemory(place_borrow_);
-    output->request=place_borrow_;
-    return OperationStatus::Ok;
-}
-OperationStatus GpsUiModel::discardPlaceSearch(const PlaceRequest& request) {
-    if(!place_borrow_.token || !samePlaceRequest(place_borrow_,request))return OperationStatus::StaleContent;
-    // App has already observed Storage's completion (or never submitted it).
-    endPlaceMemory(place_borrow_);
-    if(!screen_resources_.map.frame.returnWork(request.token,request.buffer))return OperationStatus::InvalidRequest;
-    place_borrow_={};return OperationStatus::Ok;
-}
-OperationStatus GpsUiModel::commitPlaceSearch(const PlaceRequest& request) {
-    if(request.alarm_sample)return OperationStatus::InvalidRequest;
-    if(!place_borrow_.token || !samePlaceRequest(place_borrow_,request))return OperationStatus::StaleContent;
-    if(request.screen_generation!=generation_ || request.dataset_generation!=data_.dataset.generation || mode_!=DisplayMode::View || (screen_!=ScreenId::LivePlace && screen_!=ScreenId::Map && !viewingLogPoint(screen_)) || (viewingLogPoint(screen_) && (data_.browse().loading || request.sample_seq!=data_.browse().index+1)))
-        return OperationStatus::StaleContent;
-    const auto& result=*placeResultMemory(place_borrow_);
-    if(!samePlaceRequest(result.request,request) || datasetInactive(result.state))return OperationStatus::InvalidRequest;
-    completePlacePresentation(data_,result);redraw_=true;
-    return discardPlaceSearch(request);
-}
-
-bool GpsUiModel::acceptsMap(const map::Request& request) const {
-    return request.token && showingMap(screen_,data_) && mode_==DisplayMode::View && request.screen_generation==generation_ &&
-        request.session==(viewingLogPoint(screen_)?map::SessionId::Log:map::SessionId::Live) &&
-        request.dataset_generation==data_.dataset.generation && request.scale==data_.map.scale &&
-        map::supportedScale(request.scale);
-}
-bool GpsUiModel::acceptsMap(const map::FrameInfo& info) const {
-    return acceptsMap(info.request) && info.width==map::MaxWidth && info.height==map::MaxHeight &&
-        std::isfinite(info.meters_per_pixel) && info.meters_per_pixel>0;
-}
-OperationStatus GpsUiModel::beginMapFrame(const map::Request& request,map::BufferLease& buffer) {
-    if(!acceptsMap(request))return OperationStatus::StaleContent;
-    return screen_resources_.map.frame.begin(request,buffer)?OperationStatus::Ok:OperationStatus::Unavailable;
-}
-OperationStatus GpsUiModel::discardMapFrame(const map::Request& request) {
-    // Returning a lease is independent of the currently visible screen/mode.
-    return screen_resources_.map.frame.discard(request)?OperationStatus::Ok:OperationStatus::StaleContent;
-}
-OperationStatus GpsUiModel::commitMapFrame(const map::FrameInfo& info) {
-    if(!acceptsMap(info))return OperationStatus::StaleContent;
-    if(!screen_resources_.map.frame.commit(info))return OperationStatus::InvalidRequest;
-    screen_resources_.map.cursor={0,0,true};updateMapCursor();
-    redraw_=true;return OperationStatus::Ok;
-}
-
-void GpsUiModel::updateMapCursor() {
-    if(!screen_resources_.map.frame.image().bytes()) {screen_resources_.map.cursor={};return;}
-    // Invalid GPS preserves the last known marker, drawn grey by the renderer.
-    const auto& fix=displayedFix(screen_,data_);
-    if(viewingLogPoint(screen_) && !fix.valid) {screen_resources_.map.cursor={};return;}
-    if(!fix.valid || (!viewingLogPoint(screen_) && data_.gps.reception!=GpsReception::Fix))return;
-    const auto& info=screen_resources_.map.frame.info();
-    screen_resources_.map.cursor=map::cursorOffset({info.request,info.meters_per_pixel},fix.latitude,fix.longitude);
-}
-
 void GpsUiModel::copyData(const UiData& data) {
     if (data.gps.fix.valid) clock_.setInitialUtc(data.gps.fix.utc_ms, last_tick_ms_);
     const auto previous_sd = data_.storage.sd;
@@ -225,39 +102,6 @@ void GpsUiModel::copyData(const UiData& data) {
     data_.message[sizeof(data_.message) - 1] = '\0';
 }
 
-void GpsUiModel::datasetChanged() {
-    if (screen_ == ScreenId::Settings && (screen_resources_.settings.page == SettingsPage::DatasetList ||
-        screen_resources_.settings.page == SettingsPage::DatasetChoice || screen_resources_.settings.page == SettingsPage::DatasetDetail)) {
-        if (data_.datasets().detail) {
-            if (screen_resources_.settings.page == SettingsPage::DatasetList) {
-                selection_ = 0; screen_resources_.settings.editing = false;
-                screen_resources_.settings.dataset.title_offset=0;
-                screen_resources_.settings.dataset.wordbook_index=
-                    static_cast<uint8_t>(data_.datasets().info.language_index);
-                screen_resources_.settings.page = SettingsPage::DatasetChoice;
-            }
-            if (screen_resources_.settings.page == SettingsPage::DatasetDetail) {
-                const auto count = datasetDetailRows(data_.datasets(), data_.settings.language == UiLanguage::Japanese);
-                const auto last=count>DatasetDetailVisibleRows?count-DatasetDetailVisibleRows:0;
-                if (selection_ > last) selection_ = last;
-            }
-        } else {
-            screen_resources_.settings.page = SettingsPage::DatasetList; selection_ = data_.datasets().selected;
-            screen_resources_.settings.editing = false;screen_resources_.settings.dataset.title_offset=0;
-            for(unsigned i=0;i<data_.datasets().count;++i)
-                if(data_.datasets().rows[i].id==screen_resources_.settings.dataset.dialog_id){selection_=i;break;}
-            if (data_.datasets().count) {
-                screen_resources_.settings.dataset.list_start = data_.datasets().rows[0].id;
-                screen_resources_.settings.dataset.page=data_.datasets().page;
-            }
-        }
-    }
-}
-
-bool GpsUiModel::canDeleteLog() const {
-    return selection_ < data_.browse().count && !(data_.browse().active_mask & (1u << selection_));
-}
-
 void GpsUiModel::updateDialogState() {
     if (dialog_.kind() == DialogKind::DeleteLog)
         dialog_.setActionEnabled(canDeleteLog());
@@ -285,39 +129,6 @@ void GpsUiModel::changed() {
     redraw_ = true;
 }
 
-unsigned GpsUiModel::selectionCount() const {
-    if (screen_ == ScreenId::Menu) return MenuCount;
-    switch (screen_resources_.settings.page) {
-        case SettingsPage::Root: return SettingsRootCount;
-        case SettingsPage::Operation: return OperationRowCount;
-        case SettingsPage::System: return SettingsSystemCount;
-        case SettingsPage::Storage: return 4;
-        case SettingsPage::Reset: return 1;
-        case SettingsPage::Alarm:return AlarmRows;
-        case SettingsPage::DatasetMenu: return 3;
-        case SettingsPage::DatasetList: return data_.datasets().count;
-        case SettingsPage::DatasetChoice:return DatasetChoiceRows;
-        case SettingsPage::DatasetDetail:
-            return !data_.datasets().loading && data_.datasets().error==DatasetError::None ?
-                datasetDetailRows(data_.datasets(),data_.settings.language==UiLanguage::Japanese) : 0;
-        default: return 0;
-    }
-}
-
-uint32_t GpsUiModel::licenseTarget(UiKey key) const {
-    if (key==UiKey::Up && screen_resources_.settings.license_offset) return screen_resources_.settings.license_offset-1;
-    if (key==UiKey::Down && screen_resources_.settings.license_offset+SettingsLayout::LicenseRows<licenseLineCount()) return screen_resources_.settings.license_offset+1;
-    if (key==UiKey::Right) {
-        for (size_t n=0;n<licenseSectionCount();++n)
-            if (licenseSectionStart(n)>screen_resources_.settings.license_offset) return licenseSectionStart(n);
-    } else if (key==UiKey::Left && licenseSectionCount()) {
-        size_t current=0;
-        while(current+1<licenseSectionCount() && licenseSectionStart(current+1)<=screen_resources_.settings.license_offset)++current;
-        return screen_resources_.settings.license_offset<licenseSectionStart(0)?0:licenseSectionStart(current?current-1:0);
-    }
-    return screen_resources_.settings.license_offset;
-}
-
 UiKeyGuide GpsUiModel::keyGuide() const {
     UiKeyGuide guide;
     guide.accepting=action_.kind==ActionKind::None && !switchingMode(data_) &&
@@ -325,9 +136,7 @@ UiKeyGuide GpsUiModel::keyGuide() const {
 
     guide.root=!data_.boot.maintenance && isScreenRoot(screen_,screen_resources_.settings.page) && !screen_resources_.settings.editing && !screen_resources_.settings.card_info;
     guide.system=!data_.boot.maintenance;
-    const bool dataset_page=screen_==ScreenId::Settings && (screen_resources_.settings.page==SettingsPage::DatasetMenu ||
-        screen_resources_.settings.page==SettingsPage::DatasetList || screen_resources_.settings.page==SettingsPage::DatasetChoice ||
-        screen_resources_.settings.page==SettingsPage::DatasetDetail || screen_resources_.settings.page==SettingsPage::DatasetIndex);
+    const bool dataset_page=screen_==ScreenId::Settings && isDatasetSettingsPage(screen_resources_.settings.page);
     const bool dataset_wait=dataset_page && data_.datasets().applying;
     guide.back=guide.accepting && !dataset_wait &&
         !(screen_==ScreenId::Settings && screen_resources_.settings.page==SettingsPage::DatasetIndex && data_.storage.busy);
@@ -383,8 +192,7 @@ UiKeyGuide GpsUiModel::keyGuide() const {
         }
     }
     if(screen_==ScreenId::Settings && !screen_resources_.settings.card_info && screen_resources_.settings.page!=SettingsPage::Licenses) {
-        if(screen_resources_.settings.page!=SettingsPage::DatasetList && screen_resources_.settings.page!=SettingsPage::DatasetChoice &&
-           screen_resources_.settings.page!=SettingsPage::DatasetDetail){
+        if(!isDatasetBrowserPage(screen_resources_.settings.page)){
             guide.horizontal=editableSettingChoices()>1;
             guide.left=guide.right=guide.horizontal;
         }
@@ -435,7 +243,7 @@ void GpsUiModel::appendEnterShortcut(UiShortcutGuide& row,bool accepting) const 
         const auto& settings=screen_resources_.settings;
         if(!settings.card_info) switch(settings.page) {
             case SettingsPage::Licenses:return;
-            case SettingsPage::Alarm:if(selection_<AlarmReloadRow && !editDirty())return;enabled=!data_.storage.busy && !data_.storage.nvs_error && (selection_==AlarmReloadRow?logMapAvailable(data_):data_.storage.alarm.usable());break;
+            case SettingsPage::Alarm:if(selection_<AlarmReloadRow && !editDirty())return;enabled=alarmSettingEnabled(data_,selection_);break;
             case SettingsPage::DatasetMenu:enabled=!data_.datasets().applying && datasetMenuBlock(data_,selection_)==DatasetError::None;break;
             case SettingsPage::DatasetList: {
                 const auto& view=data_.datasets();
@@ -452,11 +260,11 @@ void GpsUiModel::appendEnterShortcut(UiShortcutGuide& row,bool accepting) const 
             case SettingsPage::System:
                 if(selection_==0 && !editDirty())return;
                 if(selection_!=0 && selection_!=2 && selection_!=SettingsSystemResetRow)return;
-                enabled=!data_.storage.busy && (selection_!=2 || (settings.usb_mode && usbEntryAllowed(data_)));
+                enabled=systemSettingEnabled(data_,settings.usb_mode,selection_);
                 break;
             case SettingsPage::Operation:
                 if(!editDirty())return;
-                enabled=!data_.storage.busy;
+                enabled=operationSettingEnabled(data_,selection_);
                 break;
             case SettingsPage::Storage:case SettingsPage::Reset:enabled=!data_.storage.busy;break;
             default:break;
@@ -605,326 +413,6 @@ void GpsUiModel::keyPressed(UiKey key, uint32_t now_ms) {
     settingsKey(key);
 }
 
-void GpsUiModel::openGpsControls() {
-    gps_dialog_state_ = data_.recording.state;
-    dialog_.openActions(DialogKind::GpsControl, gpsControlChoices(data_), gpsControlDefault(gps_dialog_state_));
-    updateDialogState();
-    changed();
-}
-
-void GpsUiModel::gpsLoggerKey(UiKey key) {
-    if (key == UiKey::Escape) action(ActionKind::ChangeScreen, ScreenId::LivePlace);
-    else if (key == UiKey::Enter) openGpsControls();
-}
-
-void GpsUiModel::logBrowserKey(UiKey key) {
-    const auto& view=data_.browse();
-    if(key==UiKey::Escape) {
-        action(ActionKind::ChangeScreen,screen_==ScreenId::Logs?ScreenId::LivePlace:
-            screen_==ScreenId::LogProperties?ScreenId::Logs:screen_==ScreenId::LogStatistics?
-            (view.statistics_from_point?ScreenId::LogPoint:ScreenId::LogProperties):ScreenId::LogProperties);
-        return;
-    }
-    if(isLogViewScreen(screen_))for(const auto& item:LogViewShortcuts)if(key==item.key) {
-        if(!selectedLogView(screen_,data_,item.action) && logViewAvailable(screen_,data_,item.action))browseAction(item.action);
-        return;
-    }
-    if(screen_==ScreenId::LogProperties) {
-        if(key==UiKey::Enter && !view.loading && view.error==LogReadError::None && view.summary.records)browseAction(BrowseAction::OpenPoint);
-        return;
-    }
-    if(screen_==ScreenId::LogStatistics) {
-        if(key==UiKey::Recalculate && !view.loading)browseAction(BrowseAction::Recalculate);
-        return;
-    }
-    if(screen_==ScreenId::LogPoint) {
-        if(!view.summary.records)return;
-        if(view.map_mode && view.playing) {
-            switch(key) {
-                case UiKey::Up:browseAction(BrowseAction::ReplayFaster);return;
-                case UiKey::Down:browseAction(BrowseAction::ReplaySlower);return;
-                case UiKey::Left:browseAction(BrowseAction::ReplayReverse);return;
-                case UiKey::Right:browseAction(BrowseAction::ReplayForward);return;
-                default:break;
-            }
-        }
-        if(key==UiKey::Left) browseAction(BrowseAction::Point,view.target-1);
-        if(key==UiKey::Right) browseAction(BrowseAction::Point,view.target+1);
-        if(key==UiKey::Up) browseAction(BrowseAction::Point,view.target>10?view.target-10:0);
-        if(key==UiKey::Down) browseAction(BrowseAction::Point,
-            static_cast<uint32_t>(std::min(uint64_t(view.target)+10,uint64_t(view.summary.records-1))));
-        if(key==UiKey::FirstPoint) browseAction(BrowseAction::Point,0);
-        if(key==UiKey::LastPoint) browseAction(BrowseAction::Point,view.summary.records-1);
-        if(key==UiKey::Playback && view.map_mode) browseAction(BrowseAction::Playback);
-        return;
-    }
-    if(view.loading) return;
-    if(screen_==ScreenId::Logs) {
-        if(key==UiKey::DeleteLog && selection_<view.count) {
-            dialog_.open(DialogKind::DeleteLog, canDeleteLog()); changed();
-        } else if(key==UiKey::Up) {
-            if(selection_) { --selection_; changed(); }
-            else if(view.has_newer) browseAction(BrowseAction::Newer);
-        } else if(key==UiKey::Down) {
-            if(selection_+1<view.count) { ++selection_; changed(); }
-            else if(view.has_older) browseAction(BrowseAction::Older);
-        } else if(key==UiKey::Enter) {
-            if(view.count) browseAction(BrowseAction::OpenFile,selection_);
-            else browseAction(BrowseAction::Reload);
-        }
-    }
-    return;
-}
-
-unsigned GpsUiModel::editableSettingChoices() const {
-    if(screen_!=ScreenId::Settings || screen_resources_.settings.card_info)return 0;
-    const auto& settings=screen_resources_.settings;
-    switch(settings.page) {
-        case SettingsPage::Operation:
-            return !data_.storage.busy && settingEditable(operationSettingIndex(selection_))?settingChoices(operationSettingIndex(selection_)):0;
-        case SettingsPage::System:return !data_.storage.busy && selection_==0?3:0;
-        case SettingsPage::Alarm:
-            return !data_.storage.busy && !data_.storage.nvs_error && data_.storage.alarm.usable()?
-                alarmChoices(selection_):0;
-        default:return 0;
-    }
-}
-
-bool GpsUiModel::editDirty() const {
-    const auto& settings=screen_resources_.settings;
-    if(!settings.editing)return false;
-    return settings.edit_value!=settings.edit_original;
-}
-
-bool GpsUiModel::commitSettingEdit() {
-    auto& settings=screen_resources_.settings;
-    if(!settings.editing)return true;
-    if(editDirty()) {
-        if(settings.page==SettingsPage::Operation) {
-            if(data_.storage.busy)return false;
-            Settings value=data_.settings;
-            if(!setSettingValue(value,operationSettingIndex(selection_),settings.edit_value))return false;
-            if(!sameSettings(value,data_.settings)) {
-                action(ActionKind::SaveSettings);action_.settings=value;
-            }
-        } else if(settings.page==SettingsPage::Alarm) {
-            if(data_.storage.busy || data_.storage.nvs_error || !data_.storage.alarm.usable())return false;
-            if(settings.edit_value!=alarmValue(data_.storage.alarm.settings,selection_)) {
-                action(ActionKind::SaveAlarm);action_.alarm_settings=data_.storage.alarm.settings;
-                setAlarmValue(action_.alarm_settings,selection_,settings.edit_value);
-                action_.alarm_identity=data_.storage.alarm.identity;
-            }
-        } else if(settings.page==SettingsPage::System)settings.usb_mode=settings.edit_value;
-        // Dataset language is a local candidate. Apply still owns persistence/restart.
-    }
-    settings.editing=false;changed();return true;
-}
-
-void GpsUiModel::alarmSettingsKey(UiKey key) {
-    auto& settings=screen_resources_.settings;
-    if(key==UiKey::Escape) {settings.page=SettingsPage::Root;selection_=settingsRootIndex(SettingsRootItem::Alarm);changed();return;}
-    if(key==UiKey::Up){--selection_;changed();}else if(key==UiKey::Down){++selection_;changed();}
-    else if(key==UiKey::Enter && !data_.storage.busy && !data_.storage.nvs_error) {
-        if(selection_==AlarmReloadRow && logMapAvailable(data_))action(ActionKind::ReloadAlarm);
-    }
-}
-
-void GpsUiModel::datasetSettingsKey(UiKey key) {
-    if (screen_resources_.settings.page == SettingsPage::DatasetList ||
-        screen_resources_.settings.page == SettingsPage::DatasetChoice || screen_resources_.settings.page == SettingsPage::DatasetDetail) {
-        const auto& view = data_.datasets();
-        if (view.applying) return;
-        if (key == UiKey::Escape) {
-            if(dataset_borrow_.token)dataset_publishable_=false;
-            if (screen_resources_.settings.page == SettingsPage::DatasetDetail) {
-                screen_resources_.settings.page = SettingsPage::DatasetChoice; selection_ = 2;changed();
-            } else if(screen_resources_.settings.page == SettingsPage::DatasetChoice) {
-                screen_resources_.settings.page = SettingsPage::DatasetList; selection_ = 0;
-                datasetAction(DatasetAction::Open);
-            } else { screen_resources_.settings.page = SettingsPage::DatasetMenu; selection_ = static_cast<uint8_t>(screen_resources_.settings.dataset.purpose); changed(); }
-            return;
-        }
-        if (view.loading) return;
-        if(screen_resources_.settings.page==SettingsPage::DatasetList && view.error!=DatasetError::None) {
-            if(key==UiKey::Enter) datasetAction(DatasetAction::Open);
-            return;
-        }
-        if (screen_resources_.settings.page == SettingsPage::DatasetList) {
-            if (key == UiKey::Up) {
-                if (selection_) { --selection_;changed(); }
-                else if (view.has_older) datasetAction(DatasetAction::Older);
-            } else if (key == UiKey::Down) {
-                if (selection_+1 < view.count) { ++selection_;changed(); }
-                else if (view.has_newer) datasetAction(DatasetAction::Newer);
-            } else if (key == UiKey::Enter && view.count && datasetRowBlock(data_,selection_)==DatasetError::None) {
-                screen_resources_.settings.dataset.dialog_id=view.rows[selection_].id;
-                if(!screen_resources_.settings.dataset.dialog_id) {dialog_.open(DialogKind::ClearDataset);changed();}
-                else if(screen_resources_.settings.dataset.purpose!=DatasetPurpose::Select) {
-                    dialog_.open(screen_resources_.settings.dataset.purpose==DatasetPurpose::Rebuild?DialogKind::RebuildIndex:DialogKind::VerifyIndex);changed();
-                } else datasetAction(DatasetAction::Detail,selection_);
-            }
-            return;
-        }
-        if(screen_resources_.settings.page==SettingsPage::DatasetChoice) {
-            if(key==UiKey::Left || key==UiKey::Right) {
-                if(selection_==0){
-                    auto& offset=screen_resources_.settings.dataset.title_offset;
-                    if(key==UiKey::Left && offset){--offset;changed();}
-                    else if(key==UiKey::Right && uiTextCanScroll(view.info.title,data_.settings.language==UiLanguage::Japanese,offset,200))
-                        {++offset;changed();}
-                } else if(selection_==1 && view.info.language_count>1){
-                    auto& candidate=screen_resources_.settings.dataset.wordbook_index;
-                    const auto count=view.info.language_count;
-                    candidate=static_cast<uint8_t>((candidate+count+(key==UiKey::Right?1:count-1))%count);
-                    changed();
-                }
-            } else if(key==UiKey::Up){if(selection_){--selection_;changed();}}
-            else if(key==UiKey::Down){if(unsigned(selection_)+1<DatasetChoiceRows){++selection_;changed();}}
-            else if(key==UiKey::Enter){
-                if(selection_==2 && view.error==DatasetError::None){screen_resources_.settings.page=SettingsPage::DatasetDetail;selection_=0;changed();}
-                else if(selection_==3 && datasetChoiceCanApply(data_))datasetAction(DatasetAction::Apply);
-            }
-            return;
-        }
-        if (view.error != DatasetError::None) return;
-        const unsigned count = selectionCount();
-        if (key == UiKey::Up && selection_) { --selection_; changed(); }
-        const unsigned last=count>DatasetDetailVisibleRows?count-DatasetDetailVisibleRows:0;
-        if (key == UiKey::Down && selection_<last) { ++selection_; changed(); }
-        if (key == UiKey::Left && selection_) { selection_=selection_>DatasetDetailVisibleRows?selection_-DatasetDetailVisibleRows:0;changed(); }
-        if (key == UiKey::Right && selection_<last) { selection_=std::min<unsigned>(selection_+DatasetDetailVisibleRows,last);changed(); }
-        return;
-    }
-    if(screen_resources_.settings.page==SettingsPage::DatasetMenu) {
-        if(data_.datasets().applying)return;
-        if(key==UiKey::Escape) {screen_resources_.settings.page=SettingsPage::Root;selection_=settingsRootIndex(SettingsRootItem::Dataset);changed();return;}
-        if(key==UiKey::Up) {--selection_;changed();}
-        if(key==UiKey::Down) {++selection_;changed();}
-        if(key==UiKey::Enter && datasetMenuBlock(data_,selection_)==DatasetError::None) {
-            screen_resources_.settings.dataset.purpose=static_cast<DatasetPurpose>(selection_);
-            screen_resources_.settings.dataset.list_start={};screen_resources_.settings.dataset.page=0;
-            screen_resources_.settings.page=SettingsPage::DatasetList;selection_=0;datasetAction(DatasetAction::Open);
-        }
-        return;
-    }
-    if(screen_resources_.settings.page==SettingsPage::DatasetIndex) {
-        if(data_.datasets().applying)return;
-        if(key==UiKey::Escape || key==UiKey::Enter) {
-            if(data_.storage.busy)return;
-            screen_resources_.settings.page=SettingsPage::DatasetList;selection_=0;datasetAction(DatasetAction::Open);
-        }
-        return;
-    }
-}
-
-void GpsUiModel::settingsKey(UiKey key) {
-    auto& edit=screen_resources_.settings;
-    if(edit.editing) {
-        if(key==UiKey::Escape) {
-            const bool dirty=editDirty();edit.editing=false;
-            if(dirty) {
-                changed();return; // A second Escape leaves the page.
-            }
-        } else if(key==UiKey::Enter || key==UiKey::Up || key==UiKey::Down) {
-            if(!commitSettingEdit())return;
-            if(key==UiKey::Enter)return;
-        }
-    }
-    if(key==UiKey::Left || key==UiKey::Right) {
-        const auto count=editableSettingChoices();
-        if(count>1) {
-            if(!edit.editing) {
-                edit.edit_original=edit.page==SettingsPage::System?edit.usb_mode:
-                    edit.page==SettingsPage::Alarm?alarmValue(data_.storage.alarm.settings,selection_):
-                    settingValue(data_.settings,operationSettingIndex(selection_));
-                edit.edit_value=edit.edit_original;
-                edit.editing=true;
-            }
-            edit.edit_value=(edit.edit_value+(key==UiKey::Right?1:count-1))%count;changed();
-            if(edit.page==SettingsPage::Alarm && selection_==AlarmSoundRow) {
-                action(ActionKind::PreviewAlarm);action_.alarm_settings=data_.storage.alarm.settings;
-                action_.alarm_settings.tone=static_cast<alarm::Tone>(edit.edit_value);
-                action_.alarm_identity=data_.storage.alarm.identity;
-            }
-            return;
-        }
-    }
-    if(screen_resources_.settings.page==SettingsPage::Alarm) {alarmSettingsKey(key);return;}
-    if(screen_resources_.settings.page==SettingsPage::DatasetList ||
-       screen_resources_.settings.page==SettingsPage::DatasetChoice ||
-       screen_resources_.settings.page==SettingsPage::DatasetDetail ||
-       screen_resources_.settings.page==SettingsPage::DatasetMenu ||
-       screen_resources_.settings.page==SettingsPage::DatasetIndex) {datasetSettingsKey(key);return;}
-    if (screen_resources_.settings.card_info) {
-        if (key == UiKey::Escape || key == UiKey::Enter) { screen_resources_.settings.card_info = false; changed(); }
-        return;
-    }
-    if (screen_resources_.settings.page == SettingsPage::System) {
-        if (key == UiKey::Escape) {
-            screen_resources_.settings.usb_mode = false; screen_resources_.settings.page = SettingsPage::Root; selection_ = SettingsSystemRow; changed();
-        } else if (key == UiKey::Up) { --selection_; changed(); }
-        else if (key == UiKey::Down) { ++selection_; changed(); }
-        else if (key == UiKey::Enter && !data_.storage.busy) {
-            if (selection_ == 2 && screen_resources_.settings.usb_mode && usbEntryAllowed(data_)) {
-                dialog_.open(screen_resources_.settings.usb_mode==2?DialogKind::EnterWifiMode:DialogKind::EnterUsbMode); changed();
-            } else if (selection_ == SettingsSystemResetRow) {
-                screen_resources_.settings.page = SettingsPage::Reset; selection_ = 0; changed();
-            }
-        }
-        return;
-    }
-    if (screen_resources_.settings.page == SettingsPage::About) {
-        if (key == UiKey::Escape || key == UiKey::Enter) {
-            screen_resources_.settings.page = SettingsPage::Root;
-            selection_ = settingsRootIndex(SettingsRootItem::About); changed();
-        }
-        return;
-    }
-    if (key == UiKey::Escape) {
-        if (screen_resources_.settings.page == SettingsPage::Root) {
-            if (data_.boot.maintenance) { dialog_.open(DialogKind::RestartLogger); changed(); }
-            else action(ActionKind::ChangeScreen, ScreenId::LivePlace);
-        }
-        else if (screen_resources_.settings.page == SettingsPage::Reset) { screen_resources_.settings.page = SettingsPage::System; selection_ = SettingsSystemResetRow; changed(); }
-        else { screen_resources_.settings.page = SettingsPage::Root; selection_ = 0; changed(); }
-        return;
-    }
-    if (screen_resources_.settings.page == SettingsPage::Licenses) {
-        const auto target = licenseTarget(key);
-        if (target != screen_resources_.settings.license_offset) { screen_resources_.settings.license_offset = target; changed(); }
-        return;
-    }
-    if (key == UiKey::Up) { --selection_; changed(); }
-    if (key == UiKey::Down) { ++selection_; changed(); }
-    if (key != UiKey::Enter) return;
-    if (screen_resources_.settings.page == SettingsPage::Root) {
-        switch (static_cast<SettingsRootItem>(selection_)) {
-            case SettingsRootItem::Operation: screen_resources_.settings.page = SettingsPage::Operation; break;
-            case SettingsRootItem::System: screen_resources_.settings.page = SettingsPage::System; screen_resources_.settings.usb_mode = false; break;
-            case SettingsRootItem::Dataset: screen_resources_.settings.page = SettingsPage::DatasetMenu; break;
-            case SettingsRootItem::Storage: screen_resources_.settings.page = SettingsPage::Storage; break;
-            case SettingsRootItem::Licenses: screen_resources_.settings.page = SettingsPage::Licenses; break;
-            case SettingsRootItem::About: screen_resources_.settings.page = SettingsPage::About; break;
-            case SettingsRootItem::Alarm:screen_resources_.settings.page=SettingsPage::Alarm;break;
-            default: return;
-        }
-        selection_ = 0; screen_resources_.settings.license_offset = 0;
-        changed();
-    } else if (screen_resources_.settings.page == SettingsPage::Reset && !data_.storage.busy) {
-        dialog_.open(DialogKind::ResetSettings); changed();
-    } else if (screen_resources_.settings.page == SettingsPage::Storage && !data_.storage.busy) {
-        if (selection_ == 0) { screen_resources_.settings.card_info = true; changed(); }
-        else if (selection_ == 3) { dialog_.open(DialogKind::FormatSd); changed(); }
-        else if (selection_ == 1 || selection_ == 2) {
-            action(ActionKind::Storage);
-            action_.storage_operation = selection_ == 1 ? StorageOperation::Remount : StorageOperation::Unmount;
-        }
-    }
-}
-
-
-
-
 void GpsUiModel::acceptDialog(DialogKind kind) {
     switch (kind) {
     case DialogKind::RegenerateWifi: case DialogKind::ExitUsbMode: case DialogKind::ExitWifiMode: break;
@@ -958,36 +446,6 @@ void GpsUiModel::acceptDialog(DialogKind kind) {
     action_.confirmed = true;
 }
 
-void GpsUiModel::datasetAction(DatasetAction kind,uint32_t index) {
-    action(ActionKind::Dataset);action_.dataset_action=kind;
-    action_.dataset_purpose=screen_resources_.settings.dataset.purpose;
-    const auto& view=data_.datasets();
-    action_.dataset_page=kind==DatasetAction::Open?screen_resources_.settings.dataset.page:view.page;
-    switch(kind) {
-        case DatasetAction::Open:action_.dataset_id=screen_resources_.settings.dataset.list_start;break;
-        case DatasetAction::Older:case DatasetAction::Newer:
-            if(view.count)action_.dataset_id=view.rows[kind==DatasetAction::Older?0:view.count-1].id;
-            break;
-        case DatasetAction::Detail:case DatasetAction::RebuildIndex:case DatasetAction::VerifyIndex:
-            if(index<view.count)action_.dataset_id=view.rows[index].id;
-            break;
-        case DatasetAction::Clear:break;
-        default:action_.dataset_id=view.id;break;
-    }
-    if(kind==DatasetAction::Apply) {
-        const auto candidate=screen_resources_.settings.dataset.wordbook_index;
-        const char* language=candidate<view.info.language_count?
-            view.info.wordbook_types[candidate]:view.info.language;
-        std::snprintf(action_.settings.wordbook_language,sizeof(action_.settings.wordbook_language),"%s",language);
-    }
-    if(dataset_borrow_.token)dataset_publishable_=false;
-}
-
-void GpsUiModel::browseAction(BrowseAction kind,uint32_t index) {
-    action(ActionKind::Browse);
-    action_.browse_action=kind; action_.browse_index=index; action_.browse_revision=data_.browse().revision;
-}
-
 void GpsUiModel::action(ActionKind kind, ScreenId target) {
     if (++next_action_id_ == 0) ++next_action_id_;
     action_ = {};
@@ -1010,7 +468,7 @@ void GpsUiModel::tick(uint32_t now_ms) {
     const bool was_screen_name=screenNameVisible();
     const auto previous_second = clock_.secondsJst();
     clock_.tick(now_ms);
-    if (hasRuntimeHeader(screen_,data_) && mode_ == DisplayMode::View && clock_.secondsJst() != previous_second) redraw_ = true;
+    if (hasRuntimeHeader(screen_) && mode_ == DisplayMode::View && clock_.secondsJst() != previous_second) redraw_ = true;
     const bool was_lit = sdAccessLit();
     const bool was_dataset_notice=datasetFailureVisible();
     last_tick_ms_ = now_ms;

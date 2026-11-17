@@ -14,10 +14,17 @@ application/
   BootStatus.h             起動チェックの状態・表示略称・完了判定
   TaskMessages.h           固定長メッセージと同期結果
   task/ui/
-    UiTask.h/.cpp          UI受信ループ、キー入力、通知・結果返送
-    UiModel.h/.cpp         選択状態、未処理確定操作、画面指定の保持
+    GpsUiTask.h/.cpp       UI受信ループ、キー入力、通知・結果返送
+    GpsUiModel.h/.cpp      共通状態、画面遷移、操作の振分け
+    GpsUiModelData.cpp     地名・データセット・地図の借用結果の受渡し
+    GpsUiModelLogs.cpp     GPS操作とログ閲覧・再生操作
+    GpsUiModelSettings.cpp 設定・アラート・データセット選択操作
     UiScreenResources.h    地図・設定・データセット・ライセンス・USBの画面内状態
-    UiRenderer.h/.cpp      メイン画面とSettingsの描画
+    GpsUiRenderer.h/.cpp   描画面とフォント、共通ヘッダ・フッタ・ダイアログ
+    GpsUiRendererLive.cpp  起動・LIVE・GPS画面の描画
+    GpsUiRendererLogs.cpp  ログ一覧・測位点・統計画面の描画
+    GpsUiRendererMap.cpp   境界地図の描画
+    GpsUiRendererSettings.cpp 設定・データセット画面の描画
     UiCanvas.h             RGB565描画色と4bit・16色パレット画像の対応
     UiFrameBuffer.h        UIタスクが所有する主画像の固定領域（スタック外）
     PixelFont.h/.cpp       8×8・16×16ドットの固定セル描画
@@ -61,6 +68,8 @@ application/
     Queue.h                固定容量のFreeRTOSキュー、投機的送信
     SyncClient.h           同期要求1件と容量1の戻り値キューの管理
 ```
+
+UIは1タスクのままとし、`GpsUiTask`が画像バッファと`GpsUiModel`を所有する。機能別の`.cpp`は既存クラスのメソッド定義を分けたもので、追加の画面インスタンスは作らない。描画先は`GpsUiRenderer`の1枚のキャンバスを共有し、Storageへのメモリ貸出しと返却の契約も変えない。画面をまたぐ状態や大きな配列をUIタスクのスタックへ移さない。
 
 現在は4タスク・5キューとする。ApplicationQueueは8件、AppReturnQueueは1件、UIQueue・GPSQueue・StorageQueueは各1件。UIは8192バイト・優先度1、GPSは4096バイト・優先度2、Storageは12288バイト・優先度1をスタック容量と優先度の初期値とし、実機で計測して調整する。未取得の同期要求は全体で1件だけとし、結果取得のタイムアウト後も同じ要求を待つ。Appは通知からUIの操作内容を取得し、画面指定と処理済みIDを返す。UIは描画前に同期結果を返し、結果キューが満杯なら完成済みの結果を保持して再投入する。GPSも同じ戻り値キューを使い、返送の再試行中もUART受信を続ける。
 

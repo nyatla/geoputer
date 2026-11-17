@@ -7,7 +7,7 @@ import re
 import subprocess
 import tempfile
 from PIL import Image
-from ui_preview_support import ROOT, M5GFX, ADAPTER
+from ui_preview_support import ROOT, M5GFX, ADAPTER, ui_cpp_sources, ui_renderer_source
 
 SCENE = r'''
 #include <cstdio>
@@ -95,7 +95,7 @@ def main():
     parser.add_argument('--map',type=Path,default=dataset/'estat-r2ka-jgd2011-2020-grid-8192-10000.remap.wgsmapset.glc')
     parser.add_argument('--book',type=Path,default=dataset/'giswordbook/estat-r2ka-jgd2011-2020.giswordbook')
     args=parser.parse_args()
-    renderer=(ROOT/'application/task/ui/GpsUiRenderer.cpp').read_text()+(ROOT/'application/task/ui/UiCanvas.h').read_text()
+    renderer=ui_renderer_source()
     enums=(M5GFX/'v1/misc/enum.hpp').read_text()
     colors=[]
     for name in sorted(set(re.findall(r'\bTFT_[A-Z]+\b',SCENE+renderer))):
@@ -104,7 +104,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix='geoputer-map-proposal-') as directory:
         work=Path(directory);(work/'M5GFX.h').write_text(ADAPTER+'\n'+'\n'.join(colors));(work/'scene.cpp').write_text(SCENE)
         exe=work/'render'
-        sources=[ROOT/'application/task/ui'/f'{name}.cpp' for name in ('PixelFont','GpsUiRenderer','GpsUiModel','LicenseText','SettingsText','Shinonome')]
+        sources=ui_cpp_sources()
         subprocess.run(['g++','-O2','-std=c++17','-Wall','-Wextra','-Werror','-pedantic','-I',str(work),'-I',str(ROOT/'application'),'-I',str(ROOT/'tests/support'),'-I',str(ROOT/'third_party/galuchat/include'),'-I',str(M5GFX/'Fonts'),str(work/'scene.cpp'),*map(str,sources),str(ROOT/'application/Settings.cpp'),'-o',str(exe)],check=True,timeout=180)
         result=subprocess.run([str(exe),str(args.map),str(args.book)],stdout=subprocess.PIPE,check=True,timeout=90)
         ppm=work/'map.ppm';ppm.write_bytes(result.stdout)

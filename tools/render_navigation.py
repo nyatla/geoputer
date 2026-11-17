@@ -2,7 +2,7 @@
 from pathlib import Path
 import re,subprocess,tempfile
 from PIL import Image
-from ui_preview_support import ROOT,M5GFX,ADAPTER,reference_frame
+from ui_preview_support import ROOT,M5GFX,ADAPTER,reference_frame, ui_cpp_sources, ui_renderer_source
 SCENE=r"""
 #include <cstdio>
 #include <cstring>
@@ -54,13 +54,13 @@ int main(int argc,char** argv){
 }
 """
 def main():
-    renderer=(ROOT/'application/task/ui/GpsUiRenderer.cpp').read_text()+(ROOT/'application/task/ui/UiCanvas.h').read_text()
+    renderer=ui_renderer_source()
     enums=(M5GFX/'v1/misc/enum.hpp').read_text();colors=[]
     for name in sorted(set(re.findall(r'\bTFT_[A-Z]+\b',SCENE+renderer))):
         value=re.search(rf'\b{name}\s*=\s*(0x[0-9A-Fa-f]+)',enums)[1];colors.append(f'inline constexpr uint16_t {name}={value};')
     with tempfile.TemporaryDirectory(prefix='geoputer-navigation-') as directory:
         work=Path(directory);(work/'M5GFX.h').write_text(ADAPTER+'\n'+'\n'.join(colors));(work/'scene.cpp').write_text(SCENE)
-        sources=[ROOT/'application/task/ui'/f'{name}.cpp' for name in ('PixelFont','GpsUiRenderer','GpsUiModel','LicenseText','SettingsText','Shinonome')]
+        sources=ui_cpp_sources()
         exe=work/'render'
         subprocess.run(['g++','-std=c++17','-O1','-Wall','-Wextra','-Werror','-pedantic','-fsanitize=undefined','-fno-sanitize-recover=all',
             '-I',str(work),'-I',str(ROOT/'application'),'-I',str(ROOT/'tests/support'),'-I',str(M5GFX/'Fonts'),str(work/'scene.cpp'),*map(str,sources),str(ROOT/'application/Settings.cpp'),'-o',str(exe)],check=True,timeout=180)

@@ -18,6 +18,14 @@ inline bool isLogBrowser(ScreenId screen) { return screen==ScreenId::Logs || scr
 enum class ActionKind : uint8_t { None, ChangeScreen, SaveSettings, ResetSettings, Storage, Sleep, Wake, Logging, Browse, Dataset, Maintenance, RestartLogger, MapScale, SaveAlarm, ReloadAlarm, PreviewAlarm, SilenceAlarm, BootSetup };
 enum class BrowseAction : uint8_t { OpenFile, Older, Newer, Reload, Point, Delete, Playback, PausePlayback, OpenPoint, Text, Map, Statistics, Recalculate, ReplayFaster, ReplaySlower, ReplayForward, ReplayReverse };
 enum class SettingsPage : uint8_t { Root, Operation, Storage, Reset, Licenses, DatasetList, DatasetChoice, DatasetDetail, About, DatasetIndex, DatasetMenu, System, Alarm };
+inline constexpr bool isDatasetBrowserPage(SettingsPage page) {
+    return page == SettingsPage::DatasetList || page == SettingsPage::DatasetChoice ||
+        page == SettingsPage::DatasetDetail;
+}
+inline constexpr bool isDatasetSettingsPage(SettingsPage page) {
+    return isDatasetBrowserPage(page) || page == SettingsPage::DatasetMenu ||
+        page == SettingsPage::DatasetIndex;
+}
 // Menu commands are separate from persisted settings and page identifiers.
 enum class SettingsRootItem : uint8_t { Operation, System, Alarm, Dataset, Storage, About, Licenses, Count };
 constexpr unsigned settingsRootIndex(SettingsRootItem item) { return static_cast<unsigned>(item); }
@@ -25,6 +33,8 @@ constexpr unsigned SettingsRootCount = settingsRootIndex(SettingsRootItem::Count
 constexpr unsigned SettingsSystemRow = settingsRootIndex(SettingsRootItem::System);
 constexpr unsigned SettingsSystemResetRow = 3;
 constexpr unsigned SettingsSystemCount = 4;
+constexpr unsigned SettingsStorageCount = 4;
+constexpr unsigned DatasetMenuRows = 3;
 
 struct UiAction {
     ActionKind kind;

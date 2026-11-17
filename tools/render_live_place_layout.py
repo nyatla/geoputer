@@ -12,7 +12,7 @@ import tempfile
 
 from PIL import Image
 
-from ui_preview_support import ADAPTER, M5GFX, OUTPUT, ROOT, reference_frame
+from ui_preview_support import ADAPTER, M5GFX, OUTPUT, ROOT, reference_frame, ui_cpp_sources, ui_renderer_source
 
 
 SCENE = r'''
@@ -176,7 +176,7 @@ int main(int argc, char** argv) {
 
 def main():
     enum_source = (M5GFX / "v1/misc/enum.hpp").read_text()
-    renderer_source = (ROOT / "application/task/ui/GpsUiRenderer.cpp").read_text() + (ROOT / "application/task/ui/UiCanvas.h").read_text()
+    renderer_source = ui_renderer_source()
     names = sorted(set(re.findall(r"\bTFT_[A-Z]+\b", SCENE + renderer_source)))
     colors = []
     for name in names:
@@ -193,14 +193,9 @@ def main():
             "g++", "-std=c++17", "-Wall", "-Wextra", "-Werror", "-pedantic",
             "-I", str(work), "-I", str(ROOT / "application"), "-I", str(ROOT / "tests/support"),
             "-I", str(M5GFX / "Fonts"), str(work / "scene.cpp"),
-            str(ROOT / "application/task/ui/PixelFont.cpp"),
-            str(ROOT / "application/task/ui/GpsUiRenderer.cpp"),
-            str(ROOT / "application/task/ui/GpsUiModel.cpp"),
-            str(ROOT / "application/task/ui/LicenseText.cpp"),
-            str(ROOT / "application/task/ui/SettingsText.cpp"),
+            *[str(p) for p in ui_cpp_sources()],
             str(ROOT / "application/Settings.cpp"),
             str(ROOT / "application/task/storage/galuchat/TextEncoding.cpp"),
-            str(ROOT / "application/task/ui/Shinonome.cpp"),
             "-o", str(executable),
         ], check=True, timeout=180)
         image_modes = ("rec", "pause", "sd-error", "gps-error", "reload", "n03", "sd-write", "sd-read", "dictionary-read", "unprepared", "english-long")

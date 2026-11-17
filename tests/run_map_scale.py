@@ -4,7 +4,8 @@ import subprocess,tempfile
 r=Path(__file__).resolve().parents[1]
 with tempfile.TemporaryDirectory(prefix='geoputer-map-scale-') as d:
     binary=Path(d)/'map-scale'
-    sources=['tests/map_scale_app_tests.cpp','application/MapView.cpp','application/task/ui/GpsUiModel.cpp',
+    sources=['tests/map_scale_app_tests.cpp','application/MapView.cpp',
+             *[str(p.relative_to(r)) for p in sorted((r/'application/task/ui').glob('GpsUiModel*.cpp'))],
              'application/task/ui/SettingsText.cpp','application/task/ui/LicenseText.cpp','application/Settings.cpp',
              'application/task/storage/log/LogWriter.cpp','application/task/storage/log/LogReader.cpp',
              'application/task/storage/export/LogExporter.cpp']

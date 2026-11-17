@@ -6,7 +6,7 @@ import shutil
 import subprocess
 import tempfile
 from PIL import Image
-from ui_preview_support import ROOT, M5GFX, ADAPTER, reference_frame
+from ui_preview_support import ROOT, M5GFX, ADAPTER, reference_frame, ui_cpp_sources, ui_renderer_source
 
 SCENE = r'''
 #include "task/ui/GpsUiRenderer.h"
@@ -126,13 +126,12 @@ def main():
     parser.add_argument('--output',type=Path,default=ROOT/'doc/dev/画面・操作/place-view')
     args=parser.parse_args()
     enum_source=(M5GFX/'v1/misc/enum.hpp').read_text()
-    renderer_source=(ROOT/'application/task/ui/GpsUiRenderer.cpp').read_text()+(ROOT/'application/task/ui/UiCanvas.h').read_text()
+    renderer_source=ui_renderer_source()
     colors=[]
     for name in sorted(set(re.findall(r'\bTFT_[A-Z]+\b',SCENE+renderer_source))):
         value=re.search(rf'\b{name}\s*=\s*(0x[0-9A-Fa-f]+)',enum_source)
         colors.append(f'inline constexpr uint16_t {name} = {value[1]};')
-    sources=['Settings.cpp','task/ui/PixelFont.cpp','task/ui/GpsUiRenderer.cpp',
-        'task/ui/GpsUiModel.cpp','task/ui/LicenseText.cpp','task/ui/SettingsText.cpp','task/ui/Shinonome.cpp',
+    sources=['Settings.cpp',*[str(p.relative_to(ROOT/'application')) for p in ui_cpp_sources()],
         'task/storage/dataset/DatasetIndex.cpp','task/storage/dataset/DatasetMetadata.cpp',
         'task/storage/galuchat/MapSource.cpp','task/storage/galuchat/DiskIndexedMapReader.cpp',
         'task/storage/galuchat/DiskIndexedWordBookReader.cpp','task/storage/galuchat/TextEncoding.cpp',

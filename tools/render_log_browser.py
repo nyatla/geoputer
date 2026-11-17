@@ -4,7 +4,7 @@ import re
 import subprocess
 import tempfile
 from PIL import Image
-from ui_preview_support import ROOT, M5GFX, ADAPTER, reference_frame
+from ui_preview_support import ROOT, M5GFX, ADAPTER, reference_frame, ui_cpp_sources, ui_renderer_source
 
 SCENE = r'''
 #include <cstdio>
@@ -120,9 +120,16 @@ int main(int argc,char** argv) {
         for(int y=97;y<105;++y)for(int x=0;x<240;++x)
             if(display.pixels[y*240+x]!=TFT_BLACK)throw std::runtime_error("obsolete log action prose remains");
         const auto color=data.editBrowse().deleting || data.editBrowse().loading || !data.editBrowse().count || (data.editBrowse().active_mask&1)?TFT_DARKGREY:TFT_WHITE;
+        const auto guide=model.shortcutGuide();
+        int key_x=4;bool found=false;
+        for(unsigned i=0;i<guide.size();++i) {
+            if(guide[i].key==UiKey::DeleteLog) {found=true;break;}
+            key_x+=shortcutWidth(guide[i].key);
+        }
+        if(!found)throw std::runtime_error("D footer key missing");
         for(int row=0;row<8;++row)for(int col=0;col<8;++col) {
             const bool ink=font8x8_c64[('D'-32)*8+col]&(1u<<row);
-            if(display.pixels[(124+row)*240+116+col]!=(ink?color:TFT_BLACK))throw std::runtime_error("D footer state differs from deletion availability");
+            if(display.pixels[(124+row)*240+key_x+col]!=(ink?color:TFT_BLACK))throw std::runtime_error("D footer state differs from deletion availability");
         }
     }
     if(screen==ScreenId::LogPoint && !log_map && data.browse().point.valid && data.place_state==PlaceState::Ready) {
@@ -154,7 +161,7 @@ def main():
     parser.add_argument('--output',type=Path,default=ROOT/'doc/dev/画面・操作')
     parser.add_argument('--mode',action='append',help='Render only the named scene (repeatable)')
     args=parser.parse_args()
-    renderer=(ROOT/'application/task/ui/GpsUiRenderer.cpp').read_text()+(ROOT/'application/task/ui/UiCanvas.h').read_text()
+    renderer=ui_renderer_source()
     enums=(M5GFX/'v1/misc/enum.hpp').read_text()
     colors=[]
     for name in sorted(set(re.findall(r'\bTFT_[A-Z]+\b',SCENE+renderer))):
@@ -166,7 +173,7 @@ def main():
         modes=tuple(args.mode)
     with tempfile.TemporaryDirectory(prefix='geoputer-browser-') as directory:
         work=Path(directory);(work/'M5GFX.h').write_text(ADAPTER+'\n'+'\n'.join(colors));(work/'scene.cpp').write_text(SCENE)
-        sources=[ROOT/'application/task/ui'/f'{name}.cpp' for name in ('PixelFont','GpsUiRenderer','GpsUiModel','LicenseText','SettingsText','Shinonome')]
+        sources=ui_cpp_sources()
         exe=work/'render'
         subprocess.run(['g++','-std=c++17','-Wall','-Wextra','-Werror','-pedantic','-fsanitize=undefined','-fno-sanitize-recover=all','-I',str(work),'-I',str(ROOT/'tools'),'-I',str(ROOT/'application'),'-I',str(ROOT/'tests/support'),'-I',str(M5GFX/'Fonts'),str(work/'scene.cpp'),*map(str,sources),str(ROOT/'application/Settings.cpp'),'-o',str(exe)],check=True,timeout=180)
         for language in ('ja','en'):
