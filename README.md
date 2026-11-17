@@ -1,6 +1,10 @@
 # Geoputer
 
+[English](README.en.md)
+
 Geoputer（ジオピューター）は、現在地の地名と区域の境界をオフラインで確認できるGPSロガーです。測位点をmicroSDカードへ記録し、端末上でログの閲覧や地図での再生ができます。
+
+![M5Stack Cardputer ADVで動作するGeoputer](doc/device.jpg)
 
 ## 主な機能
 
