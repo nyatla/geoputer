@@ -7,6 +7,7 @@ import argparse
 import configparser
 import csv
 import io
+import os
 from pathlib import Path
 import re
 import shutil
@@ -20,6 +21,8 @@ PROJECT = Path(__file__).resolve().parents[1]
 SDK_RELEASE = PROJECT.parent / 'galuchat-gis-sdk' / 'release'
 SOURCE_CATALOG = PROJECT / 'tools' / 'mapsets_sources.tsv'
 FIRMWARE = PROJECT / '.pio' / 'build' / 'cardputer-adv' / 'firmware.bin'
+BOOTLOADER = FIRMWARE.with_name('bootloader.bin')
+PARTITIONS = FIRMWARE.with_name('partitions.bin')
 VERSION_HEADER = PROJECT / 'application' / 'Version.h'
 EN_PACK = 'galuchat-languagepack-en-rev2.zip'
 ESTAT_ID = 'jp-est-y2020-2'
@@ -187,14 +190,63 @@ def find_pio(explicit: Path | None) -> str:
     raise FileNotFoundError('PlatformIO not found; pass --pio /path/to/pio')
 
 
+def find_boot_app0(explicit: Path | None) -> Path:
+    if explicit:
+        if not explicit.is_file():
+            raise FileNotFoundError(explicit)
+        return explicit
+    core = Path(os.environ.get('PLATFORMIO_CORE_DIR', Path.home() / '.platformio'))
+    candidates = [core / 'packages' / 'framework-arduinoespressif32' / 'tools' / 'partitions' / 'boot_app0.bin']
+    fallback = Path.home() / '.platformio' / 'packages' / 'framework-arduinoespressif32' / 'tools' / 'partitions' / 'boot_app0.bin'
+    if fallback not in candidates:
+        candidates.append(fallback)
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    raise FileNotFoundError('boot_app0.bin not found; pass --boot-app0 /path/to/boot_app0.bin')
+
+
+def build_firmware_images(destination: Path, version: str, boot_app0: Path) -> None:
+    """Produce an app-only update at 0x10000 and a complete image for 0x0."""
+    standalone = destination / f'geoputer-v{version}-standalone-0x10000.bin'
+    m5burner = destination / f'geoputer-v{version}-m5burner.bin'
+    segments = [(0x0000, BOOTLOADER), (0x8000, PARTITIONS),
+                (0xE000, boot_app0), (0x10000, FIRMWARE)]
+    for offset, source in segments:
+        if not source.is_file() or source.stat().st_size == 0:
+            raise FileNotFoundError(source)
+        if offset in (0x0000, 0x10000):
+            with source.open('rb') as image:
+                if image.read(1) != b'\xe9':
+                    raise ValueError(f'ESP32 image header missing: {source}')
+    if FIRMWARE.stat().st_size > 0x330000:
+        raise ValueError('firmware exceeds the 0x330000-byte app0 partition')
+    shutil.copyfile(FIRMWARE, standalone)
+    with m5burner.open('wb') as output:
+        cursor = 0
+        for offset, source in segments:
+            if cursor > offset:
+                raise ValueError(f'firmware segments overlap at 0x{offset:x}')
+            output.write(b'\xff' * (offset - cursor))
+            with source.open('rb') as input_file:
+                shutil.copyfileobj(input_file, output, 1024 * 1024)
+            cursor = offset + source.stat().st_size
+    with m5burner.open('rb') as image:
+        image.seek(0x8000)
+        if image.read(2) != b'\xaa\x50':
+            raise ValueError('M5Burner image has no partition table at 0x8000')
+        image.seek(0x10000)
+        if image.read(FIRMWARE.stat().st_size) != FIRMWARE.read_bytes():
+            raise ValueError('M5Burner image has no application at 0x10000')
+
+
 def build(args: argparse.Namespace) -> Path:
     version = application_version()
     if args.version and args.version != version:
         raise ValueError(f'--version {args.version} differs from application version {version}')
     output = args.output.resolve()
-    target = output / f'v{version}'
-    if target.exists():
-        raise FileExistsError(f'release already exists: {target}')
+    if output.exists() and any(output.iterdir()):
+        raise FileExistsError(f'release output is not empty: {output}')
     if not args.skip_firmware_build:
         subprocess.run([find_pio(args.pio), 'run', '-e', 'cardputer-adv'], cwd=PROJECT, check=True)
     if not FIRMWARE.is_file() or FIRMWARE.stat().st_size == 0:
@@ -204,8 +256,8 @@ def build(args: argparse.Namespace) -> Path:
             raise ValueError(f'firmware image has no ESP32 image header: {FIRMWARE}')
 
     catalog = read_catalog()
-    output.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix='.release-stage-', dir=output) as temporary:
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix='.release-stage-', dir=output.parent) as temporary:
         stage = Path(temporary)
         mapsets = args.mapsets.resolve() if args.mapsets else stage / 'mapsets'
         if args.mapsets is None:
@@ -215,16 +267,28 @@ def build(args: argparse.Namespace) -> Path:
         found_ids = {path.name for path in mapsets.iterdir() if path.is_dir()}
         if found_ids != catalog.keys():
             raise ValueError(f'mapset directory IDs differ from source catalog: {sorted(found_ids ^ catalog.keys())}')
-        ready = stage / f'v{version}'
+        ready = stage / 'assets'
         ready.mkdir()
-        shutil.copyfile(FIRMWARE, ready / f'geoputer-v{version}-firmware.bin')
+        build_firmware_images(ready, version, find_boot_app0(args.boot_app0))
+        shutil.copyfile(PROJECT / 'LICENSE', ready / 'LICENSE')
+        shutil.copyfile(PROJECT / 'AUTHORS.md', ready / 'AUTHORS.md')
+        (ready / 'FLASHING.md').write_text(
+            '# Geoputer firmware images\n\n'
+            f'- `geoputer-v{version}-m5burner.bin`: complete ESP32-S3 image for M5Burner; flash at `0x0`. '
+            'It installs the bootloader, partition table, OTA initialization and app. '
+            'It resets internal NVS settings; files on the microSD card are unaffected.\n'
+            f'- `geoputer-v{version}-standalone-0x10000.bin`: application-only update for a device '
+            'that already has the matching bootloader and partition table; flash at `0x10000`. '
+            'Do not upload this file to M5Burner.\n', encoding='utf-8')
         for folder in sorted(path for path in mapsets.iterdir() if path.is_dir()):
             destination = ready / f'{folder.name}.zip'
             languages = build_archive(folder, catalog, args.sdk_release.resolve(), destination)
             print(f'verified {destination.name}: {", ".join(languages)}, {destination.stat().st_size} bytes', flush=True)
-        ready.rename(target)
-    print(f'release ready: {target}', flush=True)
-    return target
+        if output.exists():
+            output.rmdir()
+        ready.rename(output)
+    print(f'release ready: {output}', flush=True)
+    return output
 
 
 def main() -> None:
@@ -233,6 +297,7 @@ def main() -> None:
     parser.add_argument('--sdk-release', type=Path, default=SDK_RELEASE)
     parser.add_argument('--version', help='must match application/Version.h')
     parser.add_argument('--pio', type=Path, help='PlatformIO executable')
+    parser.add_argument('--boot-app0', type=Path, help='Arduino-ESP32 boot_app0.bin')
     parser.add_argument('--skip-firmware-build', action='store_true', help='use an existing firmware.bin')
     parser.add_argument('--mapsets', type=Path, help='use existing mapsets instead of rebuilding from SDK')
     args = parser.parse_args()

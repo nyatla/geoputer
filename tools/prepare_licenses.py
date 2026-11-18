@@ -8,17 +8,18 @@ import unicodedata
 root = Path(__file__).resolve().parents[1]
 source = root / "third_party/licenses"
 manifest = json.loads((source / "manifest.json").read_text())
-lines = ["GEOPUTER OSS LICENSES", "", "UP/DOWN SCROLL; <> SOFTWARE", "ESC/DEL: SETTINGS", ""]
+notices = [("Geoputer GPL-3.0-only", (root / "LICENSE").read_text())]
+notices.extend((item["name"], (source / item.get("display_file", item["file"])).read_text()) for item in manifest)
+lines = ["GEOPUTER LICENSES", "", "NYATLA + OPENAI CODEX", "COPYRIGHT 2026 NYATLA", "GPL-3.0 ONLY", "", "UP/DOWN SCROLL; <> SOFTWARE", "ESC/DEL: SETTINGS", ""]
 sections = []
-for item in manifest:
-    document = (source / item.get("display_file", item["file"])).read_text()
+for name, document in notices:
     document = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", r"\1 (\2)", document)
     document = document.translate(str.maketrans({"\u201c": '"', "\u201d": '"', "\u2018": "'", "\u2019": "'", "\u2013": "-", "\u2014": "--", "\ufeff": ""}))
     document = unicodedata.normalize("NFKC", document)
-    assert document.isascii() and item["name"].isascii(), item["name"]
+    assert document.isascii() and name.isascii(), name
     lines.extend(["-" * 29])
     sections.append(len(lines))  # Software title, immediately after its divider.
-    for paragraph in (item["name"] + "\n\n" + document).splitlines():
+    for paragraph in (name + "\n\n" + document).splitlines():
         paragraph = paragraph.expandtabs(4).strip().lstrip("#").strip()
         if paragraph.startswith("```"):
             continue
@@ -38,4 +39,4 @@ output.write_text(
     'size_t licenseSectionStart(size_t index) { return index < licenseSectionCount() ? Sections[index] : licenseLineCount(); }\n'
     '}  // namespace geoputer\n'
 )
-print(f"Generated {len(lines)} lines from {len(manifest)} license entries")
+print(f"Generated {len(lines)} lines from {len(notices)} license entries")

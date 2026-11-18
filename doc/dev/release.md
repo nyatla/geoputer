@@ -8,14 +8,20 @@ python3 tools/build_release.py
 
 スクリプトは`application/Version.h`の`ApplicationVersion`を採用し、PlatformIOの`cardputer-adv`環境でファームウェアをビルドする。続けてGaluchat GIS SDKの`release/`を入力として、既存の`tools/build_mapsets_from_sdk.py`で44セットの実機用マップセットを一時領域へ再生成する。SDKの配置を変えた場合は`--sdk-release`、PlatformIOの実行ファイルを自動検出できない場合は`--pio`を指定する。
 
-成功時は`release/v<version>/`へファームウェアBINを1個、マップセットごとのZIPを44個置く。初回公開版は`v0.1.0`であり、生成したファイルを同名のGitHub Releasesタグ`v0.1.0`へそのまま配置する。`release/`はGitの管理対象外とする。同じバージョンの出力先が存在する場合は上書きせず停止する。
+成功時は`release/`直下へファームウェアBINを2種類、マップセットごとのZIPを44個、Geoputer本体の`LICENSE`、`AUTHORS.md`、書込み方法を記した`FLASHING.md`を置く。初回公開版は`v0.1.0`であり、生成したファイルを同名のGitHub Releasesタグ`v0.1.0`へそのまま配置する。`release/`はGitの管理対象外とする。出力先にファイルが存在する場合は上書きせず停止する。
 
 ```text
-geoputer-v<version>-firmware.bin
+geoputer-v<version>-standalone-0x10000.bin
+geoputer-v<version>-m5burner.bin
+FLASHING.md
+LICENSE
+AUTHORS.md
 jp-n03-y2026-1.zip
 jp-est-y2020-2.zip
 ...（マップセットごとに1個）
 ```
+
+スタンドアロン版はアプリ領域`0x10000`だけを更新するBINであり、既存の起動ローダーとパーティション表を前提とする。M5Burner用は起動ローダー`0x0`、パーティション表`0x8000`、OTA初期値`0xe000`、アプリ`0x10000`を統合したBINで、Flash先頭`0x0`から書き込む。M5Burnerへスタンドアロン版を登録すると起動領域が壊れるため、公開には必ずM5Burner用BINを使う。統合BIN中のNVS領域は`0xFF`で埋められ、書込み時に内部設定が初期化される。microSDカードは対象外である。
 
 各ZIPは1つのマップセットであり、ZIP直下に`dataset.ini`、`map.glc`、そのマップで利用できる全言語のWordbook、`README.md`、出典・利用条件を示す`NOTICE-map.md`と`NOTICE-en.md`を置く。必要なセットには`NOTICE-ja.md`も置く。ZIP内にディレクトリは作らない。現在は44セットすべてに英語、うち日本の3セットに日本語も収録する。`dataset.ini`の言語セクションと初期言語は変更せず、選択したマップで全Wordbookをすぐに利用できる。端末が生成する`_mapindex.dat`やアラート設定は収録しない。ZIPにチェックサム一覧は収録せず、スクリプト内で全エントリのCRCとINIの参照先を検査する。
 

@@ -19,4 +19,12 @@ Place names and maps come from a Galuchat dataset on the microSD card. GPS loggi
 
 The current firmware targets the **M5Stack Cardputer ADV**. It uses the GNSS receiver on the **Cap LoRa-1262** for positioning and a FAT32 microSD card for logs and datasets. The cap's LoRa radio is not used. Support for an external GPS receiver is planned but is not yet available in the current firmware.
 
+## Firmware images
+
+Each release has two BIN files. **Use `-m5burner.bin` with M5Burner.** The `-standalone-0x10000.bin` file updates only the application at offset `0x10000` on a device that already has the matching bootloader and partition table. Uploading the standalone image to M5Burner prevents the device from booting. See `FLASHING.md` in the release for details.
+
+## License and development
+
+Geoputer's original material is released under the [GNU GPL version 3](LICENSE) (GPL-3.0-only). Copyright (C) 2026 nyatla. Geoputer was developed **by nyatla in collaboration with OpenAI Codex**. See the [credits](AUTHORS.md) for details. Third-party libraries, fonts, and map data retain their own licenses and attribution.
+
 Design notes, build instructions, screen specifications, and test records are in the [developer documentation](doc/dev/README.md) (Japanese).
