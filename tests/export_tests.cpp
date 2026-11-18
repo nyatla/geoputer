@@ -17,7 +17,7 @@ void fixture(const std::filesystem::path& p,unsigned count=25,unsigned tail=0,bo
     std::ofstream out(p,std::ios::binary);uint8_t header[512];encodeLogHeader(header,100,0);
     out.write(reinterpret_cast<char*>(header),512);
     for(unsigned n=0;n<count;++n) {
-        GpsFix fix{35.681641+n*1e-7,140.027194,0,true};
+        GpsFix fix{35.6816410+n*1e-7,140.0271940,0,true};
         fix.fields=n%3==2?0:126;fix.utc_epoch_ms=n%3==1?951782400001ull:0;
         fix.altitude_m=-12.345f;fix.speed_kmh=36;fix.course_deg=140.25f;fix.hdop=0.8f;fix.satellites=12;
         uint8_t record[32];check(encodeLogRecord(fix,record),"encode export fixture");

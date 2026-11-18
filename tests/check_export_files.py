@@ -13,8 +13,8 @@ def check_exports(folder):
     assert gpx.attrib == {'version': '1.1', 'creator': 'Geoputer'}
     points = gpx.findall('g:trk/g:trkseg/g:trkpt', ns)
     assert len(points) == 25
-    assert points[0].get('lat') == '35.681641'
-    assert points[0].get('lon') == '140.027194'
+    assert points[0].get('lat') == '35.6816410'
+    assert points[0].get('lon') == '140.0271940'
     assert points[0].find('g:time', ns).text == '1970-01-01T00:00:00.000Z'
     assert points[1].find('g:time', ns).text == '2000-02-29T00:00:00.001Z'
     assert points[0].find('g:ele', ns).text == '-12.345'
@@ -25,7 +25,7 @@ def check_exports(folder):
     kml = ET.parse(folder / (base + '.kml')).getroot()
     coordinates = kml.find('.//k:LineString/k:coordinates', ns).text.split()
     assert len(coordinates) == 25
-    assert coordinates[0] == '140.027194,35.681641'  # KML uses lon,lat.
+    assert coordinates[0] == '140.0271940,35.6816410'  # KML uses lon,lat.
     single = ET.parse(folder / 'single.gps.dat.kml').getroot()
     assert single.find('.//k:Point/k:coordinates', ns) is not None
     with (folder / (base + '.csv')).open(newline='', encoding='utf-8') as source:
