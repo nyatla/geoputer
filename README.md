@@ -1,30 +1,36 @@
 # Geoputer
 
-[English](README.en.md)
+[日本語](README.ja.md)
 
-Geoputer（ジオピューター）は、現在地の地名と区域の境界をオフラインで確認できるGPSロガーです。測位点をmicroSDカードへ記録し、端末上でログの閲覧や地図での再生ができます。
+[Project website](https://nyatla.github.io/geoputer/)
 
-![M5Stack Cardputer ADVで動作するGeoputer](doc/device.jpg)
+Geoputer is an offline GPS logger that shows the name of your current location and nearby administrative boundaries. It records GPS fixes to a microSD card and lets you browse and replay logs on the device.
 
-## 主な機能
+![Geoputer running on an M5Stack Cardputer ADV](doc/device.jpg)
 
-- 現在地の地名と境界線地図の表示
-- GPSログの記録、閲覧、再生、GPX・KML・CSVへの書き出し
-- 区域が切り替わったときの通知音
-- USBストレージモードと、スマートフォン・PCから使えるWi-Fi管理画面
+## Features
 
-地名と地図の表示には、microSDカードに置いたGaluchatのデータセットを使用します。GPSログはデータセットを選択しなくても記録できます。
+- Display place names and a map of administrative boundaries
+- Record, browse, and replay GPS logs; export them as GPX, KML, or CSV
+- Sound an alert when the current area changes
+- Access files through USB storage mode or a Wi-Fi management page on a phone or PC
 
-## 対応機器
+Place names and maps come from a Galuchat dataset on the microSD card. GPS logging also works without a selected dataset.
 
-現行ファームウェアの対象は **M5Stack Cardputer ADV** です。GPSには **Cap LoRa-1262に搭載されたGNSS** を使用し、記録・データセットの保存にはFAT32のmicroSDカードを使用します。CapのLoRa無線機能は使用しません。外付けGPSは設計対象ですが、現行ファームウェアでは未対応です。
+See the [mapset specification list](doc/mapsets-spec.md) for the available regions, area types, grid resolutions, Wordbook languages, and sizes. The [mapset overview](doc/mapsets.en.md) explains how to choose and install one.
 
-## ファームウェア
+For details, see the [setup manual](doc/setup.md) and [user manual](doc/user-manual.md) (currently in Japanese).
 
-リリースには2種類のBINがあります。**M5Burnerには`-m5burner.bin`を指定**してください。`-standalone-0x10000.bin`は、起動ローダーとパーティション表が導入済みの端末へ、アプリ領域`0x10000`だけを更新するためのファイルです。M5Burnerにスタンドアロン版を指定すると起動できなくなります。詳しくはリリース内の`FLASHING.md`を参照してください。
+## Supported hardware
 
-## ライセンスと開発
+The current firmware targets the **M5Stack Cardputer ADV**. It uses the GNSS receiver on the **Cap LoRa-1262** for positioning and a FAT32 microSD card for logs and datasets. The cap's LoRa radio is not used. Support for an external GPS receiver is planned but is not yet available in the current firmware.
 
-Geoputerのオリジナル部分は[GNU GPLバージョン3](LICENSE)（GPL-3.0-only）で公開します。Copyright (C) 2026 nyatla。Geoputerは**nyatlaとOpenAI Codexの共同作業**で開発しました。詳細は[クレジット](AUTHORS.md)を参照してください。第三者のライブラリ・フォントとマップデータには、それぞれのライセンスと出典表示が適用されます。
+## Firmware images
 
-設計、ビルド、画面仕様、検証記録は[開発者向けドキュメント](doc/dev/README.md)にまとめています。
+Each release has two BIN files. **Use `-m5burner.bin` with M5Burner.** The `-standalone-0x10000.bin` file updates only the application at offset `0x10000` on a device that already has the matching bootloader and partition table. Uploading the standalone image to M5Burner prevents the device from booting. See `FLASHING.md` in the release for details.
+
+## License and development
+
+Geoputer's original material is released under the [GNU GPL version 3](LICENSE) (GPL-3.0-only). Copyright (C) 2026 nyatla. Geoputer was developed **by nyatla in collaboration with OpenAI Codex**. See the [credits](AUTHORS.md) for details. Third-party libraries, fonts, and map data retain their own licenses and attribution.
+
+Design notes, build instructions, screen specifications, and test records are in the [developer documentation](doc/dev/README.md) (Japanese).
